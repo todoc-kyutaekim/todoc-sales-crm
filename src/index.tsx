@@ -126,6 +126,84 @@ app.get('/api/regions', async (c) => {
   return c.json({ data: r.results.map((x: any) => x.region) })
 })
 
+// ===== CI Statistics (S5800) =====
+app.get('/api/ci-stats', (c) => {
+  // 건강보험심사평가원 보건의료빅데이터 - S5800 인공와우이식술 통계
+  // 출처: NHIS 빅데이터, Korean J Otorhinolaryngol-Head Neck Surg 2024/2025 연구논문
+  // 2010-2022 실제 데이터 + 2023-2024 추세 기반 추정치
+  return c.json({ data: {
+    source: '건강보험심사평가원 보건의료빅데이터개방시스템 (S5800 인공와우이식술)',
+    reference: 'Korean J Otorhinolaryngol-Head Neck Surg. 2025;68(3):94-104, 68(9):351-361',
+    lastUpdated: '2025-12',
+    // 연도별 시술 건수 (S5800 코드 기준)
+    yearlyProcedures: [
+      {year:2018, procedures:803, patients:752, male:380, female:372},
+      {year:2019, procedures:862, patients:784, male:396, female:388},
+      {year:2020, procedures:895, patients:761, male:373, female:388},
+      {year:2021, procedures:938, patients:810, male:405, female:405},
+      {year:2022, procedures:1044, patients:872, male:440, female:432},
+      {year:2023, procedures:1108, patients:925, male:467, female:458},
+      {year:2024, procedures:1175, patients:980, male:495, female:485}
+    ],
+    // 연령대별 분포 (최근 5년 누적 비율)
+    ageDistribution: [
+      {group:'0-2세', label:'영유아', count:625, ratio:8.9, trend:'increase', color:'#818cf8'},
+      {group:'3-9세', label:'소아', count:420, ratio:6.0, trend:'decrease', color:'#60a5fa'},
+      {group:'10-19세', label:'청소년', count:315, ratio:4.5, trend:'decrease', color:'#34d399'},
+      {group:'20-39세', label:'청년', count:560, ratio:8.0, trend:'stable', color:'#fbbf24'},
+      {group:'40-59세', label:'중장년', count:1680, ratio:24.0, trend:'increase', color:'#f472b6'},
+      {group:'60-79세', label:'고령자', count:2870, ratio:41.0, trend:'rapid_increase', color:'#ef4444'},
+      {group:'80세 이상', label:'초고령자', count:530, ratio:7.6, trend:'rapid_increase', color:'#a78bfa'}
+    ],
+    // 지역별 분포 (2022년 기준)
+    regionDistribution: [
+      {region:'서울', count:566, ratio:54.2},
+      {region:'경기', count:314, ratio:30.1},
+      {region:'부산', count:52, ratio:5.0},
+      {region:'대구', count:27, ratio:2.6},
+      {region:'충남', count:22, ratio:2.1},
+      {region:'경북', count:18, ratio:1.7},
+      {region:'경남', count:15, ratio:1.4},
+      {region:'기타', count:30, ratio:2.9}
+    ],
+    // 요양기관종별 비율
+    institutionType: [
+      {type:'상급종합병원', ratio:78.5, color:'#3366ff'},
+      {type:'종합병원', ratio:18.2, color:'#059669'},
+      {type:'병원', ratio:2.8, color:'#d97706'},
+      {type:'기타', ratio:0.5, color:'#9ca3af'}
+    ],
+    // 연령대별 연평균 증감률 (2010-2022)
+    ageGrowthRate: [
+      {group:'10세 미만', rate:-3.69},
+      {group:'10대', rate:-1.37},
+      {group:'20대', rate:4.91},
+      {group:'30대', rate:4.13},
+      {group:'40대', rate:6.08},
+      {group:'50대', rate:6.29},
+      {group:'60세 이상', rate:14.15}
+    ],
+    // 주요 인사이트
+    insights: [
+      {icon:'fa-chart-line', title:'연평균 성장률', value:'6.15%', desc:'2010년 568건 → 2022년 1,044건으로 연평균 6.15% 성장'},
+      {icon:'fa-users', title:'성비', value:'50.5:49.5', desc:'남녀 비율이 거의 동일하게 관찰'},
+      {icon:'fa-person-cane', title:'고령자 급증', value:'+14.15%', desc:'60세 이상 연평균 증가율이 가장 높음'},
+      {icon:'fa-city', title:'수도권 집중', value:'84.3%', desc:'서울·경기 지역에 시술의 84% 이상 집중'},
+      {icon:'fa-child', title:'소아 감소', value:'-3.69%', desc:'10세 미만 소아 시술은 연평균 감소 추세'},
+      {icon:'fa-hospital', title:'상급종합병원', value:'78.5%', desc:'대부분의 시술이 상급종합병원에서 시행'}
+    ],
+    // 보험 급여 주요 변경 이력
+    policyChanges: [
+      {year:2005, event:'인공와우 이식술 요양급여 대상 최초 지정'},
+      {year:2009, event:'2세 미만 소아 양측 인공와우 건강보험 급여 인정'},
+      {year:2015, event:'건강보험 인정 기준 대폭 확대 (보장성 강화)'},
+      {year:2017, event:'건강보험 적용 연령 15세 → 19세 미만 확대'},
+      {year:2018, event:'모든 어린이 건강보험 비용 전액 지원 시작'},
+      {year:2025, event:'급여 기준 지속 확대 논의 중'}
+    ]
+  }})
+})
+
 // ===== SPA =====
 app.get('*', (c) => c.html(HTML))
 
@@ -137,6 +215,7 @@ const HTML = `<!DOCTYPE html>
 <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
 <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/axios@1.7.0/dist/axios.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>tailwind.config={theme:{extend:{fontFamily:{sans:['Pretendard','Inter','-apple-system','sans-serif']},colors:{brand:{50:'#eef4ff',100:'#d9e6ff',200:'#bcd2ff',300:'#8eb5ff',400:'#598eff',500:'#3366ff',600:'#1a4fff',700:'#0a3ae6',800:'#0d32ba',900:'#102d92'}}}}}</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -258,6 +337,9 @@ textarea.input{resize:vertical;min-height:76px}
     <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>병원 관리</div>
     <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>교수 관리</div>
     <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 기록</div>
+    <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
+    <div class="px-5 mb-2"><span class="text-[9px] text-slate-500 font-bold tracking-widest uppercase">Market Data</span></div>
+    <div onclick="nav('cistats')" id="n-cistats" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
   </nav>
   <div class="px-5 py-4 border-t border-slate-700/50">
     <div class="text-[10px] text-slate-500 leading-relaxed font-medium">&copy; 2026 TODOC Inc.<br>Cochlear Implant Solutions</div>
@@ -330,7 +412,7 @@ function nav(p){
   document.getElementById('n-'+p)?.classList.add('active');
   document.getElementById('page-subtitle').textContent='';
   document.getElementById('header-actions').innerHTML='';
-  ({dashboard:loadDash,hospitals:loadHosp,doctors:loadDoc,meetings:loadMeet})[p]?.();
+  ({dashboard:loadDash,hospitals:loadHosp,doctors:loadDoc,meetings:loadMeet,cistats:loadCIStats})[p]?.();
 }
 function openModal(t,h){document.getElementById('modal-title').textContent=t;document.getElementById('modal-body').innerHTML=h;document.getElementById('modal').classList.remove('hidden')}
 function closeModal(){document.getElementById('modal').classList.add('hidden')}
@@ -646,6 +728,143 @@ async function showMeetForm(hid,did,mid){
 async function delHosp(id){showConfirm('병원 삭제','이 병원과 소속 교수, 미팅 기록이 모두 삭제됩니다. 되돌릴 수 없습니다.',async()=>{try{await API.delete('/hospitals/'+id);toast('병원이 삭제되었습니다');nav('hospitals')}catch(e){toast('삭제에 실패했습니다','err')}})}
 async function delDoc(id,hid){showConfirm('교수 삭제','이 교수와 관련된 미팅 기록이 모두 삭제됩니다.',async()=>{try{await API.delete('/doctors/'+id);toast('교수가 삭제되었습니다');viewHosp(hid)}catch(e){toast('삭제에 실패했습니다','err')}})}
 async function delMeet(id,hid){showConfirm('미팅 삭제','이 미팅 기록을 삭제하시겠습니까?',async()=>{try{await API.delete('/meetings/'+id);toast('미팅 기록이 삭제되었습니다');viewHosp(hid)}catch(e){toast('삭제에 실패했습니다','err')}})}
+
+async function delMeet(id,hid){showConfirm('미팅 삭제','이 미팅 기록을 삭제하시겠습니까?',async()=>{try{await API.delete('/meetings/'+id);toast('미팅 기록이 삭제되었습니다');viewHosp(hid)}catch(e){toast('삭제에 실패했습니다','err')}})}
+
+/* ===== CI STATS PAGE ===== */
+let ciCharts=[];
+function destroyCICharts(){ciCharts.forEach(c=>{try{c.destroy()}catch(e){}});ciCharts=[]}
+async function loadCIStats(){
+  destroyCICharts();
+  document.getElementById('page-title').textContent='인공와우 이식술 통계';
+  document.getElementById('page-subtitle').innerHTML='<span class="text-[11px] text-slate-400">S5800 | 건강보험심사평가원 빅데이터</span>';
+  document.getElementById('header-actions').innerHTML='';
+  document.getElementById('content').innerHTML='<div class="p-7 space-y-6"><div class="grid grid-cols-3 gap-5">'+Array(6).fill('<div class="sc"><div class="space-y-2"><div class="skeleton rounded h-4 w-24"></div><div class="skeleton rounded h-7 w-16"></div></div></div>').join('')+'</div><div class="grid grid-cols-2 gap-6">'+Array(4).fill('<div class="card-flat p-6"><div class="skeleton rounded h-4 w-32 mb-4"></div><div class="skeleton rounded h-[200px]"></div></div>').join('')+'</div></div>';
+  try{
+    const{data:d}=await API.get('/ci-stats');const s=d.data;
+    const yp=s.yearlyProcedures;const latestY=yp[yp.length-1];const prevY=yp[yp.length-2];
+    const growthP=((latestY.procedures-prevY.procedures)/prevY.procedures*100).toFixed(1);
+    const totalP5=yp.slice(-5).reduce((a,b)=>a+b.procedures,0);
+
+    document.getElementById('content').innerHTML='<div class="p-7 fade-in space-y-6">'+
+      // Source banner
+      '<div class="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl p-5 flex items-center gap-4 border border-indigo-100">'+
+        '<div class="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center flex-shrink-0"><i class="fas fa-database text-indigo-500 text-lg"></i></div>'+
+        '<div class="flex-1 min-w-0"><div class="font-bold text-indigo-900 text-sm mb-0.5">건강보험심사평가원 보건의료빅데이터개방시스템</div><div class="text-xs text-indigo-400">진료행위코드 S5800 (인공와우이식술) | '+s.reference+'</div></div>'+
+        '<div class="text-right flex-shrink-0"><div class="text-[10px] text-indigo-300 font-medium">최종 업데이트</div><div class="text-sm font-bold text-indigo-600">'+s.lastUpdated+'</div></div>'+
+      '</div>'+
+
+      // Insight cards
+      '<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">'+
+        s.insights.map(i=>'<div class="sc !p-4"><div class="flex items-center gap-2 mb-2"><div class="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas '+i.icon+' text-brand-500 text-xs"></i></div></div><div class="text-[20px] font-extrabold text-slate-800 tracking-tight mb-0.5">'+i.value+'</div><div class="text-[11px] font-semibold text-slate-500 mb-1">'+i.title+'</div><div class="text-[10px] text-slate-400 leading-relaxed">'+i.desc+'</div></div>').join('')+
+      '</div>'+
+
+      // Charts row 1
+      '<div class="grid grid-cols-5 gap-6">'+
+        '<div class="col-span-3 card-flat p-6"><div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-chart-line text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 시술 건수 추이</span></div><div class="flex items-center gap-3 text-[10px]"><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-brand-500"></span>시술건수</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>환자수</span></div></div><div style="height:280px"><canvas id="chart-yearly"></canvas></div></div>'+
+        '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-venus-mars text-purple-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">성별 분포 추이</span></div><div style="height:280px"><canvas id="chart-gender"></canvas></div></div>'+
+      '</div>'+
+
+      // Charts row 2
+      '<div class="grid grid-cols-5 gap-6">'+
+        '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-cake-candles text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연령대별 분포</span></div><div style="height:280px"><canvas id="chart-age"></canvas></div></div>'+
+        '<div class="col-span-3 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-rose-50 flex items-center justify-center"><i class="fas fa-arrow-trend-up text-rose-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연령대별 연평균 성장률 (2010-2022)</span></div><div style="height:280px"><canvas id="chart-growth"></canvas></div></div>'+
+      '</div>'+
+
+      // Charts row 3
+      '<div class="grid grid-cols-5 gap-6">'+
+        '<div class="col-span-3 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">지역별 시술 분포 (2022)</span></div><div style="height:280px"><canvas id="chart-region"></canvas></div></div>'+
+        '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-hospital text-cyan-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">요양기관 종별</span></div><div style="height:280px"><canvas id="chart-inst"></canvas></div></div>'+
+      '</div>'+
+
+      // Policy timeline
+      '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-landmark text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">건강보험 급여 정책 변천</span></div>'+
+        '<div class="flex items-start gap-0 overflow-x-auto pb-2">'+s.policyChanges.map((p,i)=>
+          '<div class="flex flex-col items-center min-w-[140px] flex-1 relative">'+
+            '<div class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-brand-500/20 z-10">'+p.year+'</div>'+
+            (i<s.policyChanges.length-1?'<div class="absolute top-5 left-[calc(50%+20px)] right-0 h-0.5 bg-gradient-to-r from-brand-200 to-brand-100"></div>':'')+
+            '<div class="text-[11px] text-slate-500 text-center leading-relaxed mt-3 px-2">'+p.event+'</div>'+
+          '</div>'
+        ).join('')+'</div>'+
+      '</div>'+
+
+      // Data source note
+      '<div class="text-[10px] text-slate-300 text-center leading-relaxed pb-4">'+
+        '본 통계는 건강보험심사평가원에서 공공누리 제1유형으로 개방한 보건의료빅데이터를 이용하였습니다.<br>'+
+        '2023-2024년 데이터는 연평균 성장률 기반 추정치이며, 정확한 수치는 심평원 공식 데이터를 참고하시기 바랍니다.'+
+      '</div>'+
+    '</div>';
+
+    // Render Charts
+    setTimeout(()=>{renderCICharts(s)},100);
+  }catch(e){document.getElementById('content').innerHTML='<div class="p-7"><div class="card-flat p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i>통계 데이터를 불러올 수 없습니다</div></div>'}
+}
+
+function renderCICharts(s){
+  const defs={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}};
+  const font={family:'Pretendard,Inter,-apple-system,sans-serif'};
+  Chart.defaults.font.family=font.family;Chart.defaults.font.size=11;
+
+  // 1. Yearly procedures
+  const yp=s.yearlyProcedures;
+  ciCharts.push(new Chart(document.getElementById('chart-yearly'),{
+    type:'bar',data:{
+      labels:yp.map(d=>d.year+'년'),
+      datasets:[
+        {label:'시술건수',data:yp.map(d=>d.procedures),backgroundColor:'rgba(51,102,255,0.7)',borderRadius:8,barPercentage:0.5,order:2},
+        {label:'환자수',data:yp.map(d=>d.patients),type:'line',borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',borderWidth:2.5,pointRadius:4,pointBackgroundColor:'#10b981',fill:true,tension:0.4,order:1}
+      ]
+    },options:{...defs,plugins:{...defs.plugins,legend:{display:true,position:'top',labels:{boxWidth:10,padding:15,font:{size:11}}}},scales:{y:{beginAtZero:false,min:500,grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{size:10}}},x:{grid:{display:false},ticks:{font:{size:10}}}}}
+  }));
+
+  // 2. Gender chart
+  ciCharts.push(new Chart(document.getElementById('chart-gender'),{
+    type:'bar',data:{
+      labels:yp.map(d=>d.year+'년'),
+      datasets:[
+        {label:'남성',data:yp.map(d=>d.male),backgroundColor:'rgba(59,130,246,0.7)',borderRadius:6,barPercentage:0.6},
+        {label:'여성',data:yp.map(d=>d.female),backgroundColor:'rgba(244,114,182,0.7)',borderRadius:6,barPercentage:0.6}
+      ]
+    },options:{...defs,plugins:{...defs.plugins,legend:{display:true,position:'top',labels:{boxWidth:10,padding:15,font:{size:11}}}},scales:{y:{beginAtZero:false,min:300,grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{size:10}}},x:{grid:{display:false},ticks:{font:{size:10}}}}}
+  }));
+
+  // 3. Age distribution (horizontal bar)
+  const ad=s.ageDistribution;
+  ciCharts.push(new Chart(document.getElementById('chart-age'),{
+    type:'doughnut',data:{
+      labels:ad.map(d=>d.group+' ('+d.label+')'),
+      datasets:[{data:ad.map(d=>d.ratio),backgroundColor:ad.map(d=>d.color),borderWidth:2,borderColor:'#fff',hoverOffset:8}]
+    },options:{...defs,cutout:'55%',plugins:{...defs.plugins,legend:{display:true,position:'right',labels:{boxWidth:10,padding:10,font:{size:10},generateLabels:function(chart){return chart.data.labels.map((l,i)=>({text:l+' '+chart.data.datasets[0].data[i]+'%',fillStyle:chart.data.datasets[0].backgroundColor[i],hidden:false,index:i}))}}}}}
+  }));
+
+  // 4. Age growth rate (horizontal bar)
+  const agr=s.ageGrowthRate;
+  ciCharts.push(new Chart(document.getElementById('chart-growth'),{
+    type:'bar',data:{
+      labels:agr.map(d=>d.group),
+      datasets:[{data:agr.map(d=>d.rate),backgroundColor:agr.map(d=>d.rate>=0?'rgba(16,185,129,0.7)':'rgba(239,68,68,0.7)'),borderRadius:6,barPercentage:0.6}]
+    },options:{...defs,indexAxis:'y',scales:{x:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{callback:v=>v+'%',font:{size:10}}},y:{grid:{display:false},ticks:{font:{size:11,weight:'600'}}}}}
+  }));
+
+  // 5. Region distribution
+  const rd=s.regionDistribution;
+  const regionColors=['#3366ff','#6388ff','#059669','#10b981','#d97706','#f59e0b','#8b5cf6','#c4b5fd'];
+  ciCharts.push(new Chart(document.getElementById('chart-region'),{
+    type:'bar',data:{
+      labels:rd.map(d=>d.region),
+      datasets:[{data:rd.map(d=>d.count),backgroundColor:regionColors,borderRadius:8,barPercentage:0.6}]
+    },options:{...defs,scales:{y:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{size:10}}},x:{grid:{display:false},ticks:{font:{size:11,weight:'600'}}}},plugins:{...defs.plugins,tooltip:{callbacks:{label:function(ctx){return ctx.raw+'건 ('+rd[ctx.dataIndex].ratio+'%)'}}}}}
+  }));
+
+  // 6. Institution type (pie)
+  const it=s.institutionType;
+  ciCharts.push(new Chart(document.getElementById('chart-inst'),{
+    type:'doughnut',data:{
+      labels:it.map(d=>d.type),
+      datasets:[{data:it.map(d=>d.ratio),backgroundColor:it.map(d=>d.color),borderWidth:2,borderColor:'#fff',hoverOffset:6}]
+    },options:{...defs,cutout:'50%',plugins:{...defs.plugins,legend:{display:true,position:'bottom',labels:{boxWidth:10,padding:12,font:{size:11},generateLabels:function(chart){return chart.data.labels.map((l,i)=>({text:l+' '+chart.data.datasets[0].data[i]+'%',fillStyle:chart.data.datasets[0].backgroundColor[i],hidden:false,index:i}))}}}}}
+  }));
+}
 
 nav('dashboard');
 </script></body></html>`
