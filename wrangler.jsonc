@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "webapp",
+  "name": "todoc-crm",
   "compatibility_date": "2026-03-26",
   "pages_build_output_dir": "./dist",
   "compatibility_flags": [
@@ -10,7 +10,7 @@
     {
       "binding": "DB",
       "database_name": "todoc-crm-production",
-      "database_id": "local-dev-placeholder"
+      "database_id": "f3fa9f6e-dab3-4fa0-b442-39f74c0c184a"
     }
   ]
 }
