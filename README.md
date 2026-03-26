@@ -2,55 +2,52 @@
 
 ## Project Overview
 - **Name**: TODOC CRM
-- **Goal**: 인공와우 전문기업 토닥(TODOC)의 병원 영업팀이 병원, 교수, 미팅 기록을 체계적으로 관리
+- **Company**: 토닥(TODOC) - 인공와우 전문기업
+- **Goal**: 병원 영업팀이 영업 대상 병원, 교수, 미팅 기록을 체계적으로 관리하는 CRM 시스템
 - **Tech Stack**: Hono + TypeScript + Cloudflare Pages + D1 Database + TailwindCSS
+
+## URLs
+- **Production**: https://todoc-crm.pages.dev
+- **D1 Database**: todoc-crm-production (f3fa9f6e-dab3-4fa0-b442-39f74c0c184a)
 
 ## 주요 기능
 
 ### 완성된 기능
-- **대시보드**: 관리 병원 수, 교수 수, 미팅 수 통계 / 최근 미팅 / 후속 액션 목록
-- **병원 관리**: 병원 추가/수정/삭제, 등급(S/A/B/C) 분류, 지역별 필터, 검색
-- **교수 관리**: 교수 추가/수정/삭제, 영향력 등급(핵심/주요/일반), 전문분야, 소속병원별 관리
-- **미팅 기록**: 미팅 추가/수정/삭제, 유형(방문/전화/학회/이메일/온라인), 내용/결과/후속액션 기록
-- **병원 상세 페이지**: 소속 교수 목록, 미팅 기록 타임라인, 한눈에 관리
+- **대시보드**: 병원/교수/미팅 통계, 이번 달 미팅 수, 지역별 분포 차트, 최근 미팅 타임라인, 후속 액션 추적
+- **병원 관리**: 카드형 목록, S/A/B/C 등급 분류, 지역/등급 필터, 실시간 검색, 병원별 교수수/미팅수/최근미팅 표시
+- **병원 상세**: 기본정보, 소속 교수 목록(영향력 표시), 미팅 기록 타임라인, 후속액션 추적
+- **교수 관리**: 전체 교수 테이블, 소속병원/진료과/전문분야/영향력/미팅횟수 표시, 검색
+- **교수 사진 업로드**: 프로필 사진 업로드(2MB 이하, 자동 200x200 리사이징, Base64 D1 저장)
+- **미팅 기록**: 전체 미팅 타임라인, 유형별(방문/전화/학회/이메일/온라인) 분류, 목적/내용/결과/후속액션 관리
 
-## URLs
-- **Development**: https://3000-iylehv8wdr8gpuk9sw65x-d0b9e1e2.sandbox.novita.ai
+### 데이터 모델
+| 테이블 | 주요 필드 |
+|--------|----------|
+| hospitals | name, region, address, phone, grade(S/A/B/C), status, notes |
+| doctors | name, department, position, specialty, influence_level(high/medium/low), photo |
+| meetings | meeting_date, meeting_type, purpose, content, result, next_action, next_meeting_date |
 
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/dashboard` | 대시보드 통계 |
-| GET | `/api/hospitals` | 병원 목록 (`?region=&status=&search=`) |
-| GET | `/api/hospitals/:id` | 병원 상세 |
-| POST | `/api/hospitals` | 병원 추가 |
-| PUT | `/api/hospitals/:id` | 병원 수정 |
-| DELETE | `/api/hospitals/:id` | 병원 삭제 |
-| GET | `/api/hospitals/:id/doctors` | 해당 병원 교수 목록 |
-| GET | `/api/doctors` | 전체 교수 목록 (`?search=`) |
-| POST | `/api/doctors` | 교수 추가 |
-| PUT | `/api/doctors/:id` | 교수 수정 |
-| DELETE | `/api/doctors/:id` | 교수 삭제 |
-| GET | `/api/meetings` | 미팅 기록 (`?doctor_id=&hospital_id=&limit=`) |
-| POST | `/api/meetings` | 미팅 추가 |
-| PUT | `/api/meetings/:id` | 미팅 수정 |
-| DELETE | `/api/meetings/:id` | 미팅 삭제 |
+| GET | `/api/dashboard` | 대시보드 통계 (월별 미팅, 지역 분포 포함) |
+| GET | `/api/hospitals` | 병원 목록 (?region, ?status, ?search, ?grade) |
+| GET/POST/PUT/DELETE | `/api/hospitals/:id` | 병원 CRUD |
+| GET | `/api/hospitals/:id/doctors` | 병원별 교수 목록 |
+| GET/POST/PUT/DELETE | `/api/doctors/:id` | 교수 CRUD |
+| POST/DELETE | `/api/doctors/:id/photo` | 교수 사진 업로드/삭제 |
+| GET/POST/PUT/DELETE | `/api/meetings/:id` | 미팅 CRUD |
 | GET | `/api/regions` | 지역 목록 |
 
-## Data Architecture
-- **D1 Database**: Cloudflare D1 (SQLite) - `todoc-crm-production`
-- **Tables**: hospitals, doctors, meetings
-- **Relationships**: hospitals → doctors (1:N), doctors → meetings (1:N), hospitals → meetings (1:N)
-
 ## User Guide
-1. **대시보드**에서 전체 현황을 한눈에 확인
-2. **병원 관리**에서 영업 대상 병원 목록을 관리하고, 등급/지역별 필터링
-3. 병원 카드를 클릭하면 **병원 상세 페이지**로 이동
-4. 상세 페이지에서 소속 **교수 추가/수정** 및 **미팅 기록 추가**
-5. 미팅 기록에 결과와 후속 액션을 입력하면 대시보드에서 추적 가능
+1. **대시보드**에서 전체 현황 확인 (통계 카드 클릭 시 해당 페이지 이동)
+2. **병원 관리** → 병원 추가 후, 카드 클릭하여 상세 페이지 이동
+3. 병원 상세에서 **교수 추가** → 교수 프로필 사진 클릭하여 사진 업로드
+4. **미팅 기록** 추가 시 결과, 후속 액션, 다음 미팅 예정일 입력
+5. 대시보드의 **후속 액션** 패널에서 To-Do 추적
 
 ## Deployment
-- **Platform**: Cloudflare Pages
-- **Status**: ✅ Development Active
+- **Platform**: Cloudflare Pages + D1 Database
+- **Status**: ✅ Production Active
 - **Last Updated**: 2026-03-26
