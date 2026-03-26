@@ -126,82 +126,93 @@ app.get('/api/regions', async (c) => {
   return c.json({ data: r.results.map((x: any) => x.region) })
 })
 
-// ===== CI Statistics (S5800) =====
-app.get('/api/ci-stats', (c) => {
-  // 건강보험심사평가원 보건의료빅데이터 - S5800 인공와우이식술 통계
-  // 출처: NHIS 빅데이터, Korean J Otorhinolaryngol-Head Neck Surg 2024/2025 연구논문
-  // 2010-2022 실제 데이터 + 2023-2024 추세 기반 추정치
-  return c.json({ data: {
-    source: '건강보험심사평가원 보건의료빅데이터개방시스템 (S5800 인공와우이식술)',
-    reference: 'Korean J Otorhinolaryngol-Head Neck Surg. 2025;68(3):94-104, 68(9):351-361',
-    lastUpdated: '2025-12',
-    // 연도별 시술 건수 (S5800 코드 기준)
-    yearlyProcedures: [
-      {year:2018, procedures:803, patients:752, male:380, female:372},
-      {year:2019, procedures:862, patients:784, male:396, female:388},
-      {year:2020, procedures:895, patients:761, male:373, female:388},
-      {year:2021, procedures:938, patients:810, male:405, female:405},
-      {year:2022, procedures:1044, patients:872, male:440, female:432},
-      {year:2023, procedures:1108, patients:925, male:467, female:458},
-      {year:2024, procedures:1175, patients:980, male:495, female:485}
-    ],
-    // 연령대별 분포 (최근 5년 누적 비율)
-    ageDistribution: [
-      {group:'0-2세', label:'영유아', count:625, ratio:8.9, trend:'increase', color:'#818cf8'},
-      {group:'3-9세', label:'소아', count:420, ratio:6.0, trend:'decrease', color:'#60a5fa'},
-      {group:'10-19세', label:'청소년', count:315, ratio:4.5, trend:'decrease', color:'#34d399'},
-      {group:'20-39세', label:'청년', count:560, ratio:8.0, trend:'stable', color:'#fbbf24'},
-      {group:'40-59세', label:'중장년', count:1680, ratio:24.0, trend:'increase', color:'#f472b6'},
-      {group:'60-79세', label:'고령자', count:2870, ratio:41.0, trend:'rapid_increase', color:'#ef4444'},
-      {group:'80세 이상', label:'초고령자', count:530, ratio:7.6, trend:'rapid_increase', color:'#a78bfa'}
-    ],
-    // 지역별 분포 (2022년 기준)
-    regionDistribution: [
-      {region:'서울', count:566, ratio:54.2},
-      {region:'경기', count:314, ratio:30.1},
-      {region:'부산', count:52, ratio:5.0},
-      {region:'대구', count:27, ratio:2.6},
-      {region:'충남', count:22, ratio:2.1},
-      {region:'경북', count:18, ratio:1.7},
-      {region:'경남', count:15, ratio:1.4},
-      {region:'기타', count:30, ratio:2.9}
-    ],
-    // 요양기관종별 비율
-    institutionType: [
-      {type:'상급종합병원', ratio:78.5, color:'#3366ff'},
-      {type:'종합병원', ratio:18.2, color:'#059669'},
-      {type:'병원', ratio:2.8, color:'#d97706'},
-      {type:'기타', ratio:0.5, color:'#9ca3af'}
-    ],
-    // 연령대별 연평균 증감률 (2010-2022)
-    ageGrowthRate: [
-      {group:'10세 미만', rate:-3.69},
-      {group:'10대', rate:-1.37},
-      {group:'20대', rate:4.91},
-      {group:'30대', rate:4.13},
-      {group:'40대', rate:6.08},
-      {group:'50대', rate:6.29},
-      {group:'60세 이상', rate:14.15}
-    ],
-    // 주요 인사이트
-    insights: [
-      {icon:'fa-chart-line', title:'연평균 성장률', value:'6.15%', desc:'2010년 568건 → 2022년 1,044건으로 연평균 6.15% 성장'},
-      {icon:'fa-users', title:'성비', value:'50.5:49.5', desc:'남녀 비율이 거의 동일하게 관찰'},
-      {icon:'fa-person-cane', title:'고령자 급증', value:'+14.15%', desc:'60세 이상 연평균 증가율이 가장 높음'},
-      {icon:'fa-city', title:'수도권 집중', value:'84.3%', desc:'서울·경기 지역에 시술의 84% 이상 집중'},
-      {icon:'fa-child', title:'소아 감소', value:'-3.69%', desc:'10세 미만 소아 시술은 연평균 감소 추세'},
-      {icon:'fa-hospital', title:'상급종합병원', value:'78.5%', desc:'대부분의 시술이 상급종합병원에서 시행'}
-    ],
-    // 보험 급여 주요 변경 이력
-    policyChanges: [
-      {year:2005, event:'인공와우 이식술 요양급여 대상 최초 지정'},
-      {year:2009, event:'2세 미만 소아 양측 인공와우 건강보험 급여 인정'},
-      {year:2015, event:'건강보험 인정 기준 대폭 확대 (보장성 강화)'},
-      {year:2017, event:'건강보험 적용 연령 15세 → 19세 미만 확대'},
-      {year:2018, event:'모든 어린이 건강보험 비용 전액 지원 시작'},
-      {year:2025, event:'급여 기준 지속 확대 논의 중'}
-    ]
-  }})
+// ===== CI Statistics (S5800) - 실제 HIRA 데이터 =====
+app.get('/api/ci-stats', async (c) => {
+  const [ioAll, age10All, age5All, regionAll, instAll] = await Promise.all([
+    c.env.DB.prepare("SELECT * FROM ci_inpatient_outpatient ORDER BY year ASC, gender ASC").all(),
+    c.env.DB.prepare("SELECT * FROM ci_age10_stats WHERE gender != '계' AND age_group NOT IN ('계','소계') ORDER BY year ASC, gender ASC, id ASC").all(),
+    c.env.DB.prepare("SELECT * FROM ci_age5_stats WHERE gender != '계' AND age_group NOT IN ('계','소계') ORDER BY year ASC, gender ASC, id ASC").all(),
+    c.env.DB.prepare("SELECT * FROM ci_region_stats WHERE region != '계' ORDER BY year ASC, patients DESC").all(),
+    c.env.DB.prepare("SELECT * FROM ci_institution_stats WHERE institution_type != '계' ORDER BY year ASC, patients DESC").all(),
+  ])
+
+  // 연도별 총계 (입원외래에서)
+  const ioTotals = (ioAll.results as any[]).filter(r => r.gender === '계' && r.visit_type === '계')
+  const ioMale = (ioAll.results as any[]).filter(r => r.gender === '남' && r.visit_type === '소계')
+  const ioFemale = (ioAll.results as any[]).filter(r => r.gender === '여' && r.visit_type === '소계')
+
+  const yearlyData = ioTotals.map(t => {
+    const m = ioMale.find(x => x.year === t.year)
+    const f = ioFemale.find(x => x.year === t.year)
+    return {
+      year: t.year, patients: t.patients, usage: t.usage, amount: t.amount,
+      male_patients: m?.patients || 0, male_usage: m?.usage || 0, male_amount: m?.amount || 0,
+      female_patients: f?.patients || 0, female_usage: f?.usage || 0, female_amount: f?.amount || 0
+    }
+  })
+
+  // 연령대 10세 구간 (성별)
+  const age10Data = age10All.results as any[]
+  const age5Data = age5All.results as any[]
+
+  // 지역별 (연도별)
+  const regionData = regionAll.results as any[]
+  const years = [...new Set(regionData.map((r:any) => r.year))].sort()
+
+  // 요양기관 종별 (연도별)
+  const instData = instAll.results as any[]
+
+  // 인사이트 자동 계산
+  const insights: any[] = []
+  if (yearlyData.length >= 2) {
+    const first = yearlyData[0], last = yearlyData[yearlyData.length - 1]
+    const cagrP = (Math.pow(last.patients / first.patients, 1 / (last.year - first.year)) - 1) * 100
+    const cagrU = (Math.pow(last.usage / first.usage, 1 / (last.year - first.year)) - 1) * 100
+    insights.push({ icon: 'fa-chart-line', title: '환자수 연평균 성장률', value: cagrP.toFixed(1) + '%', desc: first.year + '년 ' + first.patients + '명 → ' + last.year + '년 ' + last.patients + '명' })
+    insights.push({ icon: 'fa-arrow-trend-up', title: '시술건수 연평균 성장률', value: cagrU.toFixed(1) + '%', desc: first.year + '년 ' + first.usage + '건 → ' + last.year + '년 ' + last.usage + '건' })
+    const totalM = yearlyData.reduce((a, b) => a + b.male_patients, 0)
+    const totalF = yearlyData.reduce((a, b) => a + b.female_patients, 0)
+    const total = totalM + totalF
+    if (total > 0) insights.push({ icon: 'fa-venus-mars', title: '성비 (남:여)', value: (totalM / total * 100).toFixed(1) + ':' + (totalF / total * 100).toFixed(1), desc: '전체 기간 누적 성비' })
+    const totalAmount = yearlyData.reduce((a, b) => a + b.amount, 0)
+    insights.push({ icon: 'fa-won-sign', title: '6년간 총 진료금액', value: (totalAmount / 1000).toFixed(0) + '억원', desc: '2019-2024 누적 (단위: 천원 기준)' })
+  }
+
+  // 최신 연도 지역 집중도
+  const latestYear = years[years.length - 1]
+  const latestRegion = regionData.filter((r: any) => r.year === latestYear)
+  const totalRegPat = latestRegion.reduce((a: number, b: any) => a + b.patients, 0)
+  const seoulGyeonggi = latestRegion.filter((r: any) => r.region === '서울' || r.region === '경기').reduce((a: number, b: any) => a + b.patients, 0)
+  if (totalRegPat > 0) insights.push({ icon: 'fa-city', title: '수도권 집중도', value: (seoulGyeonggi / totalRegPat * 100).toFixed(1) + '%', desc: latestYear + '년 서울+경기 환자 비율' })
+
+  // 최신 연도 상급종합 비율
+  const latestInst = instData.filter((i: any) => i.year === latestYear)
+  const totalInstPat = latestInst.reduce((a: number, b: any) => a + b.patients, 0)
+  const topInst = latestInst[0]
+  if (topInst && totalInstPat > 0) insights.push({ icon: 'fa-hospital', title: topInst.institution_type + ' 비율', value: (topInst.patients / totalInstPat * 100).toFixed(1) + '%', desc: latestYear + '년 기준 환자수 비율' })
+
+  return c.json({
+    data: {
+      source: '건강보험심사평가원 보건의료빅데이터개방시스템',
+      code: 'S5800 (인공와우이식술)',
+      period: yearlyData.length ? yearlyData[0].year + '-' + yearlyData[yearlyData.length - 1].year : '-',
+      years: years,
+      yearly: yearlyData,
+      age10: age10Data,
+      age5: age5Data,
+      region: regionData,
+      institution: instData,
+      insights,
+      policyChanges: [
+        { year: 2005, event: '인공와우 이식술 요양급여 대상 최초 지정' },
+        { year: 2009, event: '2세 미만 소아 양측 인공와우 건강보험 급여 인정' },
+        { year: 2015, event: '건강보험 인정 기준 대폭 확대 (보장성 강화)' },
+        { year: 2017, event: '건강보험 적용 연령 15세 → 19세 미만 확대' },
+        { year: 2018, event: '모든 어린이 건강보험 비용 전액 지원 시작' },
+        { year: 2025, event: '급여 기준 지속 확대 논의 중' }
+      ]
+    }
+  })
 })
 
 // ===== SPA =====
@@ -731,139 +742,369 @@ async function delMeet(id,hid){showConfirm('미팅 삭제','이 미팅 기록을
 
 async function delMeet(id,hid){showConfirm('미팅 삭제','이 미팅 기록을 삭제하시겠습니까?',async()=>{try{await API.delete('/meetings/'+id);toast('미팅 기록이 삭제되었습니다');viewHosp(hid)}catch(e){toast('삭제에 실패했습니다','err')}})}
 
-/* ===== CI STATS PAGE ===== */
+/* ===== CI STATS PAGE - 실제 HIRA 데이터 기반 ===== */
 let ciCharts=[];
 function destroyCICharts(){ciCharts.forEach(c=>{try{c.destroy()}catch(e){}});ciCharts=[]}
+
+function fmtAmount(v){
+  if(v>=1000000) return (v/1000000).toFixed(1)+'조원';
+  if(v>=1000) return (v/1000).toFixed(0)+'억원';
+  return v+'천원';
+}
+function fmtNum(n){return n.toLocaleString('ko-KR')}
+
 async function loadCIStats(){
   destroyCICharts();
   document.getElementById('page-title').textContent='인공와우 이식술 통계';
-  document.getElementById('page-subtitle').innerHTML='<span class="text-[11px] text-slate-400">S5800 | 건강보험심사평가원 빅데이터</span>';
+  document.getElementById('page-subtitle').innerHTML='<span class="text-[11px] text-slate-400">S5800 | 건강보험심사평가원 실제 데이터</span>';
   document.getElementById('header-actions').innerHTML='';
-  document.getElementById('content').innerHTML='<div class="p-7 space-y-6"><div class="grid grid-cols-3 gap-5">'+Array(6).fill('<div class="sc"><div class="space-y-2"><div class="skeleton rounded h-4 w-24"></div><div class="skeleton rounded h-7 w-16"></div></div></div>').join('')+'</div><div class="grid grid-cols-2 gap-6">'+Array(4).fill('<div class="card-flat p-6"><div class="skeleton rounded h-4 w-32 mb-4"></div><div class="skeleton rounded h-[200px]"></div></div>').join('')+'</div></div>';
+  document.getElementById('content').innerHTML='<div class="p-7 space-y-6"><div class="grid grid-cols-3 gap-5">'+Array(6).fill('<div class="sc"><div class="space-y-2"><div class="skeleton rounded h-4 w-24"></div><div class="skeleton rounded h-7 w-16"></div></div></div>').join('')+'</div></div>';
   try{
     const{data:d}=await API.get('/ci-stats');const s=d.data;
-    const yp=s.yearlyProcedures;const latestY=yp[yp.length-1];const prevY=yp[yp.length-2];
-    const growthP=((latestY.procedures-prevY.procedures)/prevY.procedures*100).toFixed(1);
-    const totalP5=yp.slice(-5).reduce((a,b)=>a+b.procedures,0);
-
-    document.getElementById('content').innerHTML='<div class="p-7 fade-in space-y-6">'+
-      // Source banner
-      '<div class="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl p-5 flex items-center gap-4 border border-indigo-100">'+
-        '<div class="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center flex-shrink-0"><i class="fas fa-database text-indigo-500 text-lg"></i></div>'+
-        '<div class="flex-1 min-w-0"><div class="font-bold text-indigo-900 text-sm mb-0.5">건강보험심사평가원 보건의료빅데이터개방시스템</div><div class="text-xs text-indigo-400">진료행위코드 S5800 (인공와우이식술) | '+s.reference+'</div></div>'+
-        '<div class="text-right flex-shrink-0"><div class="text-[10px] text-indigo-300 font-medium">최종 업데이트</div><div class="text-sm font-bold text-indigo-600">'+s.lastUpdated+'</div></div>'+
-      '</div>'+
-
-      // Insight cards
-      '<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">'+
-        s.insights.map(i=>'<div class="sc !p-4"><div class="flex items-center gap-2 mb-2"><div class="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas '+i.icon+' text-brand-500 text-xs"></i></div></div><div class="text-[20px] font-extrabold text-slate-800 tracking-tight mb-0.5">'+i.value+'</div><div class="text-[11px] font-semibold text-slate-500 mb-1">'+i.title+'</div><div class="text-[10px] text-slate-400 leading-relaxed">'+i.desc+'</div></div>').join('')+
-      '</div>'+
-
-      // Charts row 1
-      '<div class="grid grid-cols-5 gap-6">'+
-        '<div class="col-span-3 card-flat p-6"><div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-chart-line text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 시술 건수 추이</span></div><div class="flex items-center gap-3 text-[10px]"><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-brand-500"></span>시술건수</span><span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-full bg-emerald-400"></span>환자수</span></div></div><div style="height:280px"><canvas id="chart-yearly"></canvas></div></div>'+
-        '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-venus-mars text-purple-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">성별 분포 추이</span></div><div style="height:280px"><canvas id="chart-gender"></canvas></div></div>'+
-      '</div>'+
-
-      // Charts row 2
-      '<div class="grid grid-cols-5 gap-6">'+
-        '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-cake-candles text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연령대별 분포</span></div><div style="height:280px"><canvas id="chart-age"></canvas></div></div>'+
-        '<div class="col-span-3 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-rose-50 flex items-center justify-center"><i class="fas fa-arrow-trend-up text-rose-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연령대별 연평균 성장률 (2010-2022)</span></div><div style="height:280px"><canvas id="chart-growth"></canvas></div></div>'+
-      '</div>'+
-
-      // Charts row 3
-      '<div class="grid grid-cols-5 gap-6">'+
-        '<div class="col-span-3 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">지역별 시술 분포 (2022)</span></div><div style="height:280px"><canvas id="chart-region"></canvas></div></div>'+
-        '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-hospital text-cyan-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">요양기관 종별</span></div><div style="height:280px"><canvas id="chart-inst"></canvas></div></div>'+
-      '</div>'+
-
-      // Policy timeline
-      '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-landmark text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">건강보험 급여 정책 변천</span></div>'+
-        '<div class="flex items-start gap-0 overflow-x-auto pb-2">'+s.policyChanges.map((p,i)=>
-          '<div class="flex flex-col items-center min-w-[140px] flex-1 relative">'+
-            '<div class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-brand-500/20 z-10">'+p.year+'</div>'+
-            (i<s.policyChanges.length-1?'<div class="absolute top-5 left-[calc(50%+20px)] right-0 h-0.5 bg-gradient-to-r from-brand-200 to-brand-100"></div>':'')+
-            '<div class="text-[11px] text-slate-500 text-center leading-relaxed mt-3 px-2">'+p.event+'</div>'+
-          '</div>'
-        ).join('')+'</div>'+
-      '</div>'+
-
-      // Data source note
-      '<div class="text-[10px] text-slate-300 text-center leading-relaxed pb-4">'+
-        '본 통계는 건강보험심사평가원에서 공공누리 제1유형으로 개방한 보건의료빅데이터를 이용하였습니다.<br>'+
-        '2023-2024년 데이터는 연평균 성장률 기반 추정치이며, 정확한 수치는 심평원 공식 데이터를 참고하시기 바랍니다.'+
-      '</div>'+
-    '</div>';
-
-    // Render Charts
-    setTimeout(()=>{renderCICharts(s)},100);
-  }catch(e){document.getElementById('content').innerHTML='<div class="p-7"><div class="card-flat p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i>통계 데이터를 불러올 수 없습니다</div></div>'}
+    const y=s.yearly;
+    // Tab state
+    let ciTab='overview';
+    window._ciData=s;
+    renderCITab(ciTab);
+  }catch(e){document.getElementById('content').innerHTML='<div class="p-7"><div class="card-flat p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i>통계 데이터를 불러올 수 없습니다<br><span class="text-xs text-slate-400 mt-2 block">'+e.message+'</span></div></div>'}
 }
 
-function renderCICharts(s){
+function renderCITab(tab){
+  destroyCICharts();
+  const s=window._ciData;
+  const y=s.yearly;
+  const tabs=['overview','age','region','institution','amount'];
+  const tabLabels={'overview':'종합 현황','age':'연령별 분석','region':'지역별 분석','institution':'기관 종별','amount':'진료금액'};
+  const tabIcons={'overview':'fa-chart-pie','age':'fa-cake-candles','region':'fa-map-location-dot','institution':'fa-hospital','amount':'fa-won-sign'};
+
+  document.getElementById('content').innerHTML='<div class="p-7 fade-in space-y-6">'+
+    // Source banner
+    '<div class="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl p-5 flex items-center gap-4 border border-indigo-100">'+
+      '<div class="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center flex-shrink-0"><i class="fas fa-database text-indigo-500 text-lg"></i></div>'+
+      '<div class="flex-1 min-w-0"><div class="font-bold text-indigo-900 text-sm mb-0.5">건강보험심사평가원 보건의료빅데이터개방시스템</div><div class="text-xs text-indigo-400">'+s.code+' | 기간: '+s.period+' | 공공누리 제1유형</div></div>'+
+      '<div class="flex items-center gap-2"><span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-3 py-1.5 rounded-full"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>100% 실제 데이터</span></div>'+
+    '</div>'+
+
+    // Tabs
+    '<div class="flex border-b border-gray-100 px-1">'+
+      tabs.map(t=>'<div class="tab '+(tab===t?'active':'')+'" onclick="renderCITab(\\''+t+'\\')"><i class="fas '+tabIcons[t]+' text-xs"></i>'+tabLabels[t]+'</div>').join('')+
+    '</div>'+
+
+    // Tab content
+    renderCIContent(tab,s)+
+
+    // Data source note
+    '<div class="text-[10px] text-slate-300 text-center leading-relaxed pb-4">'+
+      '본 통계는 건강보험심사평가원에서 공공누리 제1유형으로 개방한 보건의료빅데이터를 이용하였습니다. 모든 데이터는 HIRA 공식 데이터이며 추정치가 포함되어 있지 않습니다.<br>'+
+      '단위: 환자수(명), 총사용량(회), 진료금액(천원)'+
+    '</div>'+
+  '</div>';
+  setTimeout(()=>renderCIChartsForTab(tab,s),100);
+}
+
+function renderCIContent(tab,s){
+  if(tab==='overview') return renderOverview(s);
+  if(tab==='age') return renderAge(s);
+  if(tab==='region') return renderRegion(s);
+  if(tab==='institution') return renderInstitution(s);
+  if(tab==='amount') return renderAmount(s);
+  return '';
+}
+
+function renderOverview(s){
+  const y=s.yearly;
+  const last=y[y.length-1];const prev=y[y.length-2];
+  const growP=((last.patients-prev.patients)/prev.patients*100).toFixed(1);
+  const growU=((last.usage-prev.usage)/prev.usage*100).toFixed(1);
+  return '<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">'+
+    s.insights.map(i=>'<div class="sc !p-4"><div class="flex items-center gap-2 mb-2"><div class="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas '+i.icon+' text-brand-500 text-xs"></i></div></div><div class="text-[20px] font-extrabold text-slate-800 tracking-tight mb-0.5">'+i.value+'</div><div class="text-[11px] font-semibold text-slate-500 mb-1">'+i.title+'</div><div class="text-[10px] text-slate-400 leading-relaxed">'+i.desc+'</div></div>').join('')+
+  '</div>'+
+  // Charts
+  '<div class="grid grid-cols-5 gap-6">'+
+    '<div class="col-span-3 card-flat p-6"><div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-chart-line text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 환자수 · 시술건수 추이</span></div></div><div style="height:300px"><canvas id="chart-yearly"></canvas></div></div>'+
+    '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-venus-mars text-purple-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">성별 환자수 추이</span></div><div style="height:300px"><canvas id="chart-gender"></canvas></div></div>'+
+  '</div>'+
+  // Data table
+  '<div class="card-flat overflow-hidden"><div class="px-6 py-4 flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center"><i class="fas fa-table text-slate-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 상세 데이터 (입원외래별)</span></div>'+
+    '<table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-y border-gray-100">'+
+      '<th class="px-4 py-3 text-left">연도</th><th class="px-4 py-3 text-right">환자수</th><th class="px-4 py-3 text-right">총사용량</th><th class="px-4 py-3 text-right">진료금액(천원)</th><th class="px-4 py-3 text-right">남성</th><th class="px-4 py-3 text-right">여성</th><th class="px-4 py-3 text-right">전년대비</th></tr></thead>'+
+    '<tbody class="divide-y divide-gray-50">'+y.map((r,i)=>{
+      const g=i>0?((r.patients-y[i-1].patients)/y[i-1].patients*100).toFixed(1):'—';
+      const gc=i>0?(r.patients>y[i-1].patients?'text-emerald-600':'text-red-500'):'text-slate-400';
+      return '<tr class="tr"><td class="px-4 py-3 font-bold text-slate-800 text-sm">'+r.year+'년</td><td class="px-4 py-3 text-right font-semibold text-sm text-brand-600">'+fmtNum(r.patients)+'명</td><td class="px-4 py-3 text-right text-sm text-slate-600">'+fmtNum(r.usage)+'회</td><td class="px-4 py-3 text-right text-sm text-slate-600">'+fmtNum(r.amount)+'</td><td class="px-4 py-3 text-right text-sm text-blue-600">'+fmtNum(r.male_patients)+'</td><td class="px-4 py-3 text-right text-sm text-pink-600">'+fmtNum(r.female_patients)+'</td><td class="px-4 py-3 text-right text-sm font-semibold '+gc+'">'+(i>0?(g>0?'+':'')+g+'%':'—')+'</td></tr>'
+    }).join('')+'</tbody></table></div>'+
+  // Policy timeline
+  '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-landmark text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">건강보험 급여 정책 변천</span></div>'+
+    '<div class="flex items-start gap-0 overflow-x-auto pb-2">'+s.policyChanges.map((p,i)=>
+      '<div class="flex flex-col items-center min-w-[140px] flex-1 relative">'+
+        '<div class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-brand-500/20 z-10">'+p.year+'</div>'+
+        (i<s.policyChanges.length-1?'<div class="absolute top-5 left-[calc(50%+20px)] right-0 h-0.5 bg-gradient-to-r from-brand-200 to-brand-100"></div>':'')+
+        '<div class="text-[11px] text-slate-500 text-center leading-relaxed mt-3 px-2">'+p.event+'</div>'+
+      '</div>'
+    ).join('')+'</div>'+
+  '</div>';
+}
+
+function renderAge(s){
+  const years=s.years;
+  const latestY=years[years.length-1];
+  // 10세 구간 - 남녀 합계
+  const ageGroups10=['0_9세','10_19세','20_29세','30_39세','40_49세','50_59세','60_69세','70_79세','80세이상'];
+  const ageLabels10=['0-9세','10-19세','20-29세','30-39세','40-49세','50-59세','60-69세','70-79세','80세이상'];
+  // 5세 구간 그룹
+  const ageGroups5=['5세미만','5_9세','10_14세','15_19세','20_24세','25_29세','30_34세','35_39세','40_44세','45_49세','50_54세','55_59세','60_64세','65_69세','70_74세','75_79세','80세이상'];
+
+  // 최근 연도 연령별 테이블 (10세)
+  const age10Latest = s.age10.filter(r=>r.year===latestY);
+  const maleAge=age10Latest.filter(r=>r.gender==='남');
+  const femaleAge=age10Latest.filter(r=>r.gender==='여');
+
+  return '<div class="grid grid-cols-2 gap-6">'+
+    '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-chart-bar text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">10세 구간별 환자수 추이</span></div><div style="height:320px"><canvas id="chart-age10-trend"></canvas></div></div>'+
+    '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-rose-50 flex items-center justify-center"><i class="fas fa-chart-pie text-rose-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">'+latestY+'년 연령분포 (10세 구간)</span></div><div style="height:320px"><canvas id="chart-age10-pie"></canvas></div></div>'+
+  '</div>'+
+  '<div class="grid grid-cols-2 gap-6">'+
+    '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-person text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">'+latestY+'년 남성 연령분포 (5세 구간)</span></div><div style="height:320px"><canvas id="chart-age5-male"></canvas></div></div>'+
+    '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-pink-50 flex items-center justify-center"><i class="fas fa-person-dress text-pink-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">'+latestY+'년 여성 연령분포 (5세 구간)</span></div><div style="height:320px"><canvas id="chart-age5-female"></canvas></div></div>'+
+  '</div>'+
+  // 연령대별 성장률 비교
+  '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-arrow-trend-up text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연령대별 성장률 ('+years[0]+'→'+latestY+'년, 10세 구간)</span></div><div style="height:280px"><canvas id="chart-age-growth"></canvas></div></div>'+
+  // 상세 테이블
+  '<div class="card-flat overflow-hidden"><div class="px-6 py-4 flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center"><i class="fas fa-table text-slate-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">'+latestY+'년 연령대별 상세 (10세 구간, 남/여)</span></div>'+
+    '<table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100">'+
+      '<th class="px-4 py-3 text-left">연령대</th><th class="px-3 py-3 text-right">남 환자수</th><th class="px-3 py-3 text-right">남 사용량</th><th class="px-3 py-3 text-right">남 금액</th><th class="px-3 py-3 text-right">여 환자수</th><th class="px-3 py-3 text-right">여 사용량</th><th class="px-3 py-3 text-right">여 금액</th><th class="px-3 py-3 text-right">합계</th></tr></thead>'+
+    '<tbody class="divide-y divide-gray-50">'+ageGroups10.map((ag,i)=>{
+      const m=maleAge.find(r=>r.age_group===ag)||{patients:0,usage:0,amount:0};
+      const f=femaleAge.find(r=>r.age_group===ag)||{patients:0,usage:0,amount:0};
+      return '<tr class="tr"><td class="px-4 py-2.5 font-semibold text-sm text-slate-700">'+ageLabels10[i]+'</td><td class="px-3 py-2.5 text-right text-sm text-blue-600">'+fmtNum(m.patients)+'</td><td class="px-3 py-2.5 text-right text-xs text-slate-500">'+fmtNum(m.usage)+'</td><td class="px-3 py-2.5 text-right text-xs text-slate-500">'+fmtNum(m.amount)+'</td><td class="px-3 py-2.5 text-right text-sm text-pink-600">'+fmtNum(f.patients)+'</td><td class="px-3 py-2.5 text-right text-xs text-slate-500">'+fmtNum(f.usage)+'</td><td class="px-3 py-2.5 text-right text-xs text-slate-500">'+fmtNum(f.amount)+'</td><td class="px-3 py-2.5 text-right font-bold text-sm text-slate-800">'+fmtNum(m.patients+f.patients)+'</td></tr>'
+    }).join('')+'</tbody></table></div>';
+}
+
+function renderRegion(s){
+  const years=s.years;
+  const latestY=years[years.length-1];
+  const regLatest=s.region.filter(r=>r.year===latestY && r.patients>0);
+  const totalP=regLatest.reduce((a,b)=>a+b.patients,0);
+  return '<div class="grid grid-cols-5 gap-6">'+
+    '<div class="col-span-3 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-chart-bar text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">'+latestY+'년 지역별 환자수</span></div><div style="height:320px"><canvas id="chart-region-bar"></canvas></div></div>'+
+    '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-chart-pie text-cyan-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">'+latestY+'년 지역 점유율</span></div><div style="height:320px"><canvas id="chart-region-pie"></canvas></div></div>'+
+  '</div>'+
+  '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-chart-area text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">주요 지역 환자수 연도별 추이</span></div><div style="height:300px"><canvas id="chart-region-trend"></canvas></div></div>'+
+  // 상세 테이블
+  '<div class="card-flat overflow-hidden"><div class="px-6 py-4 flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center"><i class="fas fa-table text-slate-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 지역별 환자수 상세</span></div>'+
+    '<div class="overflow-x-auto"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100">'+
+      '<th class="px-4 py-3 text-left sticky left-0 bg-gray-50/80 z-10">지역</th>'+years.map(yr=>'<th class="px-3 py-3 text-right">'+yr+'</th>').join('')+'<th class="px-3 py-3 text-right">변화율</th></tr></thead>'+
+    '<tbody class="divide-y divide-gray-50">'+
+      regLatest.sort((a,b)=>b.patients-a.patients).map(rl=>{
+        const region=rl.region;
+        const vals=years.map(yr=>{const r=s.region.find(x=>x.year===yr&&x.region===region);return r?r.patients:0});
+        const first=vals.find(v=>v>0)||1;const last=vals[vals.length-1];
+        const change=first>0?((last-first)/first*100).toFixed(1):'—';
+        const cc=last>first?'text-emerald-600':'text-red-500';
+        return '<tr class="tr"><td class="px-4 py-2.5 font-semibold text-sm text-slate-700 sticky left-0 bg-white z-10">'+region+'</td>'+vals.map(v=>'<td class="px-3 py-2.5 text-right text-sm '+(v===0?'text-slate-300':'text-slate-600')+'">'+(v>0?fmtNum(v)+' <span class="text-[10px] text-slate-300">('+((v/totalP)*100|0>0?(v/totalP*100).toFixed(1):'<1')+'%)</span>':'-')+'</td>').join('')+'<td class="px-3 py-2.5 text-right text-sm font-semibold '+cc+'">'+change+'%</td></tr>'
+      }).join('')+
+    '</tbody></table></div></div>';
+}
+
+function renderInstitution(s){
+  const years=s.years;
+  const latestY=years[years.length-1];
+  const instLatest=s.institution.filter(r=>r.year===latestY && r.patients>0);
+  const totalP=instLatest.reduce((a,b)=>a+b.patients,0);
+  return '<div class="grid grid-cols-5 gap-6">'+
+    '<div class="col-span-3 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-chart-bar text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">요양기관 종별 환자수 추이</span></div><div style="height:320px"><canvas id="chart-inst-trend"></canvas></div></div>'+
+    '<div class="col-span-2 card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-chart-pie text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">'+latestY+'년 기관 종별 비율</span></div><div style="height:320px"><canvas id="chart-inst-pie"></canvas></div></div>'+
+  '</div>'+
+  // 상세 테이블
+  '<div class="card-flat overflow-hidden"><div class="px-6 py-4 flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center"><i class="fas fa-table text-slate-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 요양기관 종별 상세</span></div>'+
+    '<table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100">'+
+      '<th class="px-4 py-3 text-left">기관 종별</th>'+years.map(yr=>'<th class="px-3 py-3 text-right">'+yr+'년</th>').join('')+'<th class="px-3 py-3 text-right">비중('+latestY+')</th></tr></thead>'+
+    '<tbody class="divide-y divide-gray-50">'+
+      ['상급종합병원','종합병원','병원급','의원급','보건기관등'].map(it=>{
+        const vals=years.map(yr=>{const r=s.institution.find(x=>x.year===yr&&x.institution_type===it);return r?r.patients:0});
+        const last=vals[vals.length-1];
+        const ratio=totalP>0?(last/totalP*100).toFixed(1):'0';
+        return '<tr class="tr"><td class="px-4 py-2.5 font-semibold text-sm text-slate-700">'+it+'</td>'+vals.map(v=>'<td class="px-3 py-2.5 text-right text-sm '+(v===0?'text-slate-300':'text-slate-600')+'">'+(v>0?fmtNum(v):'-')+'</td>').join('')+'<td class="px-3 py-2.5 text-right text-sm font-bold text-brand-600">'+ratio+'%</td></tr>'
+      }).join('')+
+    '</tbody></table></div>';
+}
+
+function renderAmount(s){
+  const years=s.years;
+  const y=s.yearly;
+  const totalAmount=y.reduce((a,b)=>a+b.amount,0);
+  return '<div class="grid grid-cols-3 gap-4 mb-2">'+
+    '<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">6년간 총 진료금액</div><div class="text-[22px] font-extrabold text-slate-800">'+fmtAmount(totalAmount)+'</div><div class="text-[10px] text-slate-400">2019-2024 누적</div></div>'+
+    '<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">'+y[y.length-1].year+'년 진료금액</div><div class="text-[22px] font-extrabold text-brand-600">'+fmtAmount(y[y.length-1].amount)+'</div><div class="text-[10px] text-slate-400">전년대비 +'+(((y[y.length-1].amount-y[y.length-2].amount)/y[y.length-2].amount)*100).toFixed(1)+'%</div></div>'+
+    '<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">1인당 평균 진료비</div><div class="text-[22px] font-extrabold text-emerald-600">'+(y[y.length-1].amount/y[y.length-1].patients).toFixed(0)+'천원</div><div class="text-[10px] text-slate-400">'+y[y.length-1].year+'년 기준 (약 '+(y[y.length-1].amount/y[y.length-1].patients/1000).toFixed(1)+'백만원)</div></div>'+
+  '</div>'+
+  '<div class="grid grid-cols-2 gap-6">'+
+    '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-chart-area text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 진료금액 추이 (천원)</span></div><div style="height:300px"><canvas id="chart-amount-trend"></canvas></div></div>'+
+    '<div class="card-flat p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-chart-bar text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">성별 진료금액 비교</span></div><div style="height:300px"><canvas id="chart-amount-gender"></canvas></div></div>'+
+  '</div>'+
+  // 금액 상세 테이블
+  '<div class="card-flat overflow-hidden"><div class="px-6 py-4 flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center"><i class="fas fa-table text-slate-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 진료금액 상세</span></div>'+
+    '<table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100">'+
+      '<th class="px-4 py-3 text-left">연도</th><th class="px-3 py-3 text-right">총 진료금액</th><th class="px-3 py-3 text-right">남성</th><th class="px-3 py-3 text-right">여성</th><th class="px-3 py-3 text-right">1인당 평균</th><th class="px-3 py-3 text-right">전년대비</th></tr></thead>'+
+    '<tbody class="divide-y divide-gray-50">'+y.map((r,i)=>{
+      const perP=(r.amount/r.patients).toFixed(0);
+      const g=i>0?((r.amount-y[i-1].amount)/y[i-1].amount*100).toFixed(1):'—';
+      const gc=i>0?(r.amount>y[i-1].amount?'text-emerald-600':'text-red-500'):'text-slate-400';
+      return '<tr class="tr"><td class="px-4 py-2.5 font-bold text-sm text-slate-800">'+r.year+'년</td><td class="px-3 py-2.5 text-right font-semibold text-sm text-brand-600">'+fmtNum(r.amount)+'</td><td class="px-3 py-2.5 text-right text-sm text-blue-600">'+fmtNum(r.male_amount)+'</td><td class="px-3 py-2.5 text-right text-sm text-pink-600">'+fmtNum(r.female_amount)+'</td><td class="px-3 py-2.5 text-right text-sm text-slate-600">'+fmtNum(parseInt(perP))+'</td><td class="px-3 py-2.5 text-right text-sm font-semibold '+gc+'">'+(i>0?(g>0?'+':'')+g+'%':'—')+'</td></tr>'
+    }).join('')+'</tbody></table></div>';
+}
+
+function renderCIChartsForTab(tab,s){
+  const font='Pretendard,Inter,-apple-system,sans-serif';
+  Chart.defaults.font.family=font;Chart.defaults.font.size=11;
   const defs={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}};
-  const font={family:'Pretendard,Inter,-apple-system,sans-serif'};
-  Chart.defaults.font.family=font.family;Chart.defaults.font.size=11;
+  const years=s.years;
+  const y=s.yearly;
+  const colors10=['#818cf8','#60a5fa','#34d399','#fbbf24','#f472b6','#a78bfa','#38bdf8','#fb923c','#ef4444'];
 
-  // 1. Yearly procedures
-  const yp=s.yearlyProcedures;
-  ciCharts.push(new Chart(document.getElementById('chart-yearly'),{
-    type:'bar',data:{
-      labels:yp.map(d=>d.year+'년'),
-      datasets:[
-        {label:'시술건수',data:yp.map(d=>d.procedures),backgroundColor:'rgba(51,102,255,0.7)',borderRadius:8,barPercentage:0.5,order:2},
-        {label:'환자수',data:yp.map(d=>d.patients),type:'line',borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',borderWidth:2.5,pointRadius:4,pointBackgroundColor:'#10b981',fill:true,tension:0.4,order:1}
-      ]
-    },options:{...defs,plugins:{...defs.plugins,legend:{display:true,position:'top',labels:{boxWidth:10,padding:15,font:{size:11}}}},scales:{y:{beginAtZero:false,min:500,grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{size:10}}},x:{grid:{display:false},ticks:{font:{size:10}}}}}
-  }));
+  if(tab==='overview'){
+    // Yearly trend
+    ciCharts.push(new Chart(document.getElementById('chart-yearly'),{
+      type:'bar',data:{labels:y.map(d=>d.year+'년'),datasets:[
+        {label:'시술건수(사용량)',data:y.map(d=>d.usage),backgroundColor:'rgba(51,102,255,0.7)',borderRadius:8,barPercentage:0.4,order:2},
+        {label:'환자수',data:y.map(d=>d.patients),type:'line',borderColor:'#10b981',backgroundColor:'rgba(16,185,129,0.1)',borderWidth:2.5,pointRadius:5,pointBackgroundColor:'#10b981',fill:true,tension:0.4,order:1}
+      ]},options:{...defs,plugins:{legend:{display:true,position:'top',labels:{boxWidth:10,padding:15}}},scales:{y:{beginAtZero:false,grid:{color:'rgba(0,0,0,0.04)'}},x:{grid:{display:false}}}}
+    }));
+    // Gender
+    ciCharts.push(new Chart(document.getElementById('chart-gender'),{
+      type:'bar',data:{labels:y.map(d=>d.year+'년'),datasets:[
+        {label:'남성',data:y.map(d=>d.male_patients),backgroundColor:'rgba(59,130,246,0.7)',borderRadius:6,barPercentage:0.6},
+        {label:'여성',data:y.map(d=>d.female_patients),backgroundColor:'rgba(244,114,182,0.7)',borderRadius:6,barPercentage:0.6}
+      ]},options:{...defs,plugins:{legend:{display:true,position:'top',labels:{boxWidth:10,padding:15}}},scales:{y:{beginAtZero:false,grid:{color:'rgba(0,0,0,0.04)'}},x:{grid:{display:false}}}}
+    }));
+  }
 
-  // 2. Gender chart
-  ciCharts.push(new Chart(document.getElementById('chart-gender'),{
-    type:'bar',data:{
-      labels:yp.map(d=>d.year+'년'),
-      datasets:[
-        {label:'남성',data:yp.map(d=>d.male),backgroundColor:'rgba(59,130,246,0.7)',borderRadius:6,barPercentage:0.6},
-        {label:'여성',data:yp.map(d=>d.female),backgroundColor:'rgba(244,114,182,0.7)',borderRadius:6,barPercentage:0.6}
-      ]
-    },options:{...defs,plugins:{...defs.plugins,legend:{display:true,position:'top',labels:{boxWidth:10,padding:15,font:{size:11}}}},scales:{y:{beginAtZero:false,min:300,grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{size:10}}},x:{grid:{display:false},ticks:{font:{size:10}}}}}
-  }));
+  if(tab==='age'){
+    const ageGroups10=['0_9세','10_19세','20_29세','30_39세','40_49세','50_59세','60_69세','70_79세','80세이상'];
+    const ageLabels10=['0-9세','10-19세','20-29세','30-39세','40-49세','50-59세','60-69세','70-79세','80+'];
+    // Age10 trend - stacked bar
+    const datasets10=ageGroups10.map((ag,i)=>({
+      label:ageLabels10[i],
+      data:years.map(yr=>{
+        const male=s.age10.find(r=>r.year===yr&&r.gender==='남'&&r.age_group===ag);
+        const female=s.age10.find(r=>r.year===yr&&r.gender==='여'&&r.age_group===ag);
+        return (male?.patients||0)+(female?.patients||0);
+      }),
+      backgroundColor:colors10[i],borderRadius:2,barPercentage:0.7
+    }));
+    ciCharts.push(new Chart(document.getElementById('chart-age10-trend'),{
+      type:'bar',data:{labels:years.map(y=>y+'년'),datasets:datasets10},
+      options:{...defs,plugins:{legend:{display:true,position:'top',labels:{boxWidth:8,padding:8,font:{size:9}}}},scales:{y:{stacked:true,grid:{color:'rgba(0,0,0,0.04)'}},x:{stacked:true,grid:{display:false}}}}
+    }));
 
-  // 3. Age distribution (horizontal bar)
-  const ad=s.ageDistribution;
-  ciCharts.push(new Chart(document.getElementById('chart-age'),{
-    type:'doughnut',data:{
-      labels:ad.map(d=>d.group+' ('+d.label+')'),
-      datasets:[{data:ad.map(d=>d.ratio),backgroundColor:ad.map(d=>d.color),borderWidth:2,borderColor:'#fff',hoverOffset:8}]
-    },options:{...defs,cutout:'55%',plugins:{...defs.plugins,legend:{display:true,position:'right',labels:{boxWidth:10,padding:10,font:{size:10},generateLabels:function(chart){return chart.data.labels.map((l,i)=>({text:l+' '+chart.data.datasets[0].data[i]+'%',fillStyle:chart.data.datasets[0].backgroundColor[i],hidden:false,index:i}))}}}}}
-  }));
+    // Age10 pie (latest year)
+    const latestY=years[years.length-1];
+    const pieData=ageGroups10.map(ag=>{
+      const m=s.age10.find(r=>r.year===latestY&&r.gender==='남'&&r.age_group===ag);
+      const f=s.age10.find(r=>r.year===latestY&&r.gender==='여'&&r.age_group===ag);
+      return (m?.patients||0)+(f?.patients||0);
+    });
+    ciCharts.push(new Chart(document.getElementById('chart-age10-pie'),{
+      type:'doughnut',data:{labels:ageLabels10,datasets:[{data:pieData,backgroundColor:colors10,borderWidth:2,borderColor:'#fff',hoverOffset:8}]},
+      options:{...defs,cutout:'50%',plugins:{legend:{display:true,position:'right',labels:{boxWidth:10,padding:8,font:{size:10}}}}}
+    }));
 
-  // 4. Age growth rate (horizontal bar)
-  const agr=s.ageGrowthRate;
-  ciCharts.push(new Chart(document.getElementById('chart-growth'),{
-    type:'bar',data:{
-      labels:agr.map(d=>d.group),
-      datasets:[{data:agr.map(d=>d.rate),backgroundColor:agr.map(d=>d.rate>=0?'rgba(16,185,129,0.7)':'rgba(239,68,68,0.7)'),borderRadius:6,barPercentage:0.6}]
-    },options:{...defs,indexAxis:'y',scales:{x:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{callback:v=>v+'%',font:{size:10}}},y:{grid:{display:false},ticks:{font:{size:11,weight:'600'}}}}}
-  }));
+    // Age5 male (latest)
+    const ageGroups5=['5세미만','5_9세','10_14세','15_19세','20_24세','25_29세','30_34세','35_39세','40_44세','45_49세','50_54세','55_59세','60_64세','65_69세','70_74세','75_79세','80세이상'];
+    const ageLabels5=['<5','5-9','10-14','15-19','20-24','25-29','30-34','35-39','40-44','45-49','50-54','55-59','60-64','65-69','70-74','75-79','80+'];
+    const maleData5=ageGroups5.map(ag=>{const r=s.age5.find(x=>x.year===latestY&&x.gender==='남'&&x.age_group===ag);return r?.patients||0});
+    const femaleData5=ageGroups5.map(ag=>{const r=s.age5.find(x=>x.year===latestY&&x.gender==='여'&&x.age_group===ag);return r?.patients||0});
+    ciCharts.push(new Chart(document.getElementById('chart-age5-male'),{
+      type:'bar',data:{labels:ageLabels5,datasets:[{data:maleData5,backgroundColor:'rgba(59,130,246,0.7)',borderRadius:4,barPercentage:0.7}]},
+      options:{...defs,scales:{y:{beginAtZero:true,grid:{color:'rgba(0,0,0,0.04)'}},x:{grid:{display:false},ticks:{font:{size:9}}}}}
+    }));
+    ciCharts.push(new Chart(document.getElementById('chart-age5-female'),{
+      type:'bar',data:{labels:ageLabels5,datasets:[{data:femaleData5,backgroundColor:'rgba(244,114,182,0.7)',borderRadius:4,barPercentage:0.7}]},
+      options:{...defs,scales:{y:{beginAtZero:true,grid:{color:'rgba(0,0,0,0.04)'}},x:{grid:{display:false},ticks:{font:{size:9}}}}}
+    }));
 
-  // 5. Region distribution
-  const rd=s.regionDistribution;
-  const regionColors=['#3366ff','#6388ff','#059669','#10b981','#d97706','#f59e0b','#8b5cf6','#c4b5fd'];
-  ciCharts.push(new Chart(document.getElementById('chart-region'),{
-    type:'bar',data:{
-      labels:rd.map(d=>d.region),
-      datasets:[{data:rd.map(d=>d.count),backgroundColor:regionColors,borderRadius:8,barPercentage:0.6}]
-    },options:{...defs,scales:{y:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{font:{size:10}}},x:{grid:{display:false},ticks:{font:{size:11,weight:'600'}}}},plugins:{...defs.plugins,tooltip:{callbacks:{label:function(ctx){return ctx.raw+'건 ('+rd[ctx.dataIndex].ratio+'%)'}}}}}
-  }));
+    // Age growth rate (CAGR from first to last year)
+    const firstY=years[0],lastY=years[years.length-1],span=lastY-firstY;
+    const growthData=ageGroups10.map((ag,i)=>{
+      const firstM=s.age10.find(r=>r.year===firstY&&r.gender==='남'&&r.age_group===ag);
+      const firstF=s.age10.find(r=>r.year===firstY&&r.gender==='여'&&r.age_group===ag);
+      const lastM=s.age10.find(r=>r.year===lastY&&r.gender==='남'&&r.age_group===ag);
+      const lastF=s.age10.find(r=>r.year===lastY&&r.gender==='여'&&r.age_group===ag);
+      const f=(firstM?.patients||0)+(firstF?.patients||0);
+      const l=(lastM?.patients||0)+(lastF?.patients||0);
+      if(f===0)return{label:ageLabels10[i],rate:l>0?100:0};
+      return{label:ageLabels10[i],rate:(Math.pow(l/f,1/span)-1)*100};
+    });
+    ciCharts.push(new Chart(document.getElementById('chart-age-growth'),{
+      type:'bar',data:{labels:growthData.map(d=>d.label),datasets:[{data:growthData.map(d=>parseFloat(d.rate.toFixed(1))),backgroundColor:growthData.map(d=>d.rate>=0?'rgba(16,185,129,0.7)':'rgba(239,68,68,0.7)'),borderRadius:6,barPercentage:0.6}]},
+      options:{...defs,indexAxis:'y',scales:{x:{grid:{color:'rgba(0,0,0,0.04)'},ticks:{callback:v=>v+'%'}},y:{grid:{display:false},ticks:{font:{size:11,weight:'600'}}}}}
+    }));
+  }
 
-  // 6. Institution type (pie)
-  const it=s.institutionType;
-  ciCharts.push(new Chart(document.getElementById('chart-inst'),{
-    type:'doughnut',data:{
-      labels:it.map(d=>d.type),
-      datasets:[{data:it.map(d=>d.ratio),backgroundColor:it.map(d=>d.color),borderWidth:2,borderColor:'#fff',hoverOffset:6}]
-    },options:{...defs,cutout:'50%',plugins:{...defs.plugins,legend:{display:true,position:'bottom',labels:{boxWidth:10,padding:12,font:{size:11},generateLabels:function(chart){return chart.data.labels.map((l,i)=>({text:l+' '+chart.data.datasets[0].data[i]+'%',fillStyle:chart.data.datasets[0].backgroundColor[i],hidden:false,index:i}))}}}}}
-  }));
+  if(tab==='region'){
+    const latestY=years[years.length-1];
+    const regL=s.region.filter(r=>r.year===latestY&&r.patients>0).sort((a,b)=>b.patients-a.patients);
+    const totalP=regL.reduce((a,b)=>a+b.patients,0);
+    const regionColors=['#3366ff','#059669','#d97706','#8b5cf6','#ef4444','#ec4899','#06b6d4','#f97316','#84cc16','#64748b','#0ea5e9','#a855f7','#14b8a6','#f43f5e','#eab308','#6366f1','#10b981'];
+    // Region bar
+    ciCharts.push(new Chart(document.getElementById('chart-region-bar'),{
+      type:'bar',data:{labels:regL.map(r=>r.region),datasets:[{data:regL.map(r=>r.patients),backgroundColor:regionColors.slice(0,regL.length),borderRadius:8,barPercentage:0.6}]},
+      options:{...defs,scales:{y:{grid:{color:'rgba(0,0,0,0.04)'}},x:{grid:{display:false},ticks:{font:{size:10}}}},plugins:{...defs.plugins,tooltip:{callbacks:{label:ctx=>ctx.raw+'명 ('+(ctx.raw/totalP*100).toFixed(1)+'%)'}}}}
+    }));
+    // Region pie
+    ciCharts.push(new Chart(document.getElementById('chart-region-pie'),{
+      type:'doughnut',data:{labels:regL.map(r=>r.region),datasets:[{data:regL.map(r=>r.patients),backgroundColor:regionColors.slice(0,regL.length),borderWidth:2,borderColor:'#fff'}]},
+      options:{...defs,cutout:'45%',plugins:{legend:{display:true,position:'right',labels:{boxWidth:8,padding:6,font:{size:9}}}}}
+    }));
+    // Region trend (top 5)
+    const topRegions=regL.slice(0,5).map(r=>r.region);
+    const trendColors=['#3366ff','#059669','#d97706','#8b5cf6','#ef4444'];
+    ciCharts.push(new Chart(document.getElementById('chart-region-trend'),{
+      type:'line',data:{labels:years.map(y=>y+'년'),datasets:topRegions.map((reg,i)=>({
+        label:reg,
+        data:years.map(yr=>{const r=s.region.find(x=>x.year===yr&&x.region===reg);return r?.patients||0}),
+        borderColor:trendColors[i],backgroundColor:trendColors[i]+'20',borderWidth:2.5,pointRadius:4,pointBackgroundColor:trendColors[i],tension:0.4,fill:false
+      }))},options:{...defs,plugins:{legend:{display:true,position:'top',labels:{boxWidth:10,padding:15}}},scales:{y:{beginAtZero:true,grid:{color:'rgba(0,0,0,0.04)'}},x:{grid:{display:false}}}}
+    }));
+  }
+
+  if(tab==='institution'){
+    const latestY=years[years.length-1];
+    const instTypes=['상급종합병원','종합병원','병원급','의원급','보건기관등'];
+    const instColors=['#3366ff','#059669','#d97706','#8b5cf6','#94a3b8'];
+    // Inst trend
+    ciCharts.push(new Chart(document.getElementById('chart-inst-trend'),{
+      type:'line',data:{labels:years.map(y=>y+'년'),datasets:instTypes.filter(it=>{
+        return years.some(yr=>s.institution.find(x=>x.year===yr&&x.institution_type===it&&x.patients>0))
+      }).map((it,i)=>({
+        label:it,
+        data:years.map(yr=>{const r=s.institution.find(x=>x.year===yr&&x.institution_type===it);return r?.patients||0}),
+        borderColor:instColors[i],backgroundColor:instColors[i]+'20',borderWidth:2.5,pointRadius:4,pointBackgroundColor:instColors[i],tension:0.4,fill:false
+      }))},options:{...defs,plugins:{legend:{display:true,position:'top',labels:{boxWidth:10,padding:15}}},scales:{y:{beginAtZero:true,grid:{color:'rgba(0,0,0,0.04)'}},x:{grid:{display:false}}}}
+    }));
+    // Inst pie
+    const instL=s.institution.filter(r=>r.year===latestY&&r.patients>0);
+    ciCharts.push(new Chart(document.getElementById('chart-inst-pie'),{
+      type:'doughnut',data:{labels:instL.map(r=>r.institution_type),datasets:[{data:instL.map(r=>r.patients),backgroundColor:instColors.slice(0,instL.length),borderWidth:2,borderColor:'#fff',hoverOffset:8}]},
+      options:{...defs,cutout:'50%',plugins:{legend:{display:true,position:'bottom',labels:{boxWidth:10,padding:12,font:{size:11}}}}}
+    }));
+  }
+
+  if(tab==='amount'){
+    // Amount trend
+    ciCharts.push(new Chart(document.getElementById('chart-amount-trend'),{
+      type:'line',data:{labels:y.map(d=>d.year+'년'),datasets:[
+        {label:'총 진료금액',data:y.map(d=>d.amount),borderColor:'#3366ff',backgroundColor:'rgba(51,102,255,0.1)',borderWidth:3,pointRadius:5,pointBackgroundColor:'#3366ff',fill:true,tension:0.4}
+      ]},options:{...defs,plugins:{legend:{display:false}},scales:{y:{beginAtZero:false,grid:{color:'rgba(0,0,0,0.04)'},ticks:{callback:v=>fmtAmount(v)}},x:{grid:{display:false}}}}
+    }));
+    // Amount gender
+    ciCharts.push(new Chart(document.getElementById('chart-amount-gender'),{
+      type:'bar',data:{labels:y.map(d=>d.year+'년'),datasets:[
+        {label:'남성',data:y.map(d=>d.male_amount),backgroundColor:'rgba(59,130,246,0.7)',borderRadius:6,barPercentage:0.6},
+        {label:'여성',data:y.map(d=>d.female_amount),backgroundColor:'rgba(244,114,182,0.7)',borderRadius:6,barPercentage:0.6}
+      ]},options:{...defs,plugins:{legend:{display:true,position:'top',labels:{boxWidth:10,padding:15}}},scales:{y:{stacked:true,grid:{color:'rgba(0,0,0,0.04)'},ticks:{callback:v=>fmtAmount(v)}},x:{stacked:true,grid:{display:false}}}}
+    }));
+  }
 }
 
 nav('dashboard');
