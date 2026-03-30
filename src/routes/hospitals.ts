@@ -1,0 +1,61 @@
+import { Hono } from 'hono'
+import { logActivity, safeLike } from '../helpers'
+
+type Bindings = { DB: D1Database }
+const hospitals = new Hono<{ Bindings: Bindings }>()
+
+hospitals.get('/', async (c) => {
+  const { region, status, search, grade } = c.req.query()
+  let q = `SELECT h.*, COUNT(DISTINCT d.id) as doctor_count, COUNT(DISTINCT m.id) as meeting_count, MAX(m.meeting_date) as last_meeting FROM hospitals h LEFT JOIN doctors d ON h.id = d.hospital_id LEFT JOIN meetings m ON h.id = m.hospital_id`
+  const conds: string[] = [], params: any[] = []
+  if (region) { conds.push('h.region = ?'); params.push(region) }
+  if (status) { conds.push('h.status = ?'); params.push(status) }
+  if (grade) { conds.push('h.grade = ?'); params.push(grade) }
+  if (search) { conds.push('h.name LIKE ?'); params.push(`%${safeLike(search)}%`) }
+  if (conds.length) q += ' WHERE ' + conds.join(' AND ')
+  q += ' GROUP BY h.id ORDER BY h.grade ASC, h.name ASC'
+  const r = await c.env.DB.prepare(q).bind(...params).all()
+  return c.json({ data: r.results })
+})
+
+hospitals.get('/regions', async (c) => {
+  const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
+  return c.json({ data: r.results.map((x: any) => x.region) })
+})
+
+hospitals.get('/:id', async (c) => {
+  const h = await c.env.DB.prepare('SELECT * FROM hospitals WHERE id = ?').bind(c.req.param('id')).first()
+  return h ? c.json({ data: h }) : c.json({ error: 'Not found' }, 404)
+})
+
+hospitals.post('/', async (c) => {
+  const b = await c.req.json()
+  if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
+  const r = await c.env.DB.prepare('INSERT INTO hospitals (name,region,address,phone,grade,notes,status) VALUES (?,?,?,?,?,?,?)')
+    .bind(b.name.trim(), b.region || '', b.address || '', b.phone || '', b.grade || 'A', b.notes || '', b.status || 'active').run()
+  await logActivity(c.env.DB, 'create', 'hospital', r.meta.last_row_id as number, b.name.trim())
+  return c.json({ data: { id: r.meta.last_row_id, ...b } }, 201)
+})
+
+hospitals.put('/:id', async (c) => {
+  const b = await c.req.json(); const id = c.req.param('id')
+  if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
+  await c.env.DB.prepare('UPDATE hospitals SET name=?,region=?,address=?,phone=?,grade=?,notes=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+    .bind(b.name.trim(), b.region || '', b.address || '', b.phone || '', b.grade || 'A', b.notes || '', b.status || 'active', id).run()
+  await logActivity(c.env.DB, 'update', 'hospital', Number(id), b.name.trim())
+  return c.json({ data: { id: Number(id), ...b } })
+})
+
+hospitals.delete('/:id', async (c) => {
+  const id = c.req.param('id')
+  const h = await c.env.DB.prepare('SELECT name FROM hospitals WHERE id=?').bind(id).first() as any
+  // CASCADE: delete meetings, papers, doctors first
+  await c.env.DB.prepare('DELETE FROM doctor_papers WHERE doctor_id IN (SELECT id FROM doctors WHERE hospital_id=?)').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM meetings WHERE hospital_id=?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM doctors WHERE hospital_id=?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM hospitals WHERE id=?').bind(id).run()
+  await logActivity(c.env.DB, 'delete', 'hospital', Number(id), h?.name || '')
+  return c.json({ success: true })
+})
+
+export default hospitals
