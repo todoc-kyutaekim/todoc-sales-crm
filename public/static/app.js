@@ -1,6 +1,184 @@
 // ===== TODOC CRM - Frontend Application =====
 const API = axios.create({ baseURL: '/api' });
 let curPage = '', hospList = [], docList = [], confirmCb = null, searchTimer = null;
+let currentUser = null;
+
+// ===== Auth: Session Management =====
+function getSession() { return localStorage.getItem('todoc_session') || '' }
+function setSession(sid, user) {
+  localStorage.setItem('todoc_session', sid);
+  localStorage.setItem('todoc_user', JSON.stringify(user));
+  currentUser = user;
+  API.defaults.headers.common['X-Session-Id'] = sid;
+}
+function clearSession() {
+  localStorage.removeItem('todoc_session');
+  localStorage.removeItem('todoc_user');
+  currentUser = null;
+  delete API.defaults.headers.common['X-Session-Id'];
+}
+
+// Attach session header on every request
+API.interceptors.request.use(cfg => {
+  const sid = getSession();
+  if (sid) cfg.headers['X-Session-Id'] = sid;
+  return cfg;
+});
+// Intercept 401 => redirect to login
+API.interceptors.response.use(r => r, err => {
+  if (err.response && err.response.status === 401 && !err.config.url.includes('/auth/')) {
+    clearSession();
+    showAuthScreen();
+  }
+  return Promise.reject(err);
+});
+
+// ===== Auth Screen =====
+function showAuthScreen() {
+  document.getElementById('app-main').classList.add('hidden');
+  document.getElementById('auth-screen').classList.remove('hidden');
+  renderLoginForm();
+}
+function showAppScreen() {
+  document.getElementById('auth-screen').classList.add('hidden');
+  document.getElementById('app-main').classList.remove('hidden');
+  updateUserUI();
+  nav('dashboard');
+}
+function updateUserUI() {
+  const el = document.getElementById('user-menu');
+  if (el && currentUser) {
+    el.innerHTML = '<div class="flex items-center gap-2 cursor-pointer group" onclick="toggleUserDropdown()">' +
+      '<div class="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center text-brand-600 font-bold text-sm">' + (currentUser.name || '?').charAt(0) + '</div>' +
+      '<span class="text-[12px] font-semibold text-slate-600 hidden lg:inline group-hover:text-brand-600 transition">' + currentUser.name + '</span>' +
+      '<i class="fas fa-chevron-down text-[9px] text-slate-300 hidden lg:inline"></i></div>' +
+      '<div id="user-dropdown" class="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden py-1">' +
+      '<div class="px-4 py-3 border-b border-gray-50"><div class="text-[13px] font-bold text-slate-800">' + currentUser.name + '</div><div class="text-[11px] text-slate-400">' + currentUser.email + '</div></div>' +
+      '<div class="py-1">' +
+      '<div class="px-4 py-2.5 text-[13px] text-slate-600 hover:bg-gray-50 cursor-pointer flex items-center gap-2.5 transition" onclick="showChangePassword()"><i class="fas fa-key text-slate-400 text-xs w-4"></i>비밀번호 변경</div>' +
+      '<div class="px-4 py-2.5 text-[13px] text-red-500 hover:bg-red-50 cursor-pointer flex items-center gap-2.5 transition" onclick="doLogout()"><i class="fas fa-sign-out-alt text-xs w-4"></i>로그아웃</div>' +
+      '</div></div>';
+  }
+}
+function toggleUserDropdown() {
+  const dd = document.getElementById('user-dropdown');
+  if (dd) dd.classList.toggle('hidden');
+}
+// Close dropdown on outside click
+document.addEventListener('click', e => {
+  const um = document.getElementById('user-menu');
+  if (um && !um.contains(e.target)) {
+    const dd = document.getElementById('user-dropdown');
+    if (dd) dd.classList.add('hidden');
+  }
+});
+
+function renderLoginForm() {
+  document.getElementById('auth-box').innerHTML =
+    '<div class="text-center mb-8">' +
+    '<div class="w-16 h-16 rounded-2xl bg-brand-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand-500/30">' +
+    '<svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm-2 13H8V9h2v7zm4 0h-2V9h2v7z" fill="#fff"/></svg></div>' +
+    '<h1 class="text-2xl font-extrabold text-slate-800 tracking-tight">TODOC CRM</h1>' +
+    '<p class="text-sm text-slate-400 mt-1">병원 영업 관리 시스템</p></div>' +
+    '<form id="auth-form" class="space-y-4">' +
+    '<div><label class="input-label">이메일</label><div class="relative"><i class="fas fa-envelope absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="email" type="email" class="input pl-10 w-full" placeholder="name@to-doc.com" autocomplete="email"></div></div>' +
+    '<div><label class="input-label">비밀번호</label><div class="relative"><i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="password" type="password" class="input pl-10 w-full" placeholder="비밀번호" autocomplete="current-password"></div></div>' +
+    '<button type="submit" class="btn btn-primary w-full !py-3 text-sm font-bold">로그인</button></form>' +
+    '<div class="mt-6 text-center"><span class="text-sm text-slate-400">계정이 없으신가요? </span><button onclick="renderRegisterForm()" class="text-sm text-brand-600 font-bold hover:text-brand-700 transition">회원가입</button></div>';
+  document.getElementById('auth-form').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>로그인 중...';
+    try {
+      const { data } = await API.post('/auth/login', { email: f.email, password: f.password });
+      setSession(data.data.sessionId, data.data.user);
+      toast('환영합니다, ' + data.data.user.name + '님!');
+      showAppScreen();
+    } catch (err) {
+      toast(err.response?.data?.error || '로그인 실패', 'err');
+      btn.disabled = false; btn.textContent = '로그인';
+    }
+  };
+  setTimeout(() => document.querySelector('#auth-form input[name="email"]')?.focus(), 100);
+}
+
+function renderRegisterForm() {
+  document.getElementById('auth-box').innerHTML =
+    '<div class="text-center mb-8">' +
+    '<div class="w-16 h-16 rounded-2xl bg-emerald-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-emerald-500/30">' +
+    '<i class="fas fa-user-plus text-white text-2xl"></i></div>' +
+    '<h1 class="text-2xl font-extrabold text-slate-800 tracking-tight">회원가입</h1>' +
+    '<p class="text-sm text-slate-400 mt-1">TODOC CRM 계정 만들기</p></div>' +
+    '<form id="auth-form" class="space-y-4">' +
+    '<div><label class="input-label">이름</label><div class="relative"><i class="fas fa-user absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="name" type="text" class="input pl-10 w-full" placeholder="홍길동" autocomplete="name"></div></div>' +
+    '<div><label class="input-label">이메일</label><div class="relative"><i class="fas fa-envelope absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="email" type="email" class="input pl-10 w-full" placeholder="name@to-doc.com" autocomplete="email"></div></div>' +
+    '<div><label class="input-label">비밀번호</label><div class="relative"><i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="password" type="password" class="input pl-10 w-full" placeholder="6자 이상" autocomplete="new-password"></div></div>' +
+    '<button type="submit" class="btn btn-success w-full !py-3 text-sm font-bold">가입하기</button></form>' +
+    '<div class="mt-6 text-center"><span class="text-sm text-slate-400">이미 계정이 있으신가요? </span><button onclick="renderLoginForm()" class="text-sm text-brand-600 font-bold hover:text-brand-700 transition">로그인</button></div>';
+  document.getElementById('auth-form').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const btn = e.target.querySelector('button[type="submit"]');
+    btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>가입 중...';
+    try {
+      const { data } = await API.post('/auth/register', { name: f.name, email: f.email, password: f.password });
+      setSession(data.data.sessionId, data.data.user);
+      toast('가입 완료! 환영합니다, ' + data.data.user.name + '님!');
+      showAppScreen();
+    } catch (err) {
+      toast(err.response?.data?.error || '가입 실패', 'err');
+      btn.disabled = false; btn.textContent = '가입하기';
+    }
+  };
+  setTimeout(() => document.querySelector('#auth-form input[name="name"]')?.focus(), 100);
+}
+
+async function doLogout() {
+  try { await API.post('/auth/logout') } catch(e) {}
+  clearSession();
+  toast('로그아웃되었습니다');
+  showAuthScreen();
+}
+
+function showChangePassword() {
+  toggleUserDropdown();
+  openModal('비밀번호 변경',
+    '<form id="fm" class="space-y-4">' +
+    '<div><label class="input-label">현재 비밀번호</label><div class="relative"><i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="currentPassword" type="password" class="input pl-10 w-full" placeholder="현재 비밀번호" autocomplete="current-password"></div></div>' +
+    '<div><label class="input-label">새 비밀번호</label><div class="relative"><i class="fas fa-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="newPassword" type="password" class="input pl-10 w-full" placeholder="6자 이상" autocomplete="new-password"></div></div>' +
+    '<div><label class="input-label">새 비밀번호 확인</label><div class="relative"><i class="fas fa-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="confirmPassword" type="password" class="input pl-10 w-full" placeholder="새 비밀번호 다시 입력" autocomplete="new-password"></div></div>' +
+    '<div class="flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">변경</button></div></form>');
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    if (!f.currentPassword) { toast('현재 비밀번호를 입력하세요', 'warn'); return }
+    if (!f.newPassword || f.newPassword.length < 6) { toast('새 비밀번호는 6자 이상이어야 합니다', 'warn'); return }
+    if (f.newPassword !== f.confirmPassword) { toast('새 비밀번호가 일치하지 않습니다', 'warn'); return }
+    try {
+      await API.post('/auth/change-password', { currentPassword: f.currentPassword, newPassword: f.newPassword });
+      toast('비밀번호가 변경되었습니다');
+      closeModal();
+    } catch (err) { toast(err.response?.data?.error || '변경 실패', 'err') }
+  };
+  setTimeout(() => document.querySelector('#fm input[name="currentPassword"]')?.focus(), 100);
+}
+
+// ===== Auth Init =====
+async function initAuth() {
+  const sid = getSession();
+  if (!sid) { showAuthScreen(); return }
+  API.defaults.headers.common['X-Session-Id'] = sid;
+  try {
+    const { data } = await API.get('/auth/me');
+    currentUser = data.data;
+    localStorage.setItem('todoc_user', JSON.stringify(currentUser));
+    showAppScreen();
+  } catch (e) {
+    clearSession();
+    showAuthScreen();
+  }
+}
 
 // ===== Toast =====
 function toast(msg, type = 'ok') {
@@ -943,4 +1121,4 @@ async function showCrossAnalysis() {
 }
 
 // ===== Init =====
-nav('dashboard');
+initAuth();

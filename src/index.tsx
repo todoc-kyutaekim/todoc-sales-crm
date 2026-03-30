@@ -8,10 +8,35 @@ import cistats from './routes/cistats'
 import search from './routes/search'
 import activity from './routes/activity'
 import exports from './routes/exports'
+import auth from './routes/auth'
 
 type Bindings = { DB: D1Database }
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('/api/*', cors())
+
+// Auth routes (no auth required)
+app.route('/api/auth', auth)
+
+// Auth middleware for all other API routes
+app.use('/api/*', async (c, next) => {
+  // Skip auth check for /api/auth/* routes
+  if (c.req.path.startsWith('/api/auth')) return next()
+
+  const sessionId = c.req.header('X-Session-Id') || ''
+  if (!sessionId) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  const session = await c.env.DB.prepare(
+    'SELECT user_id FROM sessions WHERE id=? AND expires_at > datetime("now")'
+  ).bind(sessionId).first()
+
+  if (!session) {
+    return c.json({ error: 'Unauthorized' }, 401)
+  }
+
+  await next()
+})
 
 // API Routes
 app.route('/api/hospitals', hospitals)
@@ -44,7 +69,17 @@ const HTML = `<!DOCTYPE html>
 </head>
 <body class="h-screen overflow-hidden">
 <div id="toast-wrap"></div>
-<div class="flex h-screen">
+
+<!-- Auth Screen -->
+<div id="auth-screen" class="fixed inset-0 bg-gradient-to-br from-slate-50 via-white to-brand-50 z-[100] flex items-center justify-center p-4 hidden">
+  <div class="w-full max-w-md">
+    <div id="auth-box" class="bg-white rounded-2xl shadow-xl border border-gray-100 p-8"></div>
+    <div class="text-center mt-6 text-[11px] text-slate-300">&copy; 2026 TODOC Inc. &middot; Cochlear Implant Solutions</div>
+  </div>
+</div>
+
+<!-- App Main -->
+<div id="app-main" class="flex h-screen hidden">
 
 <!-- Mobile overlay -->
 <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" onclick="toggleSidebar()"></div>
@@ -98,10 +133,12 @@ const HTML = `<!DOCTYPE html>
       </div>
     </div>
     <div id="header-actions" class="flex items-center gap-1 lg:gap-2 flex-shrink-0"></div>
+    <div class="h-5 w-px bg-gray-200 mx-1 hidden lg:block"></div>
+    <div id="user-menu" class="relative flex-shrink-0"></div>
   </header>
   <div id="content" class="flex-1 overflow-y-auto"></div>
 </main>
-</div>
+</div><!-- /app-main -->
 
 <!-- Modal -->
 <div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-center justify-center p-4" onclick="if(event.target===this)closeModal()">
