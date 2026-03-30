@@ -95,8 +95,8 @@ doctors.delete('/doctors/:id/photo', async (c) => {
 doctors.post('/doctors/:id/papers', async (c) => {
   const b = await c.req.json(); const did = c.req.param('id')
   if (!b.title || typeof b.title !== 'string' || b.title.trim().length === 0) return c.json({ error: 'title is required' }, 400)
-  const r = await c.env.DB.prepare('INSERT INTO doctor_papers (doctor_id,title,journal,year,authors,doi,abstract,paper_type) VALUES (?,?,?,?,?,?,?,?)')
-    .bind(did, b.title.trim(), b.journal || '', b.year || null, b.authors || '', b.doi || '', b.abstract || '', b.paper_type || 'journal').run()
+  const r = await c.env.DB.prepare('INSERT INTO doctor_papers (doctor_id,title,journal,year,authors,doi,abstract,paper_type,url) VALUES (?,?,?,?,?,?,?,?,?)')
+    .bind(did, b.title.trim(), b.journal || '', b.year || null, b.authors || '', b.doi || '', b.abstract || '', b.paper_type || 'journal', b.url || '').run()
   await logActivity(c.env.DB, 'create', 'paper', r.meta.last_row_id as number, b.title.trim(), `doctor_id:${did}`)
   return c.json({ data: { id: r.meta.last_row_id, ...b } }, 201)
 })
@@ -104,8 +104,8 @@ doctors.post('/doctors/:id/papers', async (c) => {
 doctors.put('/papers/:id', async (c) => {
   const b = await c.req.json(); const id = c.req.param('id')
   if (!b.title || typeof b.title !== 'string' || b.title.trim().length === 0) return c.json({ error: 'title is required' }, 400)
-  await c.env.DB.prepare('UPDATE doctor_papers SET title=?,journal=?,year=?,authors=?,doi=?,abstract=?,paper_type=? WHERE id=?')
-    .bind(b.title.trim(), b.journal || '', b.year || null, b.authors || '', b.doi || '', b.abstract || '', b.paper_type || 'journal', id).run()
+  await c.env.DB.prepare('UPDATE doctor_papers SET title=?,journal=?,year=?,authors=?,doi=?,abstract=?,paper_type=?,url=? WHERE id=?')
+    .bind(b.title.trim(), b.journal || '', b.year || null, b.authors || '', b.doi || '', b.abstract || '', b.paper_type || 'journal', b.url || '', id).run()
   await logActivity(c.env.DB, 'update', 'paper', Number(id), b.title.trim())
   return c.json({ data: { id: Number(id), ...b } })
 })
