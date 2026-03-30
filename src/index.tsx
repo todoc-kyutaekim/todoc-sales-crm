@@ -52,14 +52,27 @@ app.get('/api/doctors', async (c) => {
   const r = await c.env.DB.prepare(q).bind(...p).all()
   return c.json({ data: r.results })
 })
+// Doctor detail profile
+app.get('/api/doctors/:id', async (c) => {
+  const id = c.req.param('id')
+  const [docR, papersR, meetingsR] = await Promise.all([
+    c.env.DB.prepare('SELECT d.*, h.name as hospital_name, h.region as hospital_region, h.grade as hospital_grade, h.address as hospital_address FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id WHERE d.id=?').bind(id).first(),
+    c.env.DB.prepare('SELECT * FROM doctor_papers WHERE doctor_id=? ORDER BY year DESC, id DESC').bind(id).all(),
+    c.env.DB.prepare('SELECT m.*, h.name as hospital_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id WHERE m.doctor_id=? ORDER BY m.meeting_date DESC').bind(id).all(),
+  ])
+  if (!docR) return c.json({ error: 'Not found' }, 404)
+  const meetCount = meetingsR.results.length
+  const lastMeeting = meetingsR.results.length ? (meetingsR.results[0] as any).meeting_date : null
+  return c.json({ data: { ...docR, meeting_count: meetCount, last_meeting: lastMeeting, papers: papersR.results, meetings: meetingsR.results } })
+})
 app.post('/api/doctors', async (c) => {
   const b = await c.req.json()
-  const r = await c.env.DB.prepare('INSERT INTO doctors (hospital_id,name,department,position,phone,email,specialty,influence_level,notes,photo) VALUES (?,?,?,?,?,?,?,?,?,?)').bind(b.hospital_id, b.name, b.department||'', b.position||'', b.phone||'', b.email||'', b.specialty||'', b.influence_level||'medium', b.notes||'', b.photo||'').run()
+  const r = await c.env.DB.prepare('INSERT INTO doctors (hospital_id,name,department,position,phone,email,specialty,influence_level,notes,photo,bio,education,career) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(b.hospital_id, b.name, b.department||'', b.position||'', b.phone||'', b.email||'', b.specialty||'', b.influence_level||'medium', b.notes||'', b.photo||'', b.bio||'', b.education||'', b.career||'').run()
   return c.json({ data: { id: r.meta.last_row_id, ...b } }, 201)
 })
 app.put('/api/doctors/:id', async (c) => {
   const b = await c.req.json(); const id = c.req.param('id')
-  await c.env.DB.prepare('UPDATE doctors SET hospital_id=?,name=?,department=?,position=?,phone=?,email=?,specialty=?,influence_level=?,notes=?,photo=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(b.hospital_id, b.name, b.department||'', b.position||'', b.phone||'', b.email||'', b.specialty||'', b.influence_level||'medium', b.notes||'', b.photo||'', id).run()
+  await c.env.DB.prepare('UPDATE doctors SET hospital_id=?,name=?,department=?,position=?,phone=?,email=?,specialty=?,influence_level=?,notes=?,photo=?,bio=?,education=?,career=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(b.hospital_id, b.name, b.department||'', b.position||'', b.phone||'', b.email||'', b.specialty||'', b.influence_level||'medium', b.notes||'', b.photo||'', b.bio||'', b.education||'', b.career||'', id).run()
   return c.json({ data: { id: Number(id), ...b } })
 })
 app.delete('/api/doctors/:id', async (c) => {
@@ -74,6 +87,21 @@ app.post('/api/doctors/:id/photo', async (c) => {
 })
 app.delete('/api/doctors/:id/photo', async (c) => {
   await c.env.DB.prepare("UPDATE doctors SET photo='', updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(c.req.param('id')).run()
+  return c.json({ success: true })
+})
+// ===== Doctor Papers =====
+app.post('/api/doctors/:id/papers', async (c) => {
+  const b = await c.req.json(); const did = c.req.param('id')
+  const r = await c.env.DB.prepare('INSERT INTO doctor_papers (doctor_id,title,journal,year,authors,doi,abstract,paper_type) VALUES (?,?,?,?,?,?,?,?)').bind(did, b.title, b.journal||'', b.year||null, b.authors||'', b.doi||'', b.abstract||'', b.paper_type||'journal').run()
+  return c.json({ data: { id: r.meta.last_row_id, ...b } }, 201)
+})
+app.put('/api/papers/:id', async (c) => {
+  const b = await c.req.json(); const id = c.req.param('id')
+  await c.env.DB.prepare('UPDATE doctor_papers SET title=?,journal=?,year=?,authors=?,doi=?,abstract=?,paper_type=? WHERE id=?').bind(b.title, b.journal||'', b.year||null, b.authors||'', b.doi||'', b.abstract||'', b.paper_type||'journal', id).run()
+  return c.json({ data: { id: Number(id), ...b } })
+})
+app.delete('/api/papers/:id', async (c) => {
+  await c.env.DB.prepare('DELETE FROM doctor_papers WHERE id=?').bind(c.req.param('id')).run()
   return c.json({ success: true })
 })
 
@@ -325,6 +353,8 @@ textarea.input{resize:vertical;min-height:76px}
 /* Timeline */
 .tl-dot{width:10px;height:10px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 2px #3b82f6;flex-shrink:0}
 .tl-line{width:2px;background:#e5e7eb;flex-shrink:0;min-height:20px}
+.line-clamp-2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.line-clamp-3{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 </style>
 </head>
 <body class="h-screen overflow-hidden">
@@ -372,7 +402,7 @@ textarea.input{resize:vertical;min-height:76px}
 
 <!-- Modal -->
 <div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-center justify-center p-4" onclick="if(event.target===this)closeModal()">
-  <div class="modal-box bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
+  <div id="modal-content" class="modal-box bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px]"></h3>
       <button onclick="closeModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
@@ -425,7 +455,7 @@ function nav(p){
   document.getElementById('header-actions').innerHTML='';
   ({dashboard:loadDash,hospitals:loadHosp,doctors:loadDoc,meetings:loadMeet,cistats:loadCIStats})[p]?.();
 }
-function openModal(t,h){document.getElementById('modal-title').textContent=t;document.getElementById('modal-body').innerHTML=h;document.getElementById('modal').classList.remove('hidden')}
+function openModal(t,h,wide){document.getElementById('modal-title').textContent=t;document.getElementById('modal-body').innerHTML=h;const mc=document.getElementById('modal-content');mc.className='modal-box bg-white rounded-2xl shadow-2xl w-full max-h-[88vh] overflow-y-auto '+(wide?'max-w-2xl':'max-w-lg');document.getElementById('modal').classList.remove('hidden')}
 function closeModal(){document.getElementById('modal').classList.add('hidden')}
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeModal();confirmNo()}});
 
@@ -578,14 +608,14 @@ function renderDetail(){
 function renderDoctorsTab(h,docs){
   if(!docs.length)return'<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-user-plus"></i></div><p class="font-medium text-slate-500 mb-1">소속 교수가 없습니다</p><p class="text-sm text-slate-300">교수를 추가하여 영업 관리를 시작하세요</p></div></div>';
   return'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">'+docs.map(d=>
-    '<div class="card-flat p-5 flex gap-4">'+
-      '<div class="photo-up" onclick="triggerPhoto('+d.id+','+h.id+')">'+
+    '<div class="card-flat p-5 flex gap-4 cursor-pointer" onclick="viewDocProfile('+d.id+')">'+
+      '<div class="photo-up" onclick="event.stopPropagation();triggerPhoto('+d.id+','+h.id+')">'+
         avatar(d.photo,d.name,'width:52px;height:52px;border-radius:14px;font-size:18px')+
         '<div class="photo-ov" style="border-radius:14px"><i class="fas fa-camera"></i></div>'+
       '</div>'+
       '<input type="file" id="pi-'+d.id+'" accept="image/*" style="display:none" onchange="uploadPhoto('+d.id+','+h.id+',this)">'+
       '<div class="flex-1 min-w-0">'+
-        '<div class="flex items-center gap-2 mb-1"><span class="font-bold text-[14px] text-slate-800">'+d.name+'</span><span class="text-xs text-slate-400">'+(d.position||'')+'</span>'+infBadge(d.influence_level)+'</div>'+
+        '<div class="flex items-center gap-2 mb-1"><span class="font-bold text-[14px] text-slate-800 hover:text-brand-600 transition">'+d.name+'</span><span class="text-xs text-slate-400">'+(d.position||'')+'</span>'+infBadge(d.influence_level)+'</div>'+
         '<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400 mb-2">'+(d.department?'<span><i class="fas fa-stethoscope mr-1 text-slate-300"></i>'+d.department+'</span>':'')+(d.specialty?'<span><i class="fas fa-microscope mr-1 text-slate-300"></i>'+d.specialty+'</span>':'')+'</div>'+
         '<div class="flex items-center gap-3 text-[11px]">'+
           '<span class="text-slate-400"><i class="fas fa-handshake mr-1"></i>미팅 '+(d.meeting_count||0)+'회</span>'+
@@ -593,6 +623,7 @@ function renderDoctorsTab(h,docs){
         '</div>'+
       '</div>'+
       '<div class="flex flex-col gap-1 flex-shrink-0">'+
+        '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="event.stopPropagation();viewDocProfile('+d.id+')" title="상세 보기"><i class="fas fa-arrow-right text-brand-400"></i></button>'+
         '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="event.stopPropagation();showMeetForm('+h.id+','+d.id+')" title="미팅 추가"><i class="fas fa-calendar-plus text-emerald-500"></i></button>'+
         '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="event.stopPropagation();showDocForm('+h.id+','+d.id+')" title="수정"><i class="fas fa-pen text-slate-400"></i></button>'+
         '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="event.stopPropagation();delDoc('+d.id+','+h.id+')" title="삭제"><i class="fas fa-trash text-red-300 hover:text-red-500"></i></button>'+
@@ -640,7 +671,7 @@ async function loadDoc(){
 function renderDR(list){
   document.getElementById('d-count').textContent=list.length+'명';
   document.getElementById('d-tbody').innerHTML=list.map(d=>
-    '<tr class="tr cursor-pointer" onclick="viewHosp('+d.hospital_id+')">'+
+    '<tr class="tr cursor-pointer" onclick="viewDocProfile('+d.id+')">'+
       '<td class="px-6 py-3.5"><div class="flex items-center gap-3">'+avatar(d.photo,d.name)+'<div><div class="font-semibold text-[13px] text-slate-800">'+d.name+'</div><div class="text-[11px] text-slate-400">'+(d.position||'')+'</div></div></div></td>'+
       '<td class="px-4 py-3.5 text-[13px] text-slate-600">'+(d.hospital_name||'-')+'</td>'+
       '<td class="px-4 py-3.5 text-[13px] text-slate-500">'+(d.department||'-')+'</td>'+
@@ -651,6 +682,255 @@ function renderDR(list){
   ).join('');
 }
 function filterD(){const q=(document.getElementById('d-search')?.value||'').toLowerCase();renderDR(docList.filter(d=>d.name.toLowerCase().includes(q)||(d.hospital_name||'').toLowerCase().includes(q)))}
+
+/* ===== DOCTOR PROFILE PAGE ===== */
+let profileTab='overview';
+async function viewDocProfile(id){
+  document.getElementById('page-title').textContent='';
+  document.getElementById('page-subtitle').innerHTML='';
+  document.getElementById('header-actions').innerHTML='';
+  document.getElementById('content').innerHTML='<div class="p-7 space-y-5"><div class="card-flat p-6"><div class="flex gap-5"><div class="skeleton rounded-2xl" style="width:110px;height:110px"></div><div class="flex-1 space-y-3"><div class="skeleton rounded h-6 w-48"></div><div class="skeleton rounded h-4 w-72"></div><div class="skeleton rounded h-3 w-40"></div></div></div></div><div class="card-flat p-0">'+skeleton(5)+'</div></div>';
+  try{
+    const{data}=await API.get('/doctors/'+id);const d=data.data;
+    window._docProfile=d;profileTab='overview';
+    document.getElementById('page-title').textContent=d.name+' 교수';
+    document.getElementById('page-subtitle').innerHTML='<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\\'doctors\\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>교수 목록</span>';
+    document.getElementById('header-actions').innerHTML=
+      '<button class="btn btn-success" onclick="showMeetForm('+d.hospital_id+','+d.id+')"><i class="fas fa-calendar-plus text-xs"></i>미팅 추가</button>'+
+      '<button class="btn btn-primary" onclick="showPaperForm('+d.id+')"><i class="fas fa-file-medical text-xs"></i>논문 추가</button>'+
+      '<button class="btn btn-outline" onclick="showDocForm('+d.hospital_id+','+d.id+')"><i class="fas fa-pen text-xs"></i>프로필 수정</button>';
+    renderDocProfile();
+  }catch(e){toast('교수 정보를 불러올 수 없습니다','err')}
+}
+
+function renderDocProfile(){
+  const d=window._docProfile;
+  const C=document.getElementById('content');
+  C.innerHTML='<div class="p-7 fade-in space-y-5">'+
+    // Hero card
+    '<div class="card-flat overflow-hidden">'+
+      '<div class="h-24 bg-gradient-to-r from-brand-500 via-brand-400 to-purple-400 relative">'+
+        '<div class="absolute inset-0 bg-[url(\\'data:image/svg+xml,%3Csvg width=\\"60\\" height=\\"60\\" viewBox=\\"0 0 60 60\\" xmlns=\\"http://www.w3.org/2000/svg\\"%3E%3Cg fill=\\"none\\" fill-rule=\\"evenodd\\"%3E%3Cg fill=\\"%23ffffff\\" fill-opacity=\\"0.06\\"%3E%3Cpath d=\\"M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\\"%2F%3E%3C%2Fg%3E%3C%2Fg%3E%3C%2Fsvg%3E\\')] opacity-50"></div>'+
+      '</div>'+
+      '<div class="px-8 pb-6 -mt-14 relative">'+
+        '<div class="flex items-end gap-6">'+
+          '<div class="w-[110px] h-[110px] rounded-2xl border-4 border-white shadow-lg overflow-hidden bg-white flex-shrink-0 photo-up" onclick="triggerProfilePhoto('+d.id+')">'+
+            (d.photo?'<img src="'+d.photo+'" class="w-full h-full object-cover">':'<div class="w-full h-full bg-gradient-to-br from-brand-100 to-brand-200 flex items-center justify-center text-4xl font-bold text-brand-500">'+d.name.charAt(0)+'</div>')+
+            '<div class="photo-ov" style="border-radius:12px"><i class="fas fa-camera text-lg"></i></div>'+
+          '</div>'+
+          '<input type="file" id="pi-profile" accept="image/*" style="display:none" onchange="uploadProfilePhoto('+d.id+',this)">'+
+          '<div class="flex-1 pt-16">'+
+            '<div class="flex items-center gap-3 mb-1">'+
+              '<h2 class="text-2xl font-extrabold text-slate-800 tracking-tight">'+d.name+'</h2>'+
+              '<span class="text-base text-slate-400 font-medium">'+(d.position||'')+'</span>'+
+              infBadge(d.influence_level)+
+            '</div>'+
+            '<div class="flex flex-wrap gap-x-5 gap-y-1.5 text-sm text-slate-500">'+
+              (d.hospital_name?'<span class="flex items-center gap-1.5"><i class="fas fa-hospital text-brand-400"></i><span class="font-semibold cursor-pointer hover:text-brand-600" onclick="viewHosp('+d.hospital_id+')">'+d.hospital_name+'</span>'+(d.hospital_grade?' <span class="badge grade-'+d.hospital_grade+' ml-1" style="font-size:9px;padding:1px 6px">'+d.hospital_grade+'급</span>':'')+'</span>':'')+
+              (d.department?'<span class="flex items-center gap-1.5"><i class="fas fa-stethoscope text-emerald-400"></i>'+d.department+'</span>':'')+
+              (d.specialty?'<span class="flex items-center gap-1.5"><i class="fas fa-microscope text-purple-400"></i>'+d.specialty+'</span>':'')+
+            '</div>'+
+          '</div>'+
+          '<div class="flex gap-3 pt-16">'+
+            profileStatBox('미팅 횟수',d.meeting_count||0,'회','fa-handshake','#3366ff','#eef4ff')+
+            profileStatBox('연구 논문',d.papers?.length||0,'편','fa-file-lines','#7c3aed','#f5f3ff')+
+            profileStatBox('최근 미팅',d.last_meeting?daysAgo(d.last_meeting):'없음','','fa-clock',d.last_meeting&&Math.floor((Date.now()-new Date(d.last_meeting+'T00:00:00').getTime())/86400000)>30?'#ef4444':'#059669',d.last_meeting&&Math.floor((Date.now()-new Date(d.last_meeting+'T00:00:00').getTime())/86400000)>30?'#fef2f2':'#ecfdf5')+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+    '</div>'+
+    // Contact info bar
+    '<div class="flex gap-4">'+
+      (d.phone?'<div class="flex-1 card-flat px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-phone text-blue-500 text-sm"></i></div><div><div class="text-[10px] text-slate-400 font-medium">전화번호</div><div class="text-sm font-semibold text-slate-700">'+d.phone+'</div></div></div>':'')+
+      (d.email?'<div class="flex-1 card-flat px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-envelope text-purple-500 text-sm"></i></div><div><div class="text-[10px] text-slate-400 font-medium">이메일</div><div class="text-sm font-semibold text-slate-700">'+d.email+'</div></div></div>':'')+
+      (d.hospital_region?'<div class="flex-1 card-flat px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-map-marker-alt text-emerald-500 text-sm"></i></div><div><div class="text-[10px] text-slate-400 font-medium">근무지</div><div class="text-sm font-semibold text-slate-700">'+(d.hospital_address||d.hospital_region)+'</div></div></div>':'')+
+    '</div>'+
+    // Tabs
+    '<div class="flex border-b border-gray-100 px-1">'+
+      '<div class="tab '+(profileTab==='overview'?'active':'')+'" onclick="profileTab=\\'overview\\';renderDocProfile()"><i class="fas fa-user text-xs"></i>소개</div>'+
+      '<div class="tab '+(profileTab==='meetings'?'active':'')+'" onclick="profileTab=\\'meetings\\';renderDocProfile()"><i class="fas fa-calendar-check text-xs"></i>미팅 기록 <span class="text-slate-300 font-normal ml-0.5">('+(d.meetings?.length||0)+')</span></div>'+
+      '<div class="tab '+(profileTab==='papers'?'active':'')+'" onclick="profileTab=\\'papers\\';renderDocProfile()"><i class="fas fa-file-lines text-xs"></i>연구 논문 <span class="text-slate-300 font-normal ml-0.5">('+(d.papers?.length||0)+')</span></div>'+
+    '</div>'+
+    // Tab content
+    renderProfileTab(d)+
+  '</div>';
+}
+
+function profileStatBox(label,val,unit,icon,color,bg){
+  return '<div class="bg-white rounded-xl border border-gray-100 px-5 py-3 text-center min-w-[100px]"><div class="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-1.5" style="background:'+bg+'"><i class="fas '+icon+' text-xs" style="color:'+color+'"></i></div><div class="text-[15px] font-extrabold text-slate-800">'+val+'<span class="text-[11px] text-slate-400 font-medium ml-0.5">'+unit+'</span></div><div class="text-[10px] text-slate-400 font-medium">'+label+'</div></div>';
+}
+
+function renderProfileTab(d){
+  if(profileTab==='overview') return renderProfileOverview(d);
+  if(profileTab==='meetings') return renderProfileMeetings(d);
+  if(profileTab==='papers') return renderProfilePapers(d);
+  return '';
+}
+
+function renderProfileOverview(d){
+  let html='<div class="grid grid-cols-5 gap-6">';
+  // Left col: bio + education + career
+  html+='<div class="col-span-3 space-y-5">';
+  // Bio
+  if(d.bio){
+    html+='<div class="card-flat p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-user-tie text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">소개</span></div><p class="text-sm text-slate-600 leading-relaxed">'+d.bio+'</p></div>';
+  }
+  // Education
+  if(d.education){
+    const eduLines=d.education.split('\\n');
+    html+='<div class="card-flat p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-graduation-cap text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">학력</span></div><div class="space-y-2.5">'+eduLines.map(e=>'<div class="flex items-start gap-3"><div class="w-2 h-2 rounded-full bg-amber-300 mt-1.5 flex-shrink-0"></div><span class="text-sm text-slate-600">'+e+'</span></div>').join('')+'</div></div>';
+  }
+  // Career
+  if(d.career){
+    const careerLines=d.career.split('\\n');
+    html+='<div class="card-flat p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-briefcase text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">경력</span></div><div class="relative pl-5"><div class="absolute left-[3px] top-1 bottom-1 w-0.5 bg-emerald-100"></div><div class="space-y-3">'+careerLines.map(c=>'<div class="flex items-start gap-3 relative"><div class="w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white shadow-sm flex-shrink-0 mt-1 -ml-[7px]"></div><span class="text-sm text-slate-600 leading-relaxed">'+c+'</span></div>').join('')+'</div></div></div>';
+  }
+  // Notes
+  if(d.notes){
+    html+='<div class="card-flat p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-sticky-note text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">영업 메모</span></div><div class="bg-amber-50/70 rounded-xl p-4 text-[13px] text-amber-800 leading-relaxed"><i class="fas fa-lightbulb text-amber-400 mr-1.5"></i>'+d.notes+'</div></div>';
+  }
+  html+='</div>';
+  // Right col: quick info + recent papers + recent meetings
+  html+='<div class="col-span-2 space-y-5">';
+  // Quick info
+  html+='<div class="card-flat p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-id-card text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기본 정보</span></div><div class="space-y-3">'+
+    infoRow('이름',d.name)+infoRow('직위',d.position)+infoRow('진료과',d.department)+infoRow('전문분야',d.specialty)+infoRow('소속 병원',d.hospital_name)+infoRow('지역',d.hospital_region)+
+    '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">영향력</span><span>'+infBadge(d.influence_level)+'</span></div>'+
+    '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">등록일</span><span class="text-[13px] font-medium text-slate-700">'+fmtDate(d.created_at?.split(' ')[0])+'</span></div>'+
+  '</div></div>';
+  // Recent papers
+  if(d.papers?.length){
+    html+='<div class="card-flat p-6"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-file-lines text-purple-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">최근 논문</span></div><span class="text-[11px] text-brand-500 font-semibold cursor-pointer hover:underline" onclick="profileTab=\\'papers\\';renderDocProfile()">전체 보기 &rarr;</span></div>'+
+      d.papers.slice(0,3).map(p=>'<div class="py-2.5 border-b border-gray-50 last:border-0"><div class="text-[13px] font-semibold text-slate-700 leading-snug mb-1 line-clamp-2">'+p.title+'</div><div class="flex items-center gap-2 text-[11px] text-slate-400"><span>'+p.journal+'</span>'+(p.year?'<span>&middot; '+p.year+'</span>':'')+'</div></div>').join('')+'</div>';
+  }
+  // Recent meetings
+  if(d.meetings?.length){
+    html+='<div class="card-flat p-6"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-calendar-check text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">최근 미팅</span></div><span class="text-[11px] text-brand-500 font-semibold cursor-pointer hover:underline" onclick="profileTab=\\'meetings\\';renderDocProfile()">전체 보기 &rarr;</span></div>'+
+      d.meetings.slice(0,3).map(m=>'<div class="py-2.5 border-b border-gray-50 last:border-0 flex items-center gap-3"><div class="flex-shrink-0">'+mtBadge(m.meeting_type)+'</div><div class="flex-1 min-w-0"><div class="text-[13px] font-medium text-slate-700 truncate">'+(m.purpose||'미팅')+'</div><div class="text-[11px] text-slate-400">'+fmtShort(m.meeting_date)+' &middot; '+daysAgo(m.meeting_date)+'</div></div></div>').join('')+'</div>';
+  }
+  html+='</div></div>';
+  return html;
+}
+
+function infoRow(label,val){
+  return '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">'+label+'</span><span class="text-[13px] font-medium text-slate-700">'+(val||'-')+'</span></div>';
+}
+
+function renderProfileMeetings(d){
+  const meets=d.meetings||[];
+  if(!meets.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">미팅 기록이 없습니다</p><p class="text-sm text-slate-300">미팅을 추가하여 관계 이력을 관리하세요</p></div></div>';
+  // Meeting stats
+  const types={};meets.forEach(m=>{types[m.meeting_type]=(types[m.meeting_type]||0)+1});
+  const months={};meets.forEach(m=>{const ym=m.meeting_date?.substring(0,7);if(ym)months[ym]=(months[ym]||0)+1});
+  
+  let html='<div class="grid grid-cols-5 gap-4 mb-5">';
+  html+='<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">전체 미팅</div><div class="text-[22px] font-extrabold text-slate-800">'+meets.length+'<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>';
+  Object.entries(types).sort((a,b)=>b[1]-a[1]).forEach(([t,c])=>{
+    html+='<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">'+mtBadge(t)+'</div><div class="text-[22px] font-extrabold text-slate-800">'+c+'<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>';
+  });
+  html+='</div>';
+  
+  // Timeline
+  html+='<div class="card-flat p-6">'+meets.map((m,i)=>
+    '<div class="flex gap-4 '+(i<meets.length-1?'mb-6':'')+'">'+
+      '<div class="flex flex-col items-center pt-1"><div class="tl-dot"></div>'+(i<meets.length-1?'<div class="tl-line flex-1 mt-1"></div>':'')+'</div>'+
+      '<div class="flex-1">'+
+        '<div class="flex items-center justify-between mb-2">'+
+          '<div class="flex items-center gap-2">'+mtBadge(m.meeting_type)+'<span class="text-xs text-slate-400">'+(m.hospital_name||'')+'</span></div>'+
+          '<div class="flex items-center gap-2"><span class="text-xs font-medium text-slate-500">'+fmtDate(m.meeting_date)+'</span><span class="text-[10px] '+daysClass(m.meeting_date)+'">'+daysAgo(m.meeting_date)+'</span></div>'+
+        '</div>'+
+        (m.purpose?'<div class="text-[14px] font-semibold text-slate-700 mb-1.5">'+m.purpose+'</div>':'')+
+        (m.content?'<div class="text-[13px] text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">'+m.content+'</div>':'')+
+        '<div class="flex flex-wrap gap-2">'+
+          (m.result?'<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 min-w-[200px]"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> '+m.result+'</div>':'')+
+          (m.next_action?'<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 min-w-[200px]"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> '+m.next_action+(m.next_meeting_date?' <span class="font-bold">('+fmtShort(m.next_meeting_date)+')</span>':'')+'</div>':'')+
+        '</div>'+
+      '</div>'+
+    '</div>'
+  ).join('')+'</div>';
+  return html;
+}
+
+function renderProfilePapers(d){
+  const papers=d.papers||[];
+  if(!papers.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-file-circle-plus"></i></div><p class="font-medium text-slate-500 mb-1">등록된 논문이 없습니다</p><p class="text-sm text-slate-300">연구 논문을 추가하여 학술 활동을 추적하세요</p></div></div>';
+  
+  // Stats
+  const journalCount=papers.filter(p=>p.paper_type==='journal').length;
+  const confCount=papers.filter(p=>p.paper_type==='conference').length;
+  const yearRange=papers.length?Math.min(...papers.map(p=>p.year||9999))+'~'+Math.max(...papers.map(p=>p.year||0)):'';
+  
+  let html='<div class="grid grid-cols-4 gap-4 mb-5">'+
+    '<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">전체 논문</div><div class="text-[22px] font-extrabold text-slate-800">'+papers.length+'<span class="text-xs text-slate-400 ml-0.5">편</span></div></div>'+
+    '<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">학술지 논문</div><div class="text-[22px] font-extrabold text-brand-600">'+journalCount+'<span class="text-xs text-slate-400 ml-0.5">편</span></div></div>'+
+    '<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">학회 발표</div><div class="text-[22px] font-extrabold text-purple-600">'+confCount+'<span class="text-xs text-slate-400 ml-0.5">편</span></div></div>'+
+    '<div class="sc !p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">발표 기간</div><div class="text-[16px] font-bold text-slate-600 mt-1">'+yearRange+'</div></div>'+
+  '</div>';
+  
+  // Paper list
+  html+='<div class="space-y-3">'+papers.map(p=>{
+    const isPaperType=p.paper_type==='journal';
+    return '<div class="card-flat p-5 hover:shadow-md transition-shadow">'+
+      '<div class="flex gap-4">'+
+        '<div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 '+(isPaperType?'bg-blue-50':'bg-purple-50')+'"><i class="fas '+(isPaperType?'fa-file-lines text-blue-500':'fa-users text-purple-500')+' text-sm"></i></div>'+
+        '<div class="flex-1 min-w-0">'+
+          '<div class="flex items-center gap-2 mb-1"><span class="text-[10px] font-bold px-2 py-0.5 rounded-full '+(isPaperType?'bg-blue-50 text-blue-600':'bg-purple-50 text-purple-600')+'">'+(isPaperType?'Journal':'Conference')+'</span>'+(p.year?'<span class="text-[11px] font-semibold text-slate-400">'+p.year+'</span>':'')+'</div>'+
+          '<h4 class="text-[14px] font-bold text-slate-800 leading-snug mb-1.5">'+p.title+'</h4>'+
+          (p.journal?'<div class="text-[12px] text-slate-500 italic mb-1"><i class="fas fa-book text-slate-300 mr-1"></i>'+p.journal+'</div>':'')+
+          (p.authors?'<div class="text-[12px] text-slate-400 mb-2"><i class="fas fa-users text-slate-300 mr-1"></i>'+p.authors+'</div>':'')+
+          (p.abstract?'<div class="text-[12px] text-slate-500 leading-relaxed bg-gray-50 rounded-lg p-3 mt-2 line-clamp-3">'+p.abstract+'</div>':'')+
+          '<div class="flex items-center gap-3 mt-2">'+
+            (p.doi?'<a href="https://doi.org/'+p.doi+'" target="_blank" class="text-[11px] text-brand-500 hover:text-brand-700 font-semibold"><i class="fas fa-external-link-alt mr-1"></i>DOI: '+p.doi+'</a>':'')+
+            '<div class="ml-auto flex gap-1">'+
+              '<button class="btn btn-ghost text-xs px-2 py-1" onclick="showPaperForm('+d.id+','+p.id+')" title="수정"><i class="fas fa-pen text-slate-400 text-[10px]"></i></button>'+
+              '<button class="btn btn-ghost text-xs px-2 py-1" onclick="delPaper('+p.id+','+d.id+')" title="삭제"><i class="fas fa-trash text-red-300 text-[10px]"></i></button>'+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+    '</div>'
+  }).join('')+'</div>';
+  return html;
+}
+
+function triggerProfilePhoto(did){document.getElementById('pi-profile')?.click()}
+async function uploadProfilePhoto(did,inp){
+  const f=inp.files?.[0];if(!f)return;
+  if(f.size>2*1024*1024){toast('2MB 이하 이미지만 업로드 가능합니다','warn');return}
+  const r=new FileReader();r.onload=async function(e){
+    const img=new Image();img.onload=async function(){
+      const c=document.createElement('canvas');c.width=c.height=200;
+      const ctx=c.getContext('2d'),mn=Math.min(img.width,img.height);
+      ctx.drawImage(img,(img.width-mn)/2,(img.height-mn)/2,mn,mn,0,0,200,200);
+      try{await API.post('/doctors/'+did+'/photo',{photo:c.toDataURL('image/jpeg',.8)});toast('사진이 업로드되었습니다');viewDocProfile(did)}catch(e){toast('업로드에 실패했습니다','err')}
+    };img.src=e.target.result;
+  };r.readAsDataURL(f);
+}
+
+/* Paper form */
+async function showPaperForm(did,pid){
+  let p={title:'',journal:'',year:new Date().getFullYear(),authors:'',doi:'',abstract:'',paper_type:'journal'};
+  if(pid){
+    const d=window._docProfile;
+    if(d&&d.papers){const found=d.papers.find(x=>x.id===pid);if(found)p=found}
+  }
+  openModal(pid?'논문 수정':'새 논문 추가',
+    '<form id="fm" class="grid grid-cols-2 gap-4">'+
+    '<div class="col-span-2">'+field('논문 제목 *','title','text',p.title)+'</div>'+
+    field('저널/학회명','journal','text',p.journal)+
+    field('발행연도','year','number',p.year)+
+    '<div class="col-span-2">'+field('저자','authors','text',p.authors)+'</div>'+
+    field('DOI','doi','text',p.doi)+
+    field('유형','paper_type','select',p.paper_type,[{v:'journal',l:'학술지 논문 (Journal)'},{v:'conference',l:'학회 발표 (Conference)'}])+
+    field('초록/요약','abstract','textarea',p.abstract)+
+    '<div class="col-span-2 flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">'+(pid?'저장':'추가')+'</button></div></form>');
+  document.getElementById('fm').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));if(!f.title){toast('논문 제목을 입력하세요','warn');return}try{if(pid){await API.put('/papers/'+pid,f);toast('논문이 수정되었습니다')}else{await API.post('/doctors/'+did+'/papers',f);toast('새 논문이 추가되었습니다')}closeModal();viewDocProfile(did)}catch(e){toast('저장에 실패했습니다','err')}};
+  setTimeout(()=>document.querySelector('#fm input[name="title"]')?.focus(),100);
+}
+
+async function delPaper(pid,did){
+  showConfirm('논문 삭제','이 논문 기록을 삭제하시겠습니까?',async()=>{try{await API.delete('/papers/'+pid);toast('논문이 삭제되었습니다');viewDocProfile(did)}catch(e){toast('삭제에 실패했습니다','err')}});
+}
 
 /* ===== MEETINGS PAGE ===== */
 async function loadMeet(){
@@ -706,17 +986,21 @@ async function showHospForm(id){
   setTimeout(()=>document.querySelector('#fm input[name="name"]')?.focus(),100);
 }
 async function showDocForm(hid,did){
-  let d={name:'',department:'이비인후과',position:'교수',phone:'',email:'',specialty:'',influence_level:'medium',notes:'',hospital_id:hid};
-  if(did){try{const ds=(await API.get('/hospitals/'+hid+'/doctors')).data.data;d=ds.find(x=>x.id===did)||d}catch(e){}}
+  let d={name:'',department:'이비인후과',position:'교수',phone:'',email:'',specialty:'',influence_level:'medium',notes:'',hospital_id:hid,bio:'',education:'',career:''};
+  if(did){try{const dr=(await API.get('/doctors/'+did)).data.data;if(dr)d=dr}catch(e){try{const ds=(await API.get('/hospitals/'+hid+'/doctors')).data.data;d=ds.find(x=>x.id===did)||d}catch(e2){}}}
   openModal(did?'교수 수정':'새 교수 추가',
     '<form id="fm" class="grid grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="'+hid+'">'+
     field('이름 *','name','text',d.name)+field('진료과','department','text',d.department)+
     field('직위','position','text',d.position)+field('전화번호','phone','tel',d.phone)+
     field('이메일','email','email',d.email)+field('전문분야','specialty','text',d.specialty)+
     field('영향력','influence_level','select',d.influence_level,[{v:'high',l:'핵심 (High)'},{v:'medium',l:'주요 (Medium)'},{v:'low',l:'일반 (Low)'}])+
-    '<div></div>'+field('메모','notes','textarea',d.notes)+
-    '<div class="col-span-2 flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">'+(did?'저장':'추가')+'</button></div></form>');
-  document.getElementById('fm').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));if(!f.name){toast('이름을 입력하세요','warn');return}try{if(did){await API.put('/doctors/'+did,f);toast('교수 정보가 수정되었습니다')}else{await API.post('/doctors',f);toast('새 교수가 추가되었습니다')}closeModal();viewHosp(hid)}catch(e){toast('저장에 실패했습니다','err')}};
+    '<div></div>'+
+    field('소개 (Bio)','bio','textarea',d.bio||'')+
+    field('학력','education','textarea',d.education?.replace(/\\n/g,'\\n')||'')+
+    field('경력','career','textarea',d.career?.replace(/\\n/g,'\\n')||'')+
+    field('영업 메모','notes','textarea',d.notes)+
+    '<div class="col-span-2 flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">'+(did?'저장':'추가')+'</button></div></form>',true);
+  document.getElementById('fm').onsubmit=async e=>{e.preventDefault();const f=Object.fromEntries(new FormData(e.target));if(!f.name){toast('이름을 입력하세요','warn');return}try{if(did){await API.put('/doctors/'+did,f);toast('교수 정보가 수정되었습니다')}else{await API.post('/doctors',f);toast('새 교수가 추가되었습니다')}closeModal();if(window._docProfile&&window._docProfile.id===did)viewDocProfile(did);else viewHosp(hid)}catch(e){toast('저장에 실패했습니다','err')}};
   setTimeout(()=>document.querySelector('#fm input[name="name"]')?.focus(),100);
 }
 async function showMeetForm(hid,did,mid){
@@ -738,8 +1022,6 @@ async function showMeetForm(hid,did,mid){
 /* ===== DELETE ===== */
 async function delHosp(id){showConfirm('병원 삭제','이 병원과 소속 교수, 미팅 기록이 모두 삭제됩니다. 되돌릴 수 없습니다.',async()=>{try{await API.delete('/hospitals/'+id);toast('병원이 삭제되었습니다');nav('hospitals')}catch(e){toast('삭제에 실패했습니다','err')}})}
 async function delDoc(id,hid){showConfirm('교수 삭제','이 교수와 관련된 미팅 기록이 모두 삭제됩니다.',async()=>{try{await API.delete('/doctors/'+id);toast('교수가 삭제되었습니다');viewHosp(hid)}catch(e){toast('삭제에 실패했습니다','err')}})}
-async function delMeet(id,hid){showConfirm('미팅 삭제','이 미팅 기록을 삭제하시겠습니까?',async()=>{try{await API.delete('/meetings/'+id);toast('미팅 기록이 삭제되었습니다');viewHosp(hid)}catch(e){toast('삭제에 실패했습니다','err')}})}
-
 async function delMeet(id,hid){showConfirm('미팅 삭제','이 미팅 기록을 삭제하시겠습니까?',async()=>{try{await API.delete('/meetings/'+id);toast('미팅 기록이 삭제되었습니다');viewHosp(hid)}catch(e){toast('삭제에 실패했습니다','err')}})}
 
 /* ===== CI STATS PAGE - 실제 HIRA 데이터 기반 ===== */
