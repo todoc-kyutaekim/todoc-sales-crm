@@ -19,7 +19,7 @@
 - **병원 상세**: 기본정보, 소속 교수 목록(영향력 표시), 미팅 기록 타임라인, 후속액션 추적, **요약 통계 카드 (총 미팅, 최근 30일 미팅, 최다 미팅 교수)**
 - **교수 관리**: 전체 교수 테이블, 소속병원/진료과/전문분야/영향력/미팅횟수 표시, 검색, **진료과 필터 드롭다운**
 - **교수 사진 업로드**: 프로필 사진 업로드(2MB 이하, 자동 200x200 리사이징, Base64 D1 저장)
-- **미팅 기록**: 전체 미팅 타임라인, 유형별(방문/전화/학회/이메일/온라인) 분류, **글로벌 미팅 추가 버튼**, **병원/교수 필터 드롭다운**
+- **미팅 기록**: 전체 미팅 타임라인, 유형별(방문/전화/학회/이메일/온라인) 분류, **글로벌 미팅 추가 버튼**, **병원/교수 필터 드롭다운**, **복수 교수 참석 지원 (다대다)**
 - **모바일 UX**: 반응형 레이아웃, 검색 아이콘, 터치 최적화
 - **인공와우 통계**: S5800 인공와우이식술 5개년+ 통계 시각화
   - 건강보험심사평가원 보건의료빅데이터 기반
@@ -38,6 +38,7 @@
 | hospitals | name, region, address, phone, grade(S/A/B/C), status, notes |
 | doctors | name, department, position, specialty, influence_level(high/medium/low), photo |
 | meetings | meeting_date, meeting_type, purpose, content, result, next_action, next_meeting_date |
+| meeting_doctors | meeting_id, doctor_id (다대다 조인 테이블 - 한 미팅에 여러 교수 참석 가능) |
 | activity_log | action, entity_type, entity_id, details, created_at |
 | papers | doctor_id, title, journal, year, doi |
 
@@ -76,7 +77,8 @@
 1. **대시보드**에서 전체 현황 확인 (통계 카드 클릭 시 해당 페이지 이동)
 2. **병원 관리** → 병원 추가 후, 카드 클릭하여 상세 페이지 이동
 3. 병원 상세에서 **교수 추가** → 교수 프로필 사진 클릭하여 사진 업로드
-4. **미팅 기록** 추가 시 결과, 후속 액션, 다음 미팅 예정일 입력
+4. **미팅 기록** 추가 시 체크박스로 **복수 교수 선택 가능** (공동 미팅)
+5. 미팅에서 결과, 후속 액션, 다음 미팅 예정일 입력
 5. 대시보드의 **후속 액션** 패널에서 To-Do 추적
 6. **인공와우 통계** 메뉴에서 시장 데이터 확인 (영업 PT 자료 활용 가능)
 
@@ -84,7 +86,7 @@
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Commit**: `feat: comprehensive fix for hospital professor crawling + PubMed paper search`
+- **Commit**: `feat: support multiple doctors per meeting (many-to-many)`
 - **Last Updated**: 2026-03-31
 
 ### AI 기능 (최신 업데이트)
