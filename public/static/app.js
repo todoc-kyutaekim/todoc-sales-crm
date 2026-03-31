@@ -594,12 +594,19 @@ async function fetchAIDoctors(hid) {
     }
     // Show preview list with checkboxes + source info
     var existingNames = (window._hospDetail?.docs || []).map(function(d) { return d.name; });
+    var isAIFallback = source && source.includes('AI 학습 데이터');
     var sourceHtml = source ?
-      '<div class="mb-3 px-3 py-2 rounded-lg ' + (crawled ? 'bg-emerald-50 border border-emerald-100' : 'bg-blue-50 border border-blue-100') + '">' +
-      '<div class="flex items-center gap-2 text-xs ' + (crawled ? 'text-emerald-700' : 'text-blue-700') + '">' +
-      '<i class="fas ' + (crawled ? 'fa-globe' : 'fa-search') + '"></i>' +
-      '<span class="font-semibold">' + (crawled ? '병원 웹사이트에서 직접 수집' : '웹 검색 기반 조회') + '</span></div>' +
-      (source ? '<div class="text-[10px] text-slate-400 mt-0.5 truncate"><i class="fas fa-link mr-1"></i>' + source + '</div>' : '') +
+      '<div class="mb-3 px-3 py-2 rounded-lg ' + 
+        (isAIFallback ? 'bg-amber-50 border border-amber-200' : 
+         crawled ? 'bg-emerald-50 border border-emerald-100' : 'bg-blue-50 border border-blue-100') + '">' +
+      '<div class="flex items-center gap-2 text-xs ' + 
+        (isAIFallback ? 'text-amber-700' : crawled ? 'text-emerald-700' : 'text-blue-700') + '">' +
+      '<i class="fas ' + (isAIFallback ? 'fa-robot' : crawled ? 'fa-globe' : 'fa-search') + '"></i>' +
+      '<span class="font-semibold">' + 
+        (isAIFallback ? 'AI 학습 데이터 기반 (확인 필요)' : 
+         crawled ? '병원 웹사이트에서 직접 수집' : '웹 검색 기반 조회') + '</span></div>' +
+      (isAIFallback ? '<div class="text-[10px] text-amber-500 mt-0.5"><i class="fas fa-exclamation-triangle mr-1"></i>병원 웹사이트 크롤링 실패로 AI 추론 결과입니다. 반드시 사실 확인이 필요합니다.</div>' :
+       source ? '<div class="text-[10px] text-slate-400 mt-0.5 truncate"><i class="fas fa-link mr-1"></i>' + source + '</div>' : '') +
       '</div>' : '';
 
     statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-2 mb-3"><i class="fas fa-wand-magic-sparkles text-violet-500"></i><span class="font-bold text-sm text-slate-700">AI 조회 결과 (' + doctors.length + '명)</span></div>' +
