@@ -581,7 +581,7 @@ async function fetchAIDoctors(hid) {
   if (!h) return;
   var statusEl = document.getElementById('ai-doc-status');
   if (!statusEl) return;
-  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 인공와우 관련 교수를 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">병원 웹사이트를 검색하여 실제 데이터를 수집합니다 (최대 60초)</p></div>';
+  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 인공와우 관련 교수를 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">병원 웹사이트 크롤링 + 뉴스 검색으로 정확한 데이터를 수집합니다</p><p class="text-xs text-violet-400 mt-1 animate-pulse">교수별 심층 검증 중... (최대 90초)</p></div>';
   try {
     var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region });
     var doctors = res.data.data || [];
@@ -613,6 +613,7 @@ async function fetchAIDoctors(hid) {
           infBadge(d.influence_level) +
           (exists ? '<span class="text-[10px] text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full font-medium">이미 등록됨</span>' : '') + '</div>' +
           '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-microscope mr-1 text-slate-300"></i>' + (d.specialty || '전문분야 미상') + '</div>' +
+          (d.notes ? '<div class="text-[10px] text-violet-500 mt-0.5 bg-violet-50 rounded px-1.5 py-0.5 inline-block"><i class="fas fa-newspaper mr-1"></i>' + d.notes + '</div>' : '') +
           '<div class="text-[10px] text-slate-300 mt-0.5">' + (d.department || '이비인후과') + '</div>' +
           '</div></label>';
       }).join('') + '</div>' +
@@ -634,7 +635,7 @@ async function addAIDoctors(hid) {
   for (var i = 0; i < selected.length; i++) {
     var d = selected[i];
     try {
-      await API.post('/doctors', { hospital_id: hid, name: d.name, department: d.department || '이비인후과', position: d.position || '', specialty: d.specialty || '', influence_level: d.influence_level || 'medium', notes: 'AI 자동 추가', bio: '', education: '', career: '' });
+      await API.post('/doctors', { hospital_id: hid, name: d.name, department: d.department || '이비인후과', position: d.position || '', specialty: d.specialty || '', influence_level: d.influence_level || 'medium', notes: (d.notes ? 'AI: ' + d.notes : 'AI 자동 추가'), bio: '', education: '', career: '' });
       added++;
     } catch(e) {}
   }
