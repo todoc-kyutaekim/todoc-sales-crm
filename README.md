@@ -67,6 +67,10 @@
 | GET | `/api/activity` | 활동 로그 |
 | GET | `/api/export/:type` | CSV 데이터 내보내기 |
 | POST/PUT/DELETE | `/api/doctors/:id/papers` | 교수 논문 관리 |
+| POST | `/api/ai/hospital-doctors` | AI 교수 자동 조회 (병원별) |
+| POST | `/api/ai/doctor-profile` | AI 교수 프로필 조회 (학력/경력) |
+| POST | `/api/ai/doctor-papers` | PubMed 논문 검색 |
+| POST | `/api/ai/hospital-suggest` | 병원명 자동완성 |
 
 ## User Guide
 1. **대시보드**에서 전체 현황 확인 (통계 카드 클릭 시 해당 페이지 이동)
@@ -80,10 +84,24 @@
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Commit**: `feat: dashboard/meeting/doctor management improvements`
-- **Last Updated**: 2026-03-30
+- **Commit**: `feat: comprehensive fix for hospital professor crawling + PubMed paper search`
+- **Last Updated**: 2026-03-31
+
+### AI 기능 (최신 업데이트)
+- **AI 교수 자동 조회**: 병원명으로 인공와우/난청/이과 관련 교수를 자동 검색
+  - 공식 의료진 목록 페이지 크롤링 (서울대, 삼성, 아산 등 20+ 병원)
+  - Google 검색 보충 데이터 수집 (JS 렌더링 병원 대응)
+  - AI 분석으로 교수명/직위/전문분야/영향력 추출
+- **PubMed 논문 검색**: 교수별 연구 논문 자동 검색
+  - 한글 이름 → 영문 로마자 변환 (60+ 성씨 매핑, 알려진 교수 직접 매핑)
+  - PubMed E-utilities API 3단계 검색 전략
+  - 병원 소속 필터, CI/난청 토픽 필터
+- **교수 프로필 자동 조회**: 웹 크롤링으로 학력/경력/전문분야 추출
+
+### 지원 병원 URL 목록
+서울대, 삼성서울, 서울아산, 세브란스, 분당서울대, 가톨릭서울성모, 고려대안암, 아주대, 경북대, 칠곡경북대, 부산대, 전남대, 충남대, 세종충남대, 인하대, 한양대, 중앙대, 순천향, 동아대, 원광대, 단국대, 건국대
 
 ### 현재 데이터
-- 병원: 8개 (서울, 경기, 부산, 대구, 광주)
-- 교수: 8명
-- 미팅: 12건 (이번 달 6건, 지난 달 4건)
+- 병원: 8개+ (서울, 경기, 부산, 대구, 광주)
+- 교수: 8명+
+- 미팅: 12건+ (이번 달 6건, 지난 달 4건)
