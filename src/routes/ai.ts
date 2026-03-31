@@ -794,10 +794,12 @@ ai.post('/doctor-papers', async (c) => {
 // Helper: fetch PubMed articles and add to collection
 async function fetchPubMedArticles(query: string, allPapers: any[], seenPmids: Set<string>, maxResults = 20): Promise<void> {
   try {
-    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&sort=date&retmode=json`
-    const searchRes = await fetch(searchUrl, {
-      headers: { 'User-Agent': 'ToDoc-CRM/1.0 (research-tool)' }
-    })
+    // NCBI E-Utilities requires tool & email for API access
+    const ncbiParams = '&tool=todoc-crm&email=todoc-crm@to-doc.com'
+    const searchUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed&term=${encodeURIComponent(query)}&retmax=${maxResults}&sort=date&retmode=json${ncbiParams}`
+    const searchRes = await fetchWithTimeout(searchUrl, {
+      headers: { 'User-Agent': 'ToDoc-CRM/1.0 (medical-crm; mailto:todoc-crm@to-doc.com)' }
+    }, 10000)
     if (!searchRes.ok) return
     const searchData = await searchRes.json() as any
     const pmids = (searchData?.esearchresult?.idlist || []).filter((id: string) => !seenPmids.has(id))
@@ -805,10 +807,10 @@ async function fetchPubMedArticles(query: string, allPapers: any[], seenPmids: S
 
     pmids.forEach((id: string) => seenPmids.add(id))
 
-    const summaryUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${pmids.join(',')}&retmode=json`
-    const summaryRes = await fetch(summaryUrl, {
-      headers: { 'User-Agent': 'ToDoc-CRM/1.0 (research-tool)' }
-    })
+    const summaryUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=pubmed&id=${pmids.join(',')}&retmode=json${ncbiParams}`
+    const summaryRes = await fetchWithTimeout(summaryUrl, {
+      headers: { 'User-Agent': 'ToDoc-CRM/1.0 (medical-crm; mailto:todoc-crm@to-doc.com)' }
+    }, 10000)
     if (!summaryRes.ok) return
     const summaryData = await summaryRes.json() as any
     const results = summaryData?.result || {}

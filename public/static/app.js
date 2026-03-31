@@ -678,17 +678,62 @@ async function addAIDoctors(hid) {
   var checkboxes = document.querySelectorAll('.ai-doc-chk:checked:not(:disabled)');
   if (!checkboxes.length) { toast('추가할 교수를 선택해주세요', 'warn'); return; }
   var selected = Array.from(checkboxes).map(function(cb) { return doctors[parseInt(cb.dataset.idx)]; });
+  var statusEl = document.getElementById('ai-doc-status');
   var added = 0;
+  var addedDoctors = []; // track created doctor IDs and names for paper fetch
   for (var i = 0; i < selected.length; i++) {
     var d = selected[i];
     try {
-      await API.post('/doctors', { hospital_id: hid, name: d.name, department: d.department || '이비인후과', position: d.position || '', specialty: d.specialty || '', influence_level: d.influence_level || 'medium', notes: (d.notes ? 'AI: ' + d.notes : 'AI 자동 추가'), bio: '', education: '', career: '' });
+      var res = await API.post('/doctors', { hospital_id: hid, name: d.name, department: d.department || '이비인후과', position: d.position || '', specialty: d.specialty || '', influence_level: d.influence_level || 'medium', notes: (d.notes ? 'AI: ' + d.notes : 'AI 자동 추가'), bio: '', education: '', career: '' });
       added++;
+      if (res.data && res.data.data && res.data.data.id) {
+        addedDoctors.push({ id: res.data.data.id, name: d.name, hospitalName: window._hospDetail?.h?.name || '' });
+      }
     } catch(e) {}
   }
-  toast(added + '명의 교수가 추가되었습니다. 프로필을 확인해주세요.');
+  toast(added + '명의 교수가 추가되었습니다.');
   window._aiDoctorsList = null;
-  viewHosp(hid);
+
+  // Auto-fetch PubMed papers for each added doctor in background
+  if (addedDoctors.length > 0 && statusEl) {
+    statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-spinner fa-spin text-blue-500"></i><div><div class="text-sm font-semibold text-slate-700">PubMed 논문 자동 검색 중... (<span id="paper-progress">0</span>/' + addedDoctors.length + '명)</div><div class="text-xs text-slate-400 mt-0.5">각 교수의 연구 논문을 PubMed에서 가져옵니다</div></div></div><div id="paper-doctor-status" class="mt-3 space-y-1"></div></div>';
+    var paperCount = 0;
+    var doctorsDone = 0;
+    for (var j = 0; j < addedDoctors.length; j++) {
+      var dr = addedDoctors[j];
+      var dStatusEl = document.getElementById('paper-doctor-status');
+      if (dStatusEl) dStatusEl.innerHTML += '<div id="paper-dr-' + dr.id + '" class="text-xs text-slate-400"><i class="fas fa-spinner fa-spin text-blue-400 mr-1"></i>' + dr.name + ' 검색 중...</div>';
+      try {
+        var papersRes = await API.post('/ai/doctor-papers', { doctorName: dr.name, hospitalName: dr.hospitalName, specialty: '' }, { timeout: 30000 });
+        var papers = (papersRes.data && papersRes.data.data) || [];
+        var addedPapers = 0;
+        for (var k = 0; k < Math.min(papers.length, 10); k++) {
+          var p = papers[k];
+          try {
+            await API.post('/doctors/' + dr.id + '/papers', {
+              title: p.title, journal: p.journal || '', year: p.year || null,
+              authors: p.authors || '', doi: p.doi || '', paper_type: 'journal',
+              url: p.url || '', abstract: ''
+            });
+            addedPapers++;
+          } catch(e2) {}
+        }
+        paperCount += addedPapers;
+        var drEl = document.getElementById('paper-dr-' + dr.id);
+        if (drEl) drEl.innerHTML = '<i class="fas fa-check-circle text-emerald-500 mr-1"></i>' + dr.name + ' — ' + addedPapers + '편 추가';
+      } catch(e3) {
+        var drEl2 = document.getElementById('paper-dr-' + dr.id);
+        if (drEl2) drEl2.innerHTML = '<i class="fas fa-minus-circle text-slate-300 mr-1"></i>' + dr.name + ' — 검색 실패';
+      }
+      doctorsDone++;
+      var progEl = document.getElementById('paper-progress');
+      if (progEl) progEl.textContent = doctorsDone;
+    }
+    if (statusEl) statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-check-circle text-emerald-500"></i><div><div class="text-sm font-semibold text-slate-700">' + added + '명 교수 추가 + ' + paperCount + '편 논문 등록 완료</div><div class="text-xs text-slate-400 mt-0.5">교수 프로필에서 상세 정보를 확인하세요</div></div></div></div>';
+    setTimeout(function() { viewHosp(hid); }, 2000);
+  } else {
+    viewHosp(hid);
+  }
 }
 
 // ===== DOCTORS PAGE =====
@@ -996,6 +1041,52 @@ async function delProfilePhoto(did) {
   });
 }
 
+// ===== Known Korean Hospitals (instant autocomplete) =====
+var KNOWN_HOSPITALS = [
+  { name: '서울대학교병원', region: '서울', address: '서울 종로구 대학로 101' },
+  { name: '분당서울대학교병원', region: '경기', address: '경기 성남시 분당구 구미로 173번길 82' },
+  { name: '삼성서울병원', region: '서울', address: '서울 강남구 일원로 81' },
+  { name: '서울아산병원', region: '서울', address: '서울 송파구 올림픽로43길 88' },
+  { name: '세브란스병원', region: '서울', address: '서울 서대문구 연세로 50-1' },
+  { name: '강남세브란스병원', region: '서울', address: '서울 강남구 언주로 211' },
+  { name: '서울성모병원', region: '서울', address: '서울 서초구 반포대로 222' },
+  { name: '여의도성모병원', region: '서울', address: '서울 영등포구 63로 10' },
+  { name: '은평성모병원', region: '서울', address: '서울 은평구 통일로 1021' },
+  { name: '의정부성모병원', region: '경기', address: '경기 의정부시 천보로 271' },
+  { name: '인천성모병원', region: '인천', address: '인천 부평구 동수로 56' },
+  { name: '부천성모병원', region: '경기', address: '경기 부천시 원미구 소사로 327' },
+  { name: '고려대학교안암병원', region: '서울', address: '서울 성북구 고려대로 73' },
+  { name: '고려대구로병원', region: '서울', address: '서울 구로구 구로동로 148' },
+  { name: '한양대학교병원', region: '서울', address: '서울 성동구 왕십리로 222-1' },
+  { name: '한양대학교구리병원', region: '경기', address: '경기 구리시 경춘로 153' },
+  { name: '중앙대학교병원', region: '서울', address: '서울 동작구 흑석로 102' },
+  { name: '건국대학교병원', region: '서울', address: '서울 광진구 능동로 120-1' },
+  { name: '경희대학교병원', region: '서울', address: '서울 동대문구 경희대로 23' },
+  { name: '순천향대학교서울병원', region: '서울', address: '서울 용산구 대사관로 59' },
+  { name: '순천향대학교부천병원', region: '경기', address: '경기 부천시 원미구 조마루로 170' },
+  { name: '아주대학교병원', region: '경기', address: '경기 수원시 영통구 월드컵로 164' },
+  { name: '인하대학교병원', region: '인천', address: '인천 중구 인항로 27' },
+  { name: '부산대학교병원', region: '부산', address: '부산 서구 구덕로 179' },
+  { name: '양산부산대학교병원', region: '경남', address: '경남 양산시 물금읍 금오로 20' },
+  { name: '경북대학교병원', region: '대구', address: '대구 중구 동덕로 130' },
+  { name: '칠곡경북대학교병원', region: '대구', address: '대구 북구 호국로 807' },
+  { name: '전남대학교병원', region: '광주', address: '광주 동구 제봉로 42' },
+  { name: '충남대학교병원', region: '대전', address: '대전 중구 문화로 282' },
+  { name: '세종충남대학교병원', region: '세종', address: '세종특별자치시 보듬7로 20' },
+  { name: '충북대학교병원', region: '충북', address: '충북 청주시 서원구 1순환로 776' },
+  { name: '전북대학교병원', region: '전북', address: '전북 전주시 덕진구 건지로 20' },
+  { name: '동아대학교병원', region: '부산', address: '부산 서구 대신공원로 26' },
+  { name: '원광대학교병원', region: '전북', address: '전북 익산시 무왕로 895' },
+  { name: '단국대학교병원', region: '충남', address: '충남 천안시 동남구 망향로 201' },
+  { name: '이화여자대학교목동병원', region: '서울', address: '서울 양천구 안양천로 1071' },
+  { name: '이화여자대학교서울병원', region: '서울', address: '서울 강서구 공항대로 260' },
+  { name: '국민건강보험일산병원', region: '경기', address: '경기 고양시 일산동구 일산로 100' },
+  { name: '서울특별시보라매병원', region: '서울', address: '서울 동작구 보라매로5길 20' },
+  { name: '분당차병원', region: '경기', address: '경기 성남시 분당구 야탑로 59' },
+  { name: '강동경희대학교병원', region: '서울', address: '서울 강동구 동남로 892' },
+  { name: '제주대학교병원', region: '제주', address: '제주 제주시 아란13길 15' },
+];
+
 // ===== FORMS =====
 async function showHospForm(id) {
   let h = { name: '', region: '', address: '', phone: '', grade: 'A', notes: '', status: 'active' };
@@ -1005,40 +1096,67 @@ async function showHospForm(id) {
     '<div class="relative col-span-full sm:col-span-1"><label class="input-label">병원명 *</label><input type="text" name="name" value="' + (h.name || '') + '" class="input" placeholder="병원명을 입력하세요" autocomplete="off"><div id="hosp-suggest" class="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-60 overflow-y-auto"></div></div>' +
     field('지역', 'region', 'text', h.region) + field('주소', 'address', 'text', h.address) + field('전화번호', 'phone', 'tel', h.phone) + field('등급', 'grade', 'select', h.grade, [{ v: 'S', l: 'S급' }, { v: 'A', l: 'A급' }, { v: 'B', l: 'B급' }, { v: 'C', l: 'C급' }]) + field('상태', 'status', 'select', h.status, [{ v: 'active', l: '활성' }, { v: 'inactive', l: '비활성' }]) + field('메모', 'notes', 'textarea', h.notes) +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (id ? '저장' : '추가') + '</button></div></form>');
-  // Hospital name autocomplete
+  // Hospital name autocomplete — instant local + async AI supplement
   var hospSuggestTimer = null;
   var nameInput = document.querySelector('#fm input[name="name"]');
   if (nameInput && !id) {
     nameInput.addEventListener('input', function() {
       clearTimeout(hospSuggestTimer);
       var q = this.value.trim();
-      if (q.length < 2) { document.getElementById('hosp-suggest').classList.add('hidden'); return; }
-      hospSuggestTimer = setTimeout(async function() {
-        try {
-          var res = await API.post('/ai/hospital-suggest', { query: q });
-          var list = res.data.data || [];
-          var dd = document.getElementById('hosp-suggest');
-          if (!list.length) { dd.classList.add('hidden'); return; }
-          dd.innerHTML = list.map(function(h) {
-            return '<div class="px-4 py-2.5 hover:bg-brand-50 cursor-pointer flex items-center gap-3 text-sm transition" data-name="' + h.name + '" data-region="' + h.region + '" data-address="' + h.address + '">' +
-              '<i class="fas fa-hospital text-brand-400 text-xs"></i>' +
-              '<div class="flex-1 min-w-0"><div class="font-medium text-slate-700 truncate">' + h.name + '</div>' +
-              (h.region ? '<div class="text-[11px] text-slate-400">' + h.region + (h.address ? ' · ' + h.address : '') + '</div>' : '') +
-              '</div></div>';
-          }).join('');
-          dd.classList.remove('hidden');
-          dd.querySelectorAll('[data-name]').forEach(function(el) {
-            el.onclick = function() {
-              document.querySelector('#fm input[name="name"]').value = this.dataset.name;
-              var regionInput = document.querySelector('#fm input[name="region"]');
-              var addrInput = document.querySelector('#fm input[name="address"]');
-              if (regionInput && this.dataset.region) regionInput.value = this.dataset.region;
-              if (addrInput && this.dataset.address) addrInput.value = this.dataset.address;
-              dd.classList.add('hidden');
-            };
-          });
-        } catch(e) {}
-      }, 500);
+      var dd = document.getElementById('hosp-suggest');
+      if (q.length < 1) { dd.classList.add('hidden'); return; }
+
+      // Step 1: Instantly show matches from local known list
+      var ql = q.toLowerCase();
+      var localMatches = KNOWN_HOSPITALS.filter(function(h) {
+        return h.name.toLowerCase().includes(ql) || h.region.toLowerCase().includes(ql);
+      }).slice(0, 8);
+
+      function renderSuggestList(list, isAI) {
+        if (!list.length) { dd.classList.add('hidden'); return; }
+        dd.innerHTML = list.map(function(h) {
+          return '<div class="px-4 py-2.5 hover:bg-brand-50 cursor-pointer flex items-center gap-3 text-sm transition" data-name="' + h.name + '" data-region="' + h.region + '" data-address="' + (h.address || '') + '">' +
+            '<i class="fas fa-hospital text-brand-400 text-xs"></i>' +
+            '<div class="flex-1 min-w-0"><div class="font-medium text-slate-700 truncate">' + h.name + '</div>' +
+            (h.region ? '<div class="text-[11px] text-slate-400">' + h.region + (h.address ? ' · ' + h.address : '') + '</div>' : '') +
+            '</div></div>';
+        }).join('') + (isAI ? '' : '<div class="px-4 py-2 text-[10px] text-slate-300 border-t border-gray-50"><i class="fas fa-spinner fa-spin mr-1"></i>AI에서 추가 병원 검색 중...</div>');
+        dd.classList.remove('hidden');
+        dd.querySelectorAll('[data-name]').forEach(function(el) {
+          el.onclick = function() {
+            document.querySelector('#fm input[name="name"]').value = this.dataset.name;
+            var regionInput = document.querySelector('#fm input[name="region"]');
+            var addrInput = document.querySelector('#fm input[name="address"]');
+            if (regionInput && this.dataset.region) regionInput.value = this.dataset.region;
+            if (addrInput && this.dataset.address) addrInput.value = this.dataset.address;
+            dd.classList.add('hidden');
+          };
+        });
+      }
+
+      if (localMatches.length) {
+        renderSuggestList(localMatches, false);
+      } else {
+        dd.classList.add('hidden');
+      }
+
+      // Step 2: After short delay, also query AI for hospitals not in local list
+      if (q.length >= 2) {
+        hospSuggestTimer = setTimeout(async function() {
+          try {
+            var res = await API.post('/ai/hospital-suggest', { query: q });
+            var aiList = res.data.data || [];
+            // Merge: local matches first, then AI results not already in local
+            var localNames = new Set(localMatches.map(function(h) { return h.name; }));
+            var merged = localMatches.slice();
+            aiList.forEach(function(h) { if (!localNames.has(h.name)) { merged.push(h); localNames.add(h.name); } });
+            if (merged.length) renderSuggestList(merged.slice(0, 10), true);
+          } catch(e) {
+            // Just keep showing local results
+            if (localMatches.length) renderSuggestList(localMatches, true);
+          }
+        }, 300);
+      }
     });
     // Close dropdown on outside click
     document.addEventListener('click', function(e) {
