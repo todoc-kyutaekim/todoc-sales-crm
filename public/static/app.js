@@ -808,10 +808,16 @@ function renderProfileMeetings(d) {
 }
 function renderProfilePapers(d) {
   const papers = d.papers || [];
-  if (!papers.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-file-circle-plus"></i></div><p class="font-medium text-slate-500 mb-1">등록된 논문이 없습니다</p></div></div>';
+  // PubMed search button always visible
+  let html = '<div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2"><div class="w-8 h-8 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-file-lines text-purple-500 text-sm"></i></div><span class="font-bold text-slate-800">논문 목록</span></div>' +
+    '<div class="flex gap-2"><button class="btn btn-outline btn-sm" onclick="searchPubMed(' + d.id + ')"><i class="fas fa-search text-xs mr-1"></i>PubMed 검색</button>' +
+    '<button class="btn btn-primary btn-sm" onclick="showPaperForm(' + d.id + ')"><i class="fas fa-plus text-xs mr-1"></i>직접 추가</button></div></div>';
+  // PubMed results container (hidden initially)
+  html += '<div id="pubmed-results" style="display:none" class="mb-5"></div>';
+  if (!papers.length) return html + '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-file-circle-plus"></i></div><p class="font-medium text-slate-500 mb-1">등록된 논문이 없습니다</p><p class="text-sm text-slate-400">PubMed 검색으로 논문을 가져오거나 직접 추가하세요</p></div></div>';
   const jc = papers.filter(p => p.paper_type === 'journal').length;
   const cc = papers.filter(p => p.paper_type === 'conference').length;
-  let html = '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-5">' +
+  html += '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-5">' +
     '<div class="sc !p-3 lg:!p-4"><div class="text-[11px] text-slate-400 mb-1">전체</div><div class="text-[20px] font-extrabold text-slate-800">' + papers.length + '</div></div>' +
     '<div class="sc !p-3 lg:!p-4"><div class="text-[11px] text-slate-400 mb-1">학술지</div><div class="text-[20px] font-extrabold text-brand-600">' + jc + '</div></div>' +
     '<div class="sc !p-3 lg:!p-4"><div class="text-[11px] text-slate-400 mb-1">학회 발표</div><div class="text-[20px] font-extrabold text-purple-600">' + cc + '</div></div>' +
@@ -1139,6 +1145,79 @@ async function showPaperForm(did, pid) {
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (pid ? '저장' : '추가') + '</button></div></form>');
   document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.title) { toast('제목을 입력하세요', 'warn'); return } try { if (pid) { await API.put('/papers/' + pid, f); toast('논문 수정됨') } else { await API.post('/doctors/' + did + '/papers', f); toast('논문 추가됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') } };
   setTimeout(() => document.querySelector('#fm input[name="title"]')?.focus(), 100);
+}
+
+// ===== PubMed Paper Search =====
+async function searchPubMed(doctorId) {
+  const d = window._docProfile;
+  if (!d) return;
+  const container = document.getElementById('pubmed-results');
+  if (!container) return;
+  container.style.display = 'block';
+  container.innerHTML = '<div class="card-flat p-6"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center animate-pulse"><i class="fas fa-search text-brand-500 text-sm"></i></div><div><div class="font-semibold text-sm text-slate-700">PubMed에서 논문 검색 중...</div><div class="text-xs text-slate-400 mt-0.5">' + d.name + ' 교수 · ' + (d.hospital_name || '') + '</div></div></div></div>';
+  try {
+    const res = await API.post('/ai/doctor-papers', {
+      doctorName: d.name,
+      hospitalName: d.hospital_name || '',
+      specialty: d.specialty || ''
+    });
+    const papers = res.data.data || [];
+    const existingTitles = new Set((d.papers || []).map(p => p.title.toLowerCase().replace(/[.\s]+/g, '')));
+    // Filter out already-registered papers
+    const newPapers = papers.filter(p => !existingTitles.has(p.title.toLowerCase().replace(/[.\s]+/g, '')));
+    if (!newPapers.length && !papers.length) {
+      container.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-info-circle text-amber-400"></i><div><div class="text-sm font-semibold text-slate-600">PubMed에서 논문을 찾지 못했습니다</div><div class="text-xs text-slate-400 mt-0.5">검색어: ' + (res.data.searchedNames || []).join(', ') + (res.data.hospital ? ' · ' + res.data.hospital : '') + '</div></div></div></div>';
+      return;
+    }
+    let html = '<div class="card-flat overflow-hidden"><div class="bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-3 flex items-center justify-between"><div class="flex items-center gap-2"><i class="fas fa-database text-blue-500 text-sm"></i><span class="font-bold text-sm text-blue-800">PubMed 검색 결과</span><span class="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold">' + papers.length + '편 발견</span>' +
+      (newPapers.length < papers.length ? '<span class="text-xs text-blue-400">(' + (papers.length - newPapers.length) + '편 이미 등록)</span>' : '') +
+      '</div><div class="flex gap-2">' +
+      (newPapers.length ? '<button class="btn btn-primary btn-sm text-xs" onclick="addAllPubMed(' + doctorId + ')"><i class="fas fa-plus-circle mr-1"></i>전체 추가 (' + newPapers.length + ')</button>' : '') +
+      '<button class="btn btn-ghost btn-sm text-xs" onclick="document.getElementById(\'pubmed-results\').style.display=\'none\'"><i class="fas fa-times"></i></button></div></div>';
+    if (newPapers.length) {
+      html += '<div class="divide-y divide-gray-50 max-h-[500px] overflow-y-auto">';
+      window._pubmedPapers = newPapers;
+      newPapers.forEach((p, i) => {
+        html += '<div class="px-5 py-3 hover:bg-gray-50 transition-colors flex items-start gap-3">' +
+          '<input type="checkbox" class="pubmed-cb mt-1 accent-brand-500" data-idx="' + i + '" checked>' +
+          '<div class="flex-1 min-w-0">' +
+          '<div class="text-[13px] font-semibold text-slate-700 leading-snug mb-1 line-clamp-2">' +
+          (p.url ? '<a href="' + p.url + '" target="_blank" class="hover:text-brand-600 transition-colors">' + p.title + ' <i class="fas fa-external-link-alt text-[9px] text-slate-300"></i></a>' : p.title) + '</div>' +
+          '<div class="flex items-center gap-2 flex-wrap text-[11px] text-slate-400">' +
+          (p.journal ? '<span><i class="fas fa-book text-slate-300 mr-0.5"></i>' + p.journal + '</span>' : '') +
+          (p.year ? '<span>' + p.year + '</span>' : '') +
+          '</div>' +
+          (p.authors ? '<div class="text-[11px] text-slate-300 mt-0.5 line-clamp-1">' + p.authors + '</div>' : '') +
+          '</div></div>';
+      });
+      html += '</div>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-exclamation-circle text-red-400"></i><span class="text-sm text-red-600">PubMed 검색 실패</span></div></div>';
+  }
+}
+
+async function addAllPubMed(doctorId) {
+  const papers = window._pubmedPapers || [];
+  const checkboxes = document.querySelectorAll('.pubmed-cb:checked');
+  const indices = Array.from(checkboxes).map(cb => parseInt(cb.dataset.idx));
+  const selected = indices.map(i => papers[i]).filter(Boolean);
+  if (!selected.length) { toast('추가할 논문을 선택하세요', 'warn'); return; }
+  let added = 0;
+  for (const p of selected) {
+    try {
+      await API.post('/doctors/' + doctorId + '/papers', {
+        title: p.title, journal: p.journal || '', year: p.year || null,
+        authors: p.authors || '', doi: p.doi || '', paper_type: 'journal',
+        url: p.url || '', abstract: ''
+      });
+      added++;
+    } catch (e) { /* skip */ }
+  }
+  toast(added + '편의 논문이 추가되었습니다');
+  viewDocProfile(doctorId);
 }
 
 // ===== DELETE =====
