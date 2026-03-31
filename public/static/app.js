@@ -602,9 +602,27 @@ async function fetchAIDoctors(hid) {
   if (!h) return;
   var statusEl = document.getElementById('ai-doc-status');
   if (!statusEl) return;
-  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 인공와우 관련 교수를 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">병원 웹사이트 크롤링 + 뉴스 검색으로 정확한 데이터를 수집합니다</p><p class="text-xs text-violet-400 mt-1 animate-pulse">교수별 심층 검증 중... (최대 90초)</p></div>';
+  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 인공와우 관련 교수를 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">병원 웹사이트 크롤링 + 뉴스 검색으로 정확한 데이터를 수집합니다</p><div class="mt-3 w-full bg-gray-100 rounded-full h-1.5"><div id="ai-progress-bar" class="bg-violet-500 h-1.5 rounded-full transition-all duration-1000" style="width:10%"></div></div><p class="text-[10px] text-slate-400 mt-2" id="ai-progress-text">병원 웹사이트 크롤링 중...</p></div>';
+  // Animate progress bar
+  var progressSteps = [
+    { pct: 20, text: '병원 웹사이트 데이터 수집 중...', delay: 3000 },
+    { pct: 35, text: '검색 엔진에서 보충 데이터 확인 중...', delay: 8000 },
+    { pct: 50, text: 'AI 분석 시작...', delay: 15000 },
+    { pct: 65, text: '교수별 전문분야 확인 중...', delay: 25000 },
+    { pct: 78, text: '인공와우/난청 관련 교수 분류 중...', delay: 40000 },
+    { pct: 88, text: '결과 정리 중... 거의 완료!', delay: 55000 },
+  ];
+  var progressTimers = progressSteps.map(function(s) {
+    return setTimeout(function() {
+      var bar = document.getElementById('ai-progress-bar');
+      var txt = document.getElementById('ai-progress-text');
+      if (bar) bar.style.width = s.pct + '%';
+      if (txt) txt.textContent = s.text;
+    }, s.delay);
+  });
   try {
-    var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region });
+    var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region }, { timeout: 90000 });
+    progressTimers.forEach(function(t) { clearTimeout(t); });
     var doctors = res.data.data || [];
     var source = res.data.source || '';
     var crawled = res.data.crawled || false;
@@ -650,6 +668,7 @@ async function fetchAIDoctors(hid) {
       '<button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="addAIDoctors(' + hid + ')"><i class="fas fa-user-plus mr-1"></i>선택 교수 추가</button></div></div></div>';
     window._aiDoctorsList = doctors;
   } catch(e) {
+    progressTimers.forEach(function(t) { clearTimeout(t); });
     statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-exclamation-circle text-red-400 text-lg mb-2"></i><p class="text-sm text-red-500">AI 조회에 실패했습니다.</p><p class="text-xs text-slate-400 mt-1">잠시 후 다시 시도해주세요.</p></div>';
   }
 }

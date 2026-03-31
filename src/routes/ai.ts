@@ -15,7 +15,7 @@ async function askAI(apiKey: string, baseUrl: string, prompt: string, systemProm
       model: 'gpt-5',
       messages,
       temperature: 0.1,
-      max_tokens: 12000
+      max_tokens: 8000
     })
   })
   if (!res.ok) {
@@ -26,17 +26,29 @@ async function askAI(apiKey: string, baseUrl: string, prompt: string, systemProm
   return data.choices?.[0]?.message?.content || ''
 }
 
+// ===== Fetch with timeout helper =====
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal })
+    return res
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // ===== Web Search Helper =====
 async function webSearch(query: string): Promise<{ title: string; link: string; snippet: string }[]> {
   try {
     const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=ko&num=10`
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'ko-KR,ko;q=0.9',
       }
-    })
+    }, 6000)
     const html = await res.text()
     const results: { title: string; link: string; snippet: string }[] = []
     const linkRegex = /href="\/url\?q=(https?:\/\/[^&"]+)/g
@@ -54,16 +66,16 @@ async function webSearch(query: string): Promise<{ title: string; link: string; 
 }
 
 // ===== Web Page Crawler Helper =====
-async function crawlPageRaw(url: string): Promise<{ text: string; html: string }> {
+async function crawlPageRaw(url: string, timeoutMs = 5000): Promise<{ text: string; html: string }> {
   try {
-    const res = await fetch(url, {
+    const res = await fetchWithTimeout(url, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'ko-KR,ko;q=0.9,en;q=0.8',
       },
       redirect: 'follow',
-    })
+    }, timeoutMs)
     if (!res.ok) return { text: '', html: '' }
     const html = await res.text()
     
@@ -98,7 +110,7 @@ async function crawlPageRaw(url: string): Promise<{ text: string; html: string }
       .replace(/\n\s*\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
-      .substring(0, 30000)
+      .substring(0, 15000)
     
     return { text, html }
   } catch (e) {
@@ -109,90 +121,6 @@ async function crawlPageRaw(url: string): Promise<{ text: string; html: string }
 async function crawlPage(url: string): Promise<string> {
   const { text } = await crawlPageRaw(url)
   return text
-}
-
-// ===== Deep-enrich helper =====
-async function deepEnrichDoctor(doctorName: string, hospitalName: string, rawHtml: string, bundangCache?: { text: string; html: string }): Promise<string> {
-  let extra = ''
-  try {
-    const name = hospitalName.toLowerCase()
-    
-    function extractCareerContent(text: string): string {
-      const lines = text.split('\n')
-      let inContent = false
-      const contentLines: string[] = []
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.length < 3) continue
-        if (trimmed.length < 15 && (trimmed.includes('진료과') || trimmed.includes('주요센터') || 
-            trimmed.includes('주요부서') || trimmed.includes('패밀리사이트') || 
-            trimmed.includes('채용사이트') || trimmed.includes('QRCODE') || trimmed.includes('MOBILE'))) continue
-        if (trimmed.includes('학력') || trimmed.includes('경력') || trimmed.includes('활동') || trimmed.includes('전공')) {
-          inContent = true
-        }
-        if (inContent) {
-          contentLines.push(trimmed)
-        }
-      }
-      return contentLines.join('\n')
-    }
-    
-    // For SNUH (본원): check career page + Bundang cross-ref
-    if ((name.includes('서울대') && !name.includes('분당')) && rawHtml) {
-      const nameIdx = rawHtml.indexOf(doctorName)
-      if (nameIdx > 0) {
-        const surrounding = rawHtml.substring(Math.max(0, nameIdx - 2000), nameIdx + 500)
-        const blogIdMatch = surrounding.match(/(?:snuh\.org)?\/(?:m\/)?blog\/(\d+)/)
-        if (blogIdMatch) {
-          const blogId = blogIdMatch[1]
-          const careerUrl = `https://www.snuh.org/blog/${blogId}/career.do`
-          const careerContent = await crawlPage(careerUrl)
-          if (careerContent && careerContent.length > 200) {
-            const careerText = extractCareerContent(careerContent)
-            const ciKeywords = ['인공와우이식', '인공와우 이식', '와우이식', '인공와우센터 연수', 'cochlear implant', 'Cochlear Implant Center']
-            const hasCIExperience = ciKeywords.some(kw => careerText.toLowerCase().includes(kw.toLowerCase()))
-            extra += `\n[${doctorName} 경력 상세 - ${careerUrl}]\n`
-            if (hasCIExperience) extra += `*** 인공와우 관련 경력이 확인됨! ***\n`
-            const relevantLines = careerText.split('\n').filter(l => {
-              const ll = l.toLowerCase()
-              return ll.includes('인공와우') || ll.includes('와우') || ll.includes('cochlear') ||
-                     ll.includes('난청') || ll.includes('이과') || ll.includes('청각') ||
-                     ll.includes('학력') || ll.includes('교수') || ll.includes('과장') ||
-                     ll.includes('센터장') || ll.includes('학회') || ll.includes('분당') ||
-                     ll.includes('멜번') || ll.includes('melbourne') || ll.includes('서울대')
-            })
-            extra += relevantLines.slice(0, 15).join('\n') + '\n'
-          }
-        }
-      }
-      
-      if (bundangCache) {
-        const { text: bText } = bundangCache
-        if (bText && bText.includes(doctorName)) {
-          const bIdx = bText.indexOf(doctorName)
-          const bContext = bText.substring(bIdx, Math.min(bText.length, bIdx + 500))
-          const hasBundangCI = ['와우이식', '인공와우', 'cochlear'].some(kw => bContext.includes(kw))
-          extra += `\n[${doctorName} - 분당서울대병원 의료진 페이지에서도 발견!]\n`
-          if (hasBundangCI) {
-            extra += `*** 분당서울대병원에서 와우이식/인공와우 전문으로 등록되어 있음! 이 교수는 분당서울대병원 소속일 가능성이 높음 ***\n`
-          }
-          extra += bContext.substring(0, 400) + '\n'
-        }
-      }
-    }
-    
-    if (name.includes('분당') && name.includes('서울대')) {
-      if (bundangCache) {
-        const { text } = bundangCache
-        if (text && text.includes(doctorName)) {
-          const nameIdx = text.indexOf(doctorName)
-          const context = text.substring(nameIdx, Math.min(text.length, nameIdx + 500))
-          extra += `\n[${doctorName} 분당서울대병원 정보]\n${context}\n`
-        }
-      }
-    }
-  } catch (e) { /* ignore */ }
-  return extra
 }
 
 // ===== Helper: check if crawled content has meaningful doctor data =====
@@ -207,7 +135,7 @@ function hasMeaningfulDoctorData(text: string): boolean {
   return names.length >= 3 && hasKeywords
 }
 
-// ===== 1. Fetch CI-related ENT professors for a hospital =====
+// ===== 1. Fetch CI-related ENT professors for a hospital (OPTIMIZED) =====
 ai.post('/hospital-doctors', async (c) => {
   const { hospitalName, region } = await c.req.json()
   if (!hospitalName) return c.json({ error: 'hospitalName is required' }, 400)
@@ -218,88 +146,111 @@ ai.post('/hospital-doctors', async (c) => {
   let rawSearchHtml = ''
   let searchResults: { title: string; link: string; snippet: string }[] = []
 
-  // Step 1: Try known URLs AND Google search in parallel for best coverage
+  // ===== PHASE 1: Parallel crawling — known URLs + Google search simultaneously =====
   try {
     const hospitalSearchUrls = getHospitalSearchUrls(hospitalName)
     const crawledParts: string[] = []
-    
-    // Crawl all known URLs
-    for (const tryUrl of hospitalSearchUrls) {
+
+    // Launch known URL crawls AND Google search in parallel
+    const knownCrawlPromises = hospitalSearchUrls.map(async (tryUrl) => {
       try {
-        const { text, html } = await crawlPageRaw(tryUrl)
+        const { text, html } = await crawlPageRaw(tryUrl, 6000)
         if (text && text.length > 300 && hasMeaningfulDoctorData(text)) {
-          crawledParts.push(`[출처: ${tryUrl}]\n${text}`)
-          if (!sourceUrl) sourceUrl = tryUrl
-          if (!rawSearchHtml && html) rawSearchHtml = html
+          return { url: tryUrl, text, html, ok: true as const }
         }
-      } catch (e) { /* skip failed URL */ }
+      } catch (e) { /* skip */ }
+      return { url: tryUrl, text: '', html: '', ok: false as const }
+    })
+
+    const googleSearchPromise = webSearch(searchQuery)
+
+    // Wait for all known crawls + Google search together
+    const [knownResults, googleResults] = await Promise.all([
+      Promise.all(knownCrawlPromises),
+      googleSearchPromise
+    ])
+
+    // Process known URL results
+    for (const r of knownResults) {
+      if (r.ok) {
+        crawledParts.push(`[출처: ${r.url}]\n${r.text}`)
+        if (!sourceUrl) sourceUrl = r.url
+        if (!rawSearchHtml && r.html) rawSearchHtml = r.html
+      }
     }
-    
     if (crawledParts.length > 0) {
       crawledContent = crawledParts.join('\n\n===== 추가 페이지 =====\n\n')
     }
 
-    // ALWAYS also try Google search for supplementary data (catches professors that
-    // hospital pages may hide behind JS rendering or separate sub-pages)
-    // This is the key improvement: don't just fallback to Google, always use it as supplement
-    const shouldSearchGoogle = !crawledContent || crawledContent.length < 2000
-    if (shouldSearchGoogle) {
-      searchResults = await webSearch(searchQuery)
-      
+    searchResults = googleResults
+
+    // If known URLs didn't yield enough, use Google search results
+    // Threshold: 3000 chars is enough for ~5-10 professor entries from hospital pages
+    const needGoogleCrawl = !crawledContent || crawledContent.length < 3000
+    if (needGoogleCrawl && searchResults.length > 0) {
       const snippetData = searchResults
         .filter(r => r.snippet && (r.snippet.includes('교수') || r.snippet.includes('인공와우') || r.snippet.includes('이비인후과') || r.snippet.includes('난청')))
         .map(r => `${r.title}: ${r.snippet} (${r.link})`)
         .join('\n')
-      
       if (snippetData) {
-        crawledContent = (crawledContent ? crawledContent + '\n\n===== Google 검색 보충 데이터 =====\n\n' : '') + 
+        crawledContent = (crawledContent ? crawledContent + '\n\n===== Google 검색 보충 데이터 =====\n\n' : '') +
           `[Google 검색 결과 snippet]\n${snippetData}\n\n`
       }
-      
-      // Crawl top Google results for doctor pages
-      let googleCrawlCount = 0
-      for (const result of searchResults.slice(0, 6)) {
-        if (googleCrawlCount >= 3) break
-        if (result.link.includes('doctor') || result.link.includes('medic') || 
-            result.link.includes('search') || result.link.includes('staff') ||
-            result.link.includes('professor') || result.link.includes('blog') ||
-            result.link.includes('dept') || result.link.includes('department') ||
-            result.link.includes('treatment') || result.link.includes('prof') ||
-            result.link.includes('인공와우') || result.link.includes('ENT') ||
-            result.link.includes('이비인후')) {
-          try {
-            const content = await crawlPage(result.link)
-            if (content && content.length > 300 && (content.includes('이비인후과') || content.includes('교수') || content.includes('인공와우'))) {
-              crawledContent += `\n[크롤링: ${result.link}]\n${content}\n`
-              if (!sourceUrl) sourceUrl = result.link
-              googleCrawlCount++
-            }
-          } catch (e) { /* skip */ }
+
+      // Pick top relevant Google links and crawl them all in parallel
+      const relevantLinks = searchResults.slice(0, 6).filter(r =>
+        r.link.includes('doctor') || r.link.includes('medic') ||
+        r.link.includes('search') || r.link.includes('staff') ||
+        r.link.includes('professor') || r.link.includes('blog') ||
+        r.link.includes('dept') || r.link.includes('department') ||
+        r.link.includes('treatment') || r.link.includes('prof') ||
+        r.link.includes('인공와우') || r.link.includes('ENT') ||
+        r.link.includes('이비인후')
+      ).slice(0, 2)
+
+      const googleCrawls = await Promise.all(relevantLinks.map(async (result) => {
+        try {
+          const content = await crawlPage(result.link)
+          if (content && content.length > 300 && (content.includes('이비인후과') || content.includes('교수') || content.includes('인공와우'))) {
+            return { link: result.link, content }
+          }
+        } catch (e) { /* skip */ }
+        return null
+      }))
+
+      for (const gc of googleCrawls) {
+        if (gc) {
+          crawledContent += `\n[크롤링: ${gc.link}]\n${gc.content}\n`
+          if (!sourceUrl) sourceUrl = gc.link
         }
       }
     }
 
-    // If still no content, try a broader Google search
+    // If still no content, try broader Google search with parallel crawl
     if (!crawledContent || crawledContent.length < 500) {
       const broadSearch = await webSearch(`"${hospitalName}" "인공와우" OR "cochlear implant" 교수`)
-      for (const result of broadSearch.slice(0, 3)) {
+      const broadCrawls = await Promise.all(broadSearch.slice(0, 2).map(async (result) => {
         try {
           const content = await crawlPage(result.link)
-          if (content && content.length > 200) {
-            crawledContent += `\n[보충 크롤링: ${result.link}]\n${content}\n`
-            if (!sourceUrl) sourceUrl = result.link
-          }
+          if (content && content.length > 200) return { link: result.link, content }
         } catch (e) { /* skip */ }
+        return null
+      }))
+      for (const bc of broadCrawls) {
+        if (bc) {
+          crawledContent += `\n[보충 크롤링: ${bc.link}]\n${bc.content}\n`
+          if (!sourceUrl) sourceUrl = bc.link
+        }
       }
     }
   } catch (e) {
     // Continue even if search/crawl fails
   }
 
-  // Step 2: Build AI prompt
+  // ===== PHASE 2: Build context =====
   let contextInfo = ''
   if (crawledContent) {
-    contextInfo = `다음은 ${hospitalName} 홈페이지 및 웹 검색에서 가져온 실제 의료진 정보입니다 (출처: ${sourceUrl}):\n\n${crawledContent.substring(0, 25000)}\n\n`
+    contextInfo = `다음은 ${hospitalName} 홈페이지 및 웹 검색에서 가져온 실제 의료진 정보입니다 (출처: ${sourceUrl}):\n\n${crawledContent.substring(0, 15000)}\n\n`
   } else if (searchResults.length > 0) {
     contextInfo = `웹 검색 결과 (검색어: "${searchQuery}"):\n` +
       searchResults.map((r, i) => `${i + 1}. ${r.title} - ${r.link}\n   ${r.snippet}`).join('\n') + '\n\n'
@@ -355,62 +306,35 @@ JSON 배열만 반환:
     return c.json({ data: [], message: '해당 병원의 정보를 찾을 수 없습니다.', source: '' })
   }
 
-  // Step 3: Extract candidates
-  const firstPassPrompt = `${contextInfo}위 데이터에서 ${region ? region + ' ' : ''}${hospitalName} 이비인후과 교수 중 인공와우(CI), 이과(otology), 난청(hearing loss), 청각재활, 와우이식, 보청기, 중이염과 관련된 교수의 이름만 추출하세요.
+  // ===== PHASE 3: Single AI call — combined extraction (replaces 2-pass approach) =====
+  let enrichedContext = contextInfo
+  const hn = hospitalName.toLowerCase()
 
-규칙:
-1. 위 크롤링/검색 데이터에 실제로 나온 교수만 포함
-2. 데이터에 없는 교수를 추측하지 마세요
-3. 세부전공에 "인공와우", "와우이식", "난청", "이과", "이과학", "청각", "중이염", "보청기", "hearing", "cochlear", "ear", "otol" 등의 키워드가 있는 교수만
-4. 두경부외과, 비과(코), 음성질환 전문 교수는 제외
-5. 교수 이름이 데이터 어딘가에 반드시 나와야 합니다 - 이름이 없는 데이터는 무시
+  // For SNUH: launch Bundang cross-reference crawl IN PARALLEL with AI call
+  // Don't block — just include Bundang data if available alongside the AI response
+  const bundangPromise = (hn.includes('서울대') && !hn.includes('분당'))
+    ? crawlPageRaw('https://www.snubh.org/medical/drMedicalTeam.do?DP_TP=O&DP_CD=OL', 4000).catch(() => ({ text: '', html: '' }))
+    : Promise.resolve({ text: '', html: '' })
 
-JSON 배열로 이름만 반환: ["이름1", "이름2"]`
+  // Add Bundang hint to prompt (the AI should distinguish affiliations)
+  if (hn.includes('서울대') && !hn.includes('분당')) {
+    enrichedContext += '\n\n[참고: 분당서울대병원(snubh.org)은 별도 기관입니다. 분당 소속 교수를 서울대병원 소속으로 잘못 분류하지 마세요.]\n'
+  }
 
-  try {
-    const systemPrompt = '당신은 한국 병원 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
-    const firstPassRaw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, firstPassPrompt, systemPrompt)
-    const namesMatch = firstPassRaw.match(/\[[\s\S]*\]/)
-    if (!namesMatch) return c.json({ data: [], message: '해당 병원의 인공와우 관련 교수 정보를 찾을 수 없습니다.', source: sourceUrl })
-
-    const candidateNames: string[] = JSON.parse(namesMatch[0])
-    if (candidateNames.length === 0) return c.json({ data: [], source: sourceUrl || '웹 검색', crawled: !!crawledContent })
-
-    // Step 4: Deep-enrich candidates
-    let enrichedContext = contextInfo
-    let bundangCache: { text: string; html: string } | undefined
-    const hn = hospitalName.toLowerCase()
-    if (hn.includes('서울대') && !hn.includes('분당')) {
-      try {
-        bundangCache = await crawlPageRaw('https://www.snubh.org/medical/drMedicalTeam.do?DP_TP=O&DP_CD=OL')
-      } catch (e) { /* ignore */ }
-    }
-    if (candidateNames.length <= 8) {
-      const enrichPromises = candidateNames.map(name => deepEnrichDoctor(name, hospitalName, rawSearchHtml, bundangCache))
-      const enrichResults = await Promise.all(enrichPromises)
-      const enrichText = enrichResults.filter(r => r.length > 0).join('\n')
-      if (enrichText) {
-        enrichedContext += '\n\n===== 각 교수별 개별 프로필 페이지 크롤링 결과 =====\n' + enrichText
-      }
-    }
-
-    // Step 5: Final extraction
-    const finalPrompt = `${enrichedContext}\n\n위의 모든 데이터를 종합하여 ${region ? region + ' ' : ''}${hospitalName} 이비인후과 교수 중 인공와우(CI)/난청/이과 관련 교수를 정리하세요.
+  // SINGLE combined AI prompt (replaces firstPass + finalExtraction)
+  const combinedPrompt = `${enrichedContext}\n\n위의 모든 데이터를 종합하여 ${region ? region + ' ' : ''}${hospitalName} 이비인후과 교수 중 인공와우(CI)/난청/이과 관련 교수를 정리하세요.
 
 중요 규칙:
-1. 병원 홈페이지 데이터 + 뉴스/검색 결과를 종합적으로 판단하세요
+1. 위 크롤링/검색 데이터에 실제로 나온 교수만 포함 (없는 교수 추측 금지)
 2. 세부전공에 "인공와우", "와우이식"이 명시된 교수 = high
 3. 세부전공에 "난청", "이과학"만 있지만 뉴스/검색에서 인공와우 관련 활동이 확인된 교수 = high
 4. 세부전공에 "난청", "이과학", "중이염"이 있지만 인공와우 활동이 확인 안 된 교수 = medium
 5. 사망/퇴직한 교수는 제외
 6. 두경부외과, 비과(코), 음성질환, 갑상선, 로봇수술 전문 교수는 제외 (단, 인공와우 관련 활동이 확인되면 포함)
 7. 소아이비인후과에서 인공와우/난청 관련 교수는 포함
-8. 소속 병원을 정확히 구분하세요 (예: "서울대병원"과 "분당서울대병원"은 다른 병원)
-   - 분당서울대병원(snubh.org) 소속 교수는 서울대병원(snuh.org) 검색 결과에 나오더라도 정확한 소속을 표기
+8. 소속 병원을 정확히 구분 (예: "서울대병원" ≠ "분당서울대병원")
 9. specialty에는 병원 홈페이지 세부전공 + 뉴스에서 확인된 추가 전문분야를 모두 기재
-10. position은 반드시 기재하세요 - "교수", "부교수", "조교수", "임상교수", "과장·주임교수" 등
-    - 크롤링 데이터에서 찾을 수 없으면 뉴스/검색 결과에서 확인
-    - 그래도 모르면 "교수"로 기재 (이비인후과 소속이면 최소 교수급)
+10. position은 반드시 기재 - 데이터에 없으면 "교수"로 기재
 
 각 교수에 대해:
 - name: 정확한 이름
@@ -418,15 +342,20 @@ JSON 배열로 이름만 반환: ["이름1", "이름2"]`
 - position: "교수", "부교수", "조교수" 등 (반드시 기재)
 - specialty: 병원 홈페이지 세부전공 + 뉴스에서 확인된 전문분야 포함
 - influence_level: "high", "medium", "low" (위 기준 적용)
-- notes: 관련 뉴스/활동 요약 (예: "인공와우 수술 2000례 달성(2025)", 없으면 빈 문자열)
+- notes: 관련 뉴스/활동 요약 (없으면 빈 문자열)
 - source: 출처 URL
 
 JSON 배열만 반환:
 [{"name":"","department":"","position":"","specialty":"","influence_level":"","notes":"","source":""}]`
 
-    const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, finalPrompt, systemPrompt)
+  try {
+    const systemPrompt = '당신은 한국 병원 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
+    const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, combinedPrompt, systemPrompt)
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) return c.json({ data: [], message: '해당 병원의 인공와우 관련 교수 정보를 찾을 수 없습니다.', source: sourceUrl })
+    if (!jsonMatch) {
+      console.error('[AI-DOCTORS] No JSON array in AI response. Raw (first 500):', raw.substring(0, 500))
+      return c.json({ data: [], message: '해당 병원의 인공와우 관련 교수 정보를 찾을 수 없습니다.', source: sourceUrl })
+    }
 
     const doctors = JSON.parse(jsonMatch[0])
     const cleaned = doctors.map((d: any) => ({
@@ -441,6 +370,7 @@ JSON 배열만 반환:
 
     return c.json({ data: cleaned, source: sourceUrl || '웹 검색', crawled: !!crawledContent })
   } catch (e: any) {
+    console.error('[AI-DOCTORS] Error:', e.message || e)
     return c.json({ error: 'AI 조회 실패: ' + (e.message || ''), data: [] }, 500)
   }
 })
