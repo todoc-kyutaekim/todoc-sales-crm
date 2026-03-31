@@ -57,4 +57,17 @@ exports.get('/cistats', async (c) => {
   return c.body(bom + header + '\n' + rows.join('\n'))
 })
 
+// Export clinics CSV
+exports.get('/clinics', async (c) => {
+  const r = await c.env.DB.prepare(`SELECT cl.*, COUNT(DISTINCT cc.id) as contact_count, COUNT(DISTINCT cv.id) as visit_count, MAX(cv.visit_date) as last_visit 
+    FROM clinics cl LEFT JOIN clinic_contacts cc ON cl.id=cc.clinic_id LEFT JOIN clinic_visits cv ON cl.id=cv.clinic_id 
+    GROUP BY cl.id ORDER BY cl.name`).all()
+  const header = toCsvRow(['ID', '의원명', '지역', '주소', '전화번호', '우선순위', '토닥접점', '상태', '관계자수', '방문수', '최근방문', '환자수', '보청기판매', 'CI의뢰', '메모', '등록일'])
+  const rows = (r.results as any[]).map(cl => toCsvRow([cl.id, cl.name, cl.region, cl.address, cl.phone, cl.priority, cl.todoc_contact, cl.status, cl.contact_count, cl.visit_count, cl.last_visit || '', cl.patient_count, cl.hearing_aid_sales, cl.ci_referrals, cl.notes, cl.created_at]))
+  const bom = '\uFEFF'
+  c.header('Content-Type', 'text/csv; charset=utf-8')
+  c.header('Content-Disposition', 'attachment; filename="clinics.csv"')
+  return c.body(bom + header + '\n' + rows.join('\n'))
+})
+
 export default exports

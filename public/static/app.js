@@ -231,7 +231,7 @@ function nav(p) {
     const sb = document.getElementById('sidebar');
     if (sb && !sb.classList.contains('-translate-x-full')) toggleSidebar();
   }
-  ({ dashboard: loadDash, hospitals: loadHosp, doctors: loadDoc, meetings: loadMeet, cistats: loadCIStats, activity: loadActivity })[p]?.();
+  ({ dashboard: loadDash, hospitals: loadHosp, doctors: loadDoc, meetings: loadMeet, clinics: loadClinics, cistats: loadCIStats, activity: loadActivity })[p]?.();
 }
 
 function openModal(t, h, wide) {
@@ -302,7 +302,7 @@ function onGlobalSearch(q) {
 function renderSearchResults(d) {
   const el = document.getElementById('search-results');
   let html = '';
-  const total = (d.hospitals?.length || 0) + (d.doctors?.length || 0) + (d.meetings?.length || 0) + (d.papers?.length || 0);
+  const total = (d.hospitals?.length || 0) + (d.doctors?.length || 0) + (d.meetings?.length || 0) + (d.papers?.length || 0) + (d.clinics?.length || 0);
   if (total === 0) { el.innerHTML = '<div class="p-6 text-center text-sm text-slate-400">검색 결과가 없습니다</div>'; el.classList.remove('hidden'); return; }
 
   if (d.hospitals?.length) {
@@ -320,6 +320,10 @@ function renderSearchResults(d) {
   if (d.papers?.length) {
     html += '<div class="search-cat"><i class="fas fa-file-lines mr-1"></i>논문</div>';
     d.papers.forEach(p => { html += '<div class="search-item" onclick="hideSearchResults();viewDocProfile(' + p.doctor_id + ')"><div class="si-icon bg-amber-50 text-amber-500"><i class="fas fa-file-lines"></i></div><div><div class="font-semibold text-slate-700 line-clamp-1">' + p.title + '</div><div class="text-[11px] text-slate-400">' + (p.doctor_name || '') + (p.year ? ' · ' + p.year : '') + '</div></div></div>'; });
+  }
+  if (d.clinics?.length) {
+    html += '<div class="search-cat"><i class="fas fa-clinic-medical mr-1"></i>의원</div>';
+    d.clinics.forEach(cl => { html += '<div class="search-item" onclick="hideSearchResults();viewClinic(' + cl.id + ')"><div class="si-icon bg-teal-50 text-teal-500"><i class="fas fa-clinic-medical"></i></div><div><div class="font-semibold text-slate-700">' + cl.name + '</div><div class="text-[11px] text-slate-400">' + (cl.region || '') + ' · 우선순위 ' + (cl.priority || '3') + '</div></div></div>'; });
   }
   el.innerHTML = html;
   el.classList.remove('hidden');
@@ -387,6 +391,8 @@ async function loadDash() {
       sc('총 미팅', s.stats.meetings, '건', 'fa-handshake', '#059669', '#ecfdf5', 'meetings') +
       '<div class="sc cursor-pointer" onclick="nav(\'meetings\')"><div class="flex items-center gap-4"><div class="sc-icon" style="background:#fffbeb"><i class="fas fa-calendar-day" style="color:#d97706"></i></div><div><p class="text-[11px] text-slate-400 font-medium mb-0.5">이번 달</p><div class="flex items-baseline gap-1"><span class="text-[22px] font-extrabold text-slate-800 tracking-tight">' + s.stats.monthMeetings + '</span><span class="text-xs text-slate-300 font-medium">건</span></div><div class="mt-0.5">' + monthDiffText + ' <span class="text-[10px] text-slate-300">vs 지난달</span></div></div></div></div>' +
       '</div>' +
+      // Clinic stats banner
+      (s.stats.clinics > 0 ? '<div class="card-flat p-4 flex flex-wrap items-center gap-4 lg:gap-6 cursor-pointer hover:shadow-md transition-shadow" onclick="nav(\'clinics\')"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-teal-50 flex items-center justify-center"><i class="fas fa-clinic-medical text-teal-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">의원 관리</div><div class="text-sm font-bold text-slate-800">' + s.stats.clinics + '개 의원 · ' + (s.stats.clinicVisits || 0) + '건 방문</div></div></div><i class="fas fa-chevron-right text-slate-300 text-xs ml-auto"></i></div>' : '') +
       // CI KPI banner
       (s.ciKpi ? '<div class="card-flat p-5 flex flex-wrap items-center gap-4 lg:gap-8"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-line text-indigo-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">인공와우 시장 현황 (' + s.ciKpi.year + '년)</div><div class="text-sm font-bold text-slate-800">환자 ' + fmtNum(s.ciKpi.patients) + '명</div></div></div><div class="flex gap-6 text-center"><div><div class="text-[10px] text-slate-400">시술건수</div><div class="text-sm font-bold text-brand-600">' + fmtNum(s.ciKpi.usage) + '</div></div><div><div class="text-[10px] text-slate-400">진료금액</div><div class="text-sm font-bold text-emerald-600">' + fmtAmount(s.ciKpi.amount) + '</div></div><div><div class="text-[10px] text-slate-400">환자 증가율</div><div class="text-sm font-bold ' + (parseFloat(s.ciKpi.growth_patients) > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (parseFloat(s.ciKpi.growth_patients) > 0 ? '+' : '') + s.ciKpi.growth_patients + '%</div></div></div><button class="btn btn-outline btn-sm ml-auto" onclick="nav(\'cistats\')">통계 상세 <i class="fas fa-arrow-right text-[10px]"></i></button></div>' : '') +
       // Monthly trend chart + right column
@@ -997,7 +1003,7 @@ async function loadActivity() {
         const icons = { create: 'fa-plus', update: 'fa-pen', delete: 'fa-trash' };
         const cls = { create: 'al-create', update: 'al-update', delete: 'al-delete' };
         const labels = { create: '생성', update: '수정', delete: '삭제' };
-        const eLabels = { hospital: '병원', doctor: '교수', meeting: '미팅', paper: '논문' };
+        const eLabels = { hospital: '병원', doctor: '교수', meeting: '미팅', paper: '논문', clinic: '의원', clinic_contact: '의원관계자', clinic_visit: '의원방문' };
         return '<div class="px-4 lg:px-6 py-3.5 tr flex items-center gap-3 border-b border-gray-50 last:border-0">' +
           '<div class="al-icon ' + (cls[l.action] || 'al-update') + '"><i class="fas ' + (icons[l.action] || 'fa-circle') + '"></i></div>' +
           '<div class="flex-1 min-w-0"><div class="text-[13px] text-slate-700"><span class="font-semibold">' + (eLabels[l.entity_type] || l.entity_type) + '</span> ' + (labels[l.action] || l.action) + (l.entity_name ? ': <span class="font-medium text-slate-800">' + l.entity_name + '</span>' : '') + '</div>' +
@@ -1633,6 +1639,302 @@ async function showCrossAnalysis() {
       '</tbody></table></div></div>';
   } catch (e) { document.getElementById('modal-body').innerHTML = '<div class="text-center py-8 text-red-400">분석 데이터를 불러올 수 없습니다</div>' }
 }
+
+// ===== CLINICS (의원 관리) =====
+let clinicList = [];
+
+// Known clinics for autocomplete
+var KNOWN_CLINICS = [
+  { name: '소리의원 면목점', region: '서울', address: '서울 중랑구 면목로 340' },
+  { name: '소리의원 강남점', region: '서울', address: '서울 강남구 강남대로' },
+  { name: '소리의원 부산점', region: '부산', address: '부산 해운대구' },
+  { name: '소리의원 대구점', region: '대구', address: '대구 중구' },
+  { name: '바른이비인후과', region: '서울', address: '서울 송파구' },
+  { name: '참이비인후과', region: '서울', address: '서울 강서구' },
+  { name: '맑은소리이비인후과', region: '경기', address: '경기 성남시' },
+  { name: '히어링플러스 보청기', region: '서울', address: '서울 종로구' },
+  { name: '스타키보청기 강남센터', region: '서울', address: '서울 강남구' },
+  { name: '포낙보청기 서울센터', region: '서울', address: '서울 서초구' },
+];
+
+function priorityStars(p) {
+  const n = parseInt(p) || 3;
+  let s = '';
+  for (let i = 1; i <= 5; i++) s += '<i class="fas fa-star text-[10px] ' + (i <= n ? 'text-amber-400' : 'text-gray-200') + '"></i>';
+  return '<span class="inline-flex gap-0.5">' + s + '</span>';
+}
+function todocBadge(t) {
+  if (t === 'O') return '<span class="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">O 접점</span>';
+  if (t === '△' || t === 'triangle') return '<span class="text-[11px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">△ 일부</span>';
+  return '<span class="text-[11px] font-bold text-slate-400 bg-gray-50 px-2 py-0.5 rounded-full">X 미접점</span>';
+}
+function clinicMetric(icon, label, val, color) {
+  return '<div class="flex-1 bg-slate-50 rounded-xl p-2.5 text-center"><p class="text-[10px] text-slate-400 mb-0.5"><i class="fas ' + icon + ' mr-0.5"></i>' + label + '</p><p class="text-sm font-bold ' + (color || 'text-slate-600') + '">' + (val || 0) + '</p></div>';
+}
+
+async function loadClinics() {
+  document.getElementById('page-title').textContent = '의원 관리';
+  document.getElementById('header-actions').innerHTML = '<button class="btn btn-primary" onclick="showClinicForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">의원 추가</span></button>';
+  document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">' + Array(6).fill('<div class="card p-5"><div class="space-y-3"><div class="skeleton rounded h-5 w-32"></div><div class="skeleton rounded h-3 w-48"></div></div></div>').join('') + '</div></div>';
+  try {
+    const [cR, rR] = await Promise.all([API.get('/clinics'), API.get('/clinics/regions')]);
+    clinicList = cR.data.data; const regions = rR.data.data;
+    document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
+      '<div class="flex flex-wrap items-center gap-3 mb-6">' +
+      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="cl-search" oninput="filterCL()" placeholder="의원명 검색" class="input pl-10" style="width:200px"></div>' +
+      '<select id="cl-region" onchange="filterCL()" class="input" style="width:110px"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
+      '<select id="cl-priority" onchange="filterCL()" class="input" style="width:100px"><option value="">전체 우선순위</option><option value="5">★★★★★</option><option value="4">★★★★</option><option value="3">★★★</option><option value="2">★★</option><option value="1">★</option></select>' +
+      '<span id="cl-count" class="text-xs text-slate-300 font-medium ml-auto"></span></div>' +
+      '<div id="cl-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5"></div></div>';
+    renderCL(clinicList);
+  } catch (e) { toast('의원 목록을 불러올 수 없습니다', 'err') }
+}
+function renderCL(list) {
+  document.getElementById('cl-count').textContent = list.length + '개 의원';
+  document.getElementById('cl-grid').innerHTML = list.length ? list.map(cl => {
+    const warn = cl.last_visit ? Math.floor((Date.now() - new Date(cl.last_visit + 'T00:00:00').getTime()) / 86400000) > 30 : '';
+    return '<div class="card p-5 cursor-pointer border-l-4 ' + (parseInt(cl.priority) >= 4 ? 'border-l-amber-400' : parseInt(cl.priority) >= 3 ? 'border-l-blue-400' : 'border-l-gray-200') + '" onclick="viewClinic(' + cl.id + ')">' +
+      '<div class="flex items-center gap-2 mb-3">' + priorityStars(cl.priority) + todocBadge(cl.todoc_contact) + statusDot(cl.status) + (warn ? '<span class="ml-auto text-[10px] text-red-400 bg-red-50 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-exclamation-triangle mr-0.5"></i>30일+</span>' : '') + '</div>' +
+      '<h3 class="font-bold text-slate-800 text-[15px] mb-1 truncate"><i class="fas fa-clinic-medical text-teal-400 mr-1.5 text-xs"></i>' + cl.name + '</h3>' +
+      '<p class="text-xs text-slate-400 mb-1"><i class="fas fa-location-dot mr-1"></i>' + (cl.region || '미지정') + (cl.address ? ' · ' + cl.address : '') + '</p>' +
+      (cl.phone ? '<p class="text-xs text-slate-400 mb-3"><i class="fas fa-phone mr-1"></i>' + cl.phone + '</p>' : '<div class="mb-3"></div>') +
+      '<div class="flex gap-2">' +
+      clinicMetric('fa-users', '관계자', cl.contact_count, 'text-brand-600') +
+      clinicMetric('fa-calendar-check', '방문', cl.visit_count, 'text-emerald-600') +
+      clinicMetric('fa-clock', '최근', cl.last_visit ? daysAgo(cl.last_visit) : '없음', cl.last_visit ? '' : 'text-slate-300') +
+      '</div>' +
+      '<div class="flex gap-2 mt-3 pt-3 border-t border-gray-50">' +
+      clinicMetric('fa-ear-listen', '난청환자', cl.patient_count || 0) +
+      clinicMetric('fa-headphones', '보청기', cl.hearing_aid_sales || 0) +
+      clinicMetric('fa-microchip', 'CI의뢰', cl.ci_referrals || 0, cl.ci_referrals > 0 ? 'text-violet-600' : '') +
+      '</div>' +
+      (cl.notes ? '<p class="text-[11px] text-slate-400 mt-3 line-clamp-1 leading-relaxed"><i class="fas fa-quote-left text-slate-200 mr-1"></i>' + cl.notes + '</p>' : '') +
+      '</div>'
+  }).join('') : '<div class="col-span-full empty"><div class="empty-icon"><i class="fas fa-clinic-medical"></i></div><p class="font-medium text-slate-500 mb-1">등록된 의원이 없습니다</p><p class="text-sm text-slate-300">"의원 추가" 버튼으로 시작하세요</p></div>';
+}
+function filterCL() {
+  const s = (document.getElementById('cl-search')?.value || '').toLowerCase(), r = document.getElementById('cl-region')?.value || '', p = document.getElementById('cl-priority')?.value || '';
+  renderCL(clinicList.filter(cl => (!s || cl.name.toLowerCase().includes(s) || (cl.address || '').toLowerCase().includes(s)) && (!r || cl.region === r) && (!p || cl.priority === p)));
+}
+
+// ===== CLINIC DETAIL =====
+let clinicTab = 'contacts';
+async function viewClinic(id) {
+  document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 space-y-5"><div class="card-flat p-5"><div class="skeleton rounded h-6 w-48 mb-3"></div><div class="skeleton rounded h-4 w-72"></div></div><div class="card-flat p-0">' + skeleton(4) + '</div></div>';
+  try {
+    const [clR, ctR, vsR] = await Promise.all([API.get('/clinics/' + id), API.get('/clinics/' + id + '/contacts'), API.get('/clinics/' + id + '/visits')]);
+    const cl = clR.data.data, contacts = ctR.data.data, visits = vsR.data.data;
+    document.getElementById('page-title').textContent = cl.name;
+    document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'clinics\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>의원 목록</span>';
+    document.getElementById('header-actions').innerHTML =
+      '<button class="btn btn-primary btn-sm" onclick="showContactForm(' + cl.id + ')"><i class="fas fa-user-plus text-xs"></i><span class="hidden sm:inline">관계자</span></button>' +
+      '<button class="btn btn-success btn-sm" onclick="showVisitForm(' + cl.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">방문기록</span></button>' +
+      '<button class="btn btn-outline btn-sm" onclick="showClinicForm(' + cl.id + ')"><i class="fas fa-pen text-xs"></i></button>' +
+      '<button class="btn btn-ghost text-red-400 hover:text-red-600 hover:bg-red-50 btn-sm" onclick="delClinic(' + cl.id + ')"><i class="fas fa-trash text-xs"></i></button>';
+    window._clinicDetail = { cl, contacts, visits }; clinicTab = 'contacts';
+    renderClinicDetail();
+  } catch (e) { toast('의원 정보를 불러올 수 없습니다', 'err') }
+}
+function renderClinicDetail() {
+  const { cl, contacts, visits } = window._clinicDetail;
+  const recent30 = visits.filter(v => { const diff = Math.floor((Date.now() - new Date(v.visit_date + 'T00:00:00').getTime()) / 86400000); return diff >= 0 && diff <= 30 }).length;
+  
+  document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-5">' +
+    // Summary stats
+    '<div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">관계자</div><div class="text-lg font-extrabold text-brand-600">' + contacts.length + '<span class="text-xs text-slate-400 ml-0.5">명</span></div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">총 방문</div><div class="text-lg font-extrabold text-slate-800">' + visits.length + '<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">최근 30일</div><div class="text-lg font-extrabold ' + (recent30 > 0 ? 'text-emerald-600' : 'text-red-400') + '">' + recent30 + '<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">난청환자</div><div class="text-lg font-extrabold text-blue-600">' + (cl.patient_count || 0) + '</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">보청기</div><div class="text-lg font-extrabold text-teal-600">' + (cl.hearing_aid_sales || 0) + '</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">CI의뢰</div><div class="text-lg font-extrabold text-violet-600">' + (cl.ci_referrals || 0) + '</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">우선순위</div><div class="mt-1">' + priorityStars(cl.priority) + '</div></div>' +
+    '</div>' +
+    // Clinic info card
+    '<div class="card-flat p-4 lg:p-6">' +
+    '<div class="flex flex-wrap items-center gap-2 mb-4">' + priorityStars(cl.priority) + todocBadge(cl.todoc_contact) + statusDot(cl.status) +
+    '<div class="ml-auto flex items-center gap-4 text-xs text-slate-400">' + (cl.phone ? '<span><i class="fas fa-phone mr-1"></i>' + cl.phone + '</span>' : '') + '</div></div>' +
+    '<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">' +
+    '<div><span class="text-slate-400 text-xs font-medium">지역</span><p class="font-semibold text-slate-700 mt-0.5">' + (cl.region || '-') + '</p></div>' +
+    '<div><span class="text-slate-400 text-xs font-medium">주소</span><p class="font-semibold text-slate-700 mt-0.5">' + (cl.address || '-') + '</p></div>' +
+    '</div>' +
+    (cl.notes ? '<div class="mt-5 bg-amber-50/70 rounded-xl p-4 text-[13px] text-amber-800 leading-relaxed"><i class="fas fa-lightbulb text-amber-400 mr-1.5"></i>' + cl.notes + '</div>' : '') +
+    '</div>' +
+    // Tabs
+    '<div class="flex border-b border-gray-100 px-1 overflow-x-auto">' +
+    '<div class="tab ' + (clinicTab === 'contacts' ? 'active' : '') + '" onclick="clinicTab=\'contacts\';renderClinicDetail()"><i class="fas fa-users text-xs"></i>관계자 (' + contacts.length + ')</div>' +
+    '<div class="tab ' + (clinicTab === 'visits' ? 'active' : '') + '" onclick="clinicTab=\'visits\';renderClinicDetail()"><i class="fas fa-calendar-check text-xs"></i>방문 기록 (' + visits.length + ')</div>' +
+    '</div>' +
+    (clinicTab === 'contacts' ? renderClinicContacts(cl, contacts) : renderClinicVisits(cl, visits, contacts)) +
+    '</div>';
+}
+
+function renderClinicContacts(cl, contacts) {
+  if (!contacts.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-user-plus"></i></div><p class="font-medium text-slate-500 mb-1">등록된 관계자가 없습니다</p><p class="text-xs text-slate-400">원장, 의사, 청각사 등 의원 관계자를 추가하세요</p></div></div>';
+  return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' + contacts.map(ct =>
+    '<div class="card-flat p-4 lg:p-5 flex gap-3 lg:gap-4">' +
+    '<div>' + avatar(ct.photo, ct.name, 'width:52px;height:52px;border-radius:14px;font-size:18px') + '</div>' +
+    '<div class="flex-1 min-w-0">' +
+    '<div class="flex items-center gap-2 mb-1"><span class="font-bold text-[14px] text-slate-800">' + ct.name + '</span>' +
+    (ct.role ? '<span class="text-[11px] font-semibold text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full">' + ct.role + '</span>' : '') +
+    infBadge(ct.influence_level) + '</div>' +
+    '<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400 mb-2">' +
+    (ct.phone ? '<span><i class="fas fa-phone mr-1 text-slate-300"></i>' + ct.phone + '</span>' : '') +
+    (ct.email ? '<span><i class="fas fa-envelope mr-1 text-slate-300"></i>' + ct.email + '</span>' : '') +
+    '</div>' +
+    '<div class="flex items-center gap-3 text-[11px]"><span class="text-slate-400"><i class="fas fa-handshake mr-1"></i>' + (ct.visit_count || 0) + '회 방문</span>' +
+    (ct.last_visit ? '<span class="' + daysClass(ct.last_visit) + '"><i class="fas fa-clock mr-1"></i>' + daysAgo(ct.last_visit) + '</span>' : '') + '</div>' +
+    (ct.notes ? '<div class="text-[11px] text-slate-400 mt-2 line-clamp-1"><i class="fas fa-quote-left text-slate-200 mr-1"></i>' + ct.notes + '</div>' : '') +
+    '</div>' +
+    '<div class="flex flex-col gap-1 flex-shrink-0">' +
+    '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="showVisitForm(' + cl.id + ',' + ct.id + ')" title="방문 기록"><i class="fas fa-calendar-plus text-emerald-500"></i></button>' +
+    '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="showContactForm(' + cl.id + ',' + ct.id + ')" title="수정"><i class="fas fa-pen text-slate-400"></i></button>' +
+    '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="delContact(' + ct.id + ',' + cl.id + ')" title="삭제"><i class="fas fa-trash text-red-300"></i></button>' +
+    '</div></div>'
+  ).join('') + '</div>';
+}
+
+function renderClinicVisits(cl, visits, contacts) {
+  if (!visits.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">방문 기록이 없습니다</p></div></div>';
+  return '<div class="card-flat p-4 lg:p-6">' + visits.map((v, i) =>
+    '<div class="flex gap-3 lg:gap-4 ' + (i < visits.length - 1 ? 'mb-6' : '') + '">' +
+    '<div class="flex flex-col items-center pt-1"><div class="tl-dot"></div>' + (i < visits.length - 1 ? '<div class="tl-line flex-1 mt-1"></div>' : '') + '</div>' +
+    '<div class="flex-1">' +
+    '<div class="flex items-center justify-between mb-2 flex-wrap gap-2">' +
+    '<div class="flex items-center gap-2">' + mtBadge(v.visit_type) +
+    (v.contact_name ? '<span class="font-semibold text-[13px] text-slate-800">' + v.contact_name + (v.contact_role ? ' <span class="text-xs text-slate-400 font-normal">(' + v.contact_role + ')</span>' : '') + '</span>' : '<span class="text-[13px] text-slate-400">미지정</span>') +
+    '</div>' +
+    '<div class="flex items-center gap-2"><span class="text-xs text-slate-400">' + fmtDate(v.visit_date) + '</span>' +
+    '<button class="btn btn-ghost text-xs px-1.5 py-1" onclick="showVisitForm(' + cl.id + ',null,' + v.id + ')"><i class="fas fa-pen text-[10px]"></i></button>' +
+    '<button class="btn btn-ghost text-xs px-1.5 py-1" onclick="delVisit(' + v.id + ',' + cl.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>' +
+    (v.purpose ? '<div class="text-[13px] font-medium text-slate-700 mb-1.5">' + v.purpose + '</div>' : '') +
+    (v.content ? '<div class="text-xs text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + v.content + '</div>' : '') +
+    '<div class="flex flex-wrap gap-2">' +
+    (v.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 min-w-[150px]"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + v.result + '</div>' : '') +
+    (v.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 min-w-[150px]"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + v.next_action + (v.next_visit_date ? ' <span class="font-bold">(' + fmtShort(v.next_visit_date) + ')</span>' : '') + '</div>' : '') +
+    '</div></div></div>'
+  ).join('') + '</div>';
+}
+
+// ===== CLINIC FORM =====
+async function showClinicForm(id) {
+  let cl = { name: '', region: '', address: '', phone: '', priority: '3', todoc_contact: 'X', notes: '', status: 'active', patient_count: 0, hearing_aid_sales: 0, ci_referrals: 0 };
+  if (id) { try { cl = (await API.get('/clinics/' + id)).data.data } catch (e) { } }
+  openModal(id ? '의원 수정' : '새 의원 추가',
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+    '<div class="relative col-span-full sm:col-span-1"><label class="input-label">의원명 *</label><input type="text" name="name" value="' + (cl.name || '') + '" class="input" placeholder="의원명을 입력하세요" autocomplete="off"><div id="clinic-suggest" class="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-60 overflow-y-auto"></div></div>' +
+    field('지역', 'region', 'text', cl.region) + field('주소', 'address', 'text', cl.address) + field('전화번호', 'phone', 'tel', cl.phone) +
+    field('우선순위', 'priority', 'select', cl.priority, [{ v: '5', l: '★★★★★' }, { v: '4', l: '★★★★' }, { v: '3', l: '★★★' }, { v: '2', l: '★★' }, { v: '1', l: '★' }]) +
+    field('토닥접점', 'todoc_contact', 'select', cl.todoc_contact, [{ v: 'O', l: 'O (접점)' }, { v: '△', l: '△ (일부)' }, { v: 'X', l: 'X (미접점)' }]) +
+    field('상태', 'status', 'select', cl.status, [{ v: 'active', l: '활성' }, { v: 'inactive', l: '비활성' }]) +
+    '<div><label class="input-label">난청 환자수</label><input type="number" name="patient_count" value="' + (cl.patient_count || 0) + '" class="input" min="0"></div>' +
+    '<div><label class="input-label">보청기 판매량</label><input type="number" name="hearing_aid_sales" value="' + (cl.hearing_aid_sales || 0) + '" class="input" min="0"></div>' +
+    '<div><label class="input-label">CI 의뢰 실적</label><input type="number" name="ci_referrals" value="' + (cl.ci_referrals || 0) + '" class="input" min="0"></div>' +
+    field('메모', 'notes', 'textarea', cl.notes) +
+    '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (id ? '저장' : '추가') + '</button></div></form>');
+  // Autocomplete
+  var clinicSuggestTimer = null;
+  var nameInput = document.querySelector('#fm input[name="name"]');
+  if (nameInput && !id) {
+    nameInput.addEventListener('input', function() {
+      clearTimeout(clinicSuggestTimer);
+      var q = this.value.trim();
+      var dd = document.getElementById('clinic-suggest');
+      if (q.length < 1) { dd.classList.add('hidden'); return; }
+      var ql = q.toLowerCase();
+      var matches = KNOWN_CLINICS.filter(function(c) { return c.name.toLowerCase().includes(ql) || c.region.toLowerCase().includes(ql) }).slice(0, 8);
+      if (!matches.length) { dd.classList.add('hidden'); return; }
+      dd.innerHTML = matches.map(function(c) {
+        return '<div class="px-4 py-2.5 hover:bg-brand-50 cursor-pointer flex items-center gap-3 text-sm transition" data-name="' + c.name + '" data-region="' + c.region + '" data-address="' + (c.address || '') + '">' +
+          '<i class="fas fa-clinic-medical text-teal-400 text-xs"></i>' +
+          '<div class="flex-1 min-w-0"><div class="font-medium text-slate-700 truncate">' + c.name + '</div>' +
+          (c.region ? '<div class="text-[11px] text-slate-400">' + c.region + (c.address ? ' · ' + c.address : '') + '</div>' : '') +
+          '</div></div>';
+      }).join('');
+      dd.classList.remove('hidden');
+      dd.querySelectorAll('[data-name]').forEach(function(el) {
+        el.onclick = function() {
+          document.querySelector('#fm input[name="name"]').value = this.dataset.name;
+          var ri = document.querySelector('#fm input[name="region"]');
+          var ai = document.querySelector('#fm input[name="address"]');
+          if (ri && this.dataset.region) ri.value = this.dataset.region;
+          if (ai && this.dataset.address) ai.value = this.dataset.address;
+          dd.classList.add('hidden');
+        };
+      });
+    });
+    document.addEventListener('click', function(e) {
+      var dd = document.getElementById('clinic-suggest');
+      if (dd && !dd.contains(e.target) && e.target !== nameInput) dd.classList.add('hidden');
+    });
+  }
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+    if (!f.name) { toast('의원명을 입력하세요', 'warn'); return }
+    try {
+      if (id) { await API.put('/clinics/' + id, f); toast('의원 정보 수정됨') }
+      else { await API.post('/clinics', f); toast('새 의원 추가됨') }
+      closeModal(); if (id) viewClinic(id); else loadClinics()
+    } catch (e) { toast('저장 실패', 'err') }
+  };
+  setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
+}
+
+// ===== CONTACT FORM =====
+async function showContactForm(cid, ctid) {
+  let ct = { name: '', role: '', phone: '', email: '', influence_level: 'medium', notes: '' };
+  if (ctid) { try { const contacts = (await API.get('/clinics/' + cid + '/contacts')).data.data; const found = contacts.find(x => x.id === ctid); if (found) ct = found; } catch (e) {} }
+  openModal(ctid ? '관계자 수정' : '새 관계자 추가',
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+    field('이름 *', 'name', 'text', ct.name) +
+    field('역할', 'role', 'select', ct.role, [{ v: '', l: '-- 선택 --' }, { v: '원장', l: '원장' }, { v: '의사', l: '의사' }, { v: '청각사', l: '청각사' }, { v: '실장', l: '실장' }, { v: '직원', l: '직원' }, { v: '기타', l: '기타' }]) +
+    field('전화번호', 'phone', 'tel', ct.phone) +
+    field('이메일', 'email', 'email', ct.email) +
+    field('영향력', 'influence_level', 'select', ct.influence_level, [{ v: 'high', l: '핵심' }, { v: 'medium', l: '주요' }, { v: 'low', l: '일반' }]) +
+    field('메모', 'notes', 'textarea', ct.notes) +
+    '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (ctid ? '저장' : '추가') + '</button></div></form>');
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+    if (!f.name) { toast('이름을 입력하세요', 'warn'); return }
+    try {
+      if (ctid) { await API.put('/clinics/contacts/' + ctid, f); toast('관계자 수정됨') }
+      else { await API.post('/clinics/' + cid + '/contacts', f); toast('관계자 추가됨') }
+      closeModal(); viewClinic(cid)
+    } catch (e) { toast('저장 실패', 'err') }
+  };
+  setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
+}
+
+// ===== VISIT FORM =====
+async function showVisitForm(cid, ctid, vid) {
+  let v = { visit_date: new Date().toISOString().split('T')[0], visit_type: 'visit', contact_id: ctid || '', purpose: '', content: '', result: '', next_action: '', next_visit_date: '' };
+  if (vid) { try { const vs = (await API.get('/clinics/' + cid + '/visits')).data.data; const found = vs.find(x => x.id === vid); if (found) v = found; } catch (e) {} }
+  let contacts = []; try { contacts = (await API.get('/clinics/' + cid + '/contacts')).data.data } catch(e) {}
+  const ctOpts = [{ v: '', l: '-- 미지정 --' }].concat(contacts.map(c => ({ v: String(c.id), l: c.name + (c.role ? ' (' + c.role + ')' : '') })));
+  openModal(vid ? '방문 기록 수정' : '새 방문 기록',
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+    field('방문일자 *', 'visit_date', 'date', v.visit_date) +
+    field('유형', 'visit_type', 'select', v.visit_type, [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
+    field('면담 관계자', 'contact_id', 'select', String(v.contact_id || ''), ctOpts) +
+    field('목적', 'purpose', 'text', v.purpose) +
+    field('내용', 'content', 'textarea', v.content) + field('결과', 'result', 'textarea', v.result) + field('후속 액션', 'next_action', 'textarea', v.next_action) +
+    '<div><label class="input-label">다음 방문 예정</label><input type="date" name="next_visit_date" value="' + (v.next_visit_date || '') + '" class="input"></div>' +
+    '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (vid ? '저장' : '추가') + '</button></div></form>');
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+    if (!f.visit_date) { toast('방문일자를 입력하세요', 'warn'); return }
+    try {
+      if (vid) { await API.put('/clinics/visits/' + vid, f); toast('방문 기록 수정됨') }
+      else { await API.post('/clinics/' + cid + '/visits', f); toast('방문 기록 추가됨') }
+      closeModal(); viewClinic(cid)
+    } catch (e) { toast('저장 실패', 'err') }
+  };
+}
+
+// ===== CLINIC DELETES =====
+async function delClinic(id) { showConfirm('의원 삭제', '이 의원과 관계자, 방문 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/clinics/' + id); toast('의원 삭제됨'); nav('clinics') } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delContact(id, cid) { showConfirm('관계자 삭제', '이 관계자를 삭제하시겠습니까?', async () => { try { await API.delete('/clinics/contacts/' + id); toast('관계자 삭제됨'); viewClinic(cid) } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delVisit(id, cid) { showConfirm('방문 기록 삭제', '이 방문 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/clinics/visits/' + id); toast('방문 기록 삭제됨'); viewClinic(cid) } catch (e) { toast('삭제 실패', 'err') } }) }
 
 // ===== Init =====
 initAuth();

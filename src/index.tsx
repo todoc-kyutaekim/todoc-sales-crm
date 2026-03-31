@@ -10,6 +10,7 @@ import activity from './routes/activity'
 import exports from './routes/exports'
 import auth from './routes/auth'
 import ai from './routes/ai'
+import clinics from './routes/clinics'
 
 type Bindings = { DB: D1Database; OPENAI_API_KEY: string; OPENAI_BASE_URL: string }
 const app = new Hono<{ Bindings: Bindings }>()
@@ -49,9 +50,14 @@ app.route('/api/search', search)
 app.route('/api/activity', activity)
 app.route('/api/export', exports)
 app.route('/api/ai', ai)
+app.route('/api/clinics', clinics)
 app.get('/api/regions', async (c) => {
-  const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
-  return c.json({ data: r.results.map((x: any) => x.region) })
+  const [h, cl] = await Promise.all([
+    c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all(),
+    c.env.DB.prepare('SELECT DISTINCT region FROM clinics WHERE region!="" ORDER BY region').all(),
+  ])
+  const set = new Set([...h.results.map((x:any) => x.region), ...cl.results.map((x:any) => x.region)])
+  return c.json({ data: Array.from(set).sort() })
 })
 
 // SPA - serves HTML shell, all JS/CSS from CDN or inline
@@ -104,6 +110,9 @@ const HTML = `<!DOCTYPE html>
     <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>병원 관리</div>
     <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>교수 관리</div>
     <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 기록</div>
+    <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
+    <div class="px-5 mb-2"><span class="text-[9px] text-slate-500 font-bold tracking-widest uppercase">Clinic</span></div>
+    <div onclick="nav('clinics')" id="n-clinics" class="nav-item"><span class="nav-icon"><i class="fas fa-clinic-medical"></i></span>의원 관리</div>
     <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
     <div class="px-5 mb-2"><span class="text-[9px] text-slate-500 font-bold tracking-widest uppercase">Market Data</span></div>
     <div onclick="nav('cistats')" id="n-cistats" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>

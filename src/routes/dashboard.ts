@@ -4,7 +4,7 @@ type Bindings = { DB: D1Database }
 const dashboard = new Hono<{ Bindings: Bindings }>()
 
 dashboard.get('/', async (c) => {
-  const [hospitals, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw] = await Promise.all([
+  const [hospitals, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw, clinicCount, clinicVisitCount, recentClinicVisitsRaw] = await Promise.all([
     c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="active"').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM doctors').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings').first(),
@@ -33,6 +33,12 @@ dashboard.get('/', async (c) => {
         AND m.next_meeting_date >= date('now') AND m.next_meeting_date <= date('now','+7 days')
       ORDER BY m.next_meeting_date ASC LIMIT 10
     `).all(),
+    // Clinic stats
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM clinics WHERE status="active"').first(),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM clinic_visits').first(),
+    c.env.DB.prepare(`SELECT cv.*, cl.name as clinic_name, cl.region as clinic_region, cc.name as contact_name, cc.role as contact_role
+      FROM clinic_visits cv LEFT JOIN clinics cl ON cv.clinic_id=cl.id LEFT JOIN clinic_contacts cc ON cv.contact_id=cc.id
+      ORDER BY cv.visit_date DESC LIMIT 5`).all(),
   ])
 
   // Helper: attach doctor names to meetings via meeting_doctors
@@ -88,6 +94,8 @@ dashboard.get('/', async (c) => {
       meetings: (meetings as any)?.c || 0,
       monthMeetings: (monthMeetings as any)?.c || 0,
       lastMonthMeetings: (lastMonthMeetings as any)?.c || 0,
+      clinics: (clinicCount as any)?.c || 0,
+      clinicVisits: (clinicVisitCount as any)?.c || 0,
     },
     recentMeetings,
     upcomingActions,
@@ -95,6 +103,7 @@ dashboard.get('/', async (c) => {
     ciKpi,
     monthlyTrend: monthlyTrend.results,
     reminders,
+    recentClinicVisits: recentClinicVisitsRaw.results,
   }})
 })
 
