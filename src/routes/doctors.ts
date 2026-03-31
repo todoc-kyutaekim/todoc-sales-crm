@@ -6,14 +6,24 @@ const doctors = new Hono<{ Bindings: Bindings }>()
 
 // List doctors by hospital
 doctors.get('/hospitals/:hid/doctors', async (c) => {
-  const r = await c.env.DB.prepare('SELECT d.*, MAX(m.meeting_date) as last_meeting, COUNT(m.id) as meeting_count FROM doctors d LEFT JOIN meetings m ON d.id=m.doctor_id WHERE d.hospital_id=? GROUP BY d.id ORDER BY d.influence_level DESC, d.name').bind(c.req.param('hid')).all()
+  const r = await c.env.DB.prepare(`SELECT d.*, 
+    MAX(m.meeting_date) as last_meeting, 
+    COUNT(DISTINCT m.id) as meeting_count 
+    FROM doctors d 
+    LEFT JOIN meeting_doctors md ON d.id=md.doctor_id 
+    LEFT JOIN meetings m ON md.meeting_id=m.id 
+    WHERE d.hospital_id=? GROUP BY d.id ORDER BY d.influence_level DESC, d.name`).bind(c.req.param('hid')).all()
   return c.json({ data: r.results })
 })
 
 // List all doctors with filters
 doctors.get('/doctors', async (c) => {
   const { search, influence_level, specialty, unvisited_days } = c.req.query()
-  let q = 'SELECT d.*, h.name as hospital_name, h.grade as hospital_grade, MAX(m.meeting_date) as last_meeting, COUNT(m.id) as meeting_count FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id LEFT JOIN meetings m ON d.id=m.doctor_id'
+  let q = `SELECT d.*, h.name as hospital_name, h.grade as hospital_grade, 
+    MAX(m.meeting_date) as last_meeting, COUNT(DISTINCT m.id) as meeting_count 
+    FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id 
+    LEFT JOIN meeting_doctors md ON d.id=md.doctor_id 
+    LEFT JOIN meetings m ON md.meeting_id=m.id`
   const conds: string[] = [], p: any[] = []
   if (search) { conds.push('(d.name LIKE ? OR h.name LIKE ? OR d.specialty LIKE ?)'); const s = `%${safeLike(search)}%`; p.push(s, s, s) }
   if (influence_level) { conds.push('d.influence_level = ?'); p.push(influence_level) }
@@ -43,10 +53,36 @@ doctors.get('/doctors/:id', async (c) => {
   const [docR, papersR, meetingsR] = await Promise.all([
     c.env.DB.prepare('SELECT d.*, h.name as hospital_name, h.region as hospital_region, h.grade as hospital_grade, h.address as hospital_address FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id WHERE d.id=?').bind(id).first(),
     c.env.DB.prepare('SELECT * FROM doctor_papers WHERE doctor_id=? ORDER BY year DESC, id DESC').bind(id).all(),
-    c.env.DB.prepare('SELECT m.*, h.name as hospital_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id WHERE m.doctor_id=? ORDER BY m.meeting_date DESC').bind(id).all(),
+    c.env.DB.prepare(`SELECT m.*, h.name as hospital_name FROM meetings m 
+      LEFT JOIN hospitals h ON m.hospital_id=h.id 
+      WHERE m.id IN (SELECT meeting_id FROM meeting_doctors WHERE doctor_id=?) 
+      ORDER BY m.meeting_date DESC`).bind(id).all(),
   ])
   if (!docR) return c.json({ error: 'Not found' }, 404)
-  return c.json({ data: { ...docR, meeting_count: meetingsR.results.length, last_meeting: meetingsR.results.length ? (meetingsR.results[0] as any).meeting_date : null, papers: papersR.results, meetings: meetingsR.results } })
+  
+  // Enrich meetings with all doctor names
+  const meetingsList = meetingsR.results as any[]
+  if (meetingsList.length > 0) {
+    const mIds = meetingsList.map(m => m.id)
+    const ph = mIds.map(() => '?').join(',')
+    const mdR = await c.env.DB.prepare(
+      `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo
+       FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id
+       WHERE md.meeting_id IN (${ph}) ORDER BY md.meeting_id, d.name`
+    ).bind(...mIds).all()
+    const dMap = new Map<number, any[]>()
+    for (const row of mdR.results as any[]) {
+      if (!dMap.has(row.meeting_id)) dMap.set(row.meeting_id, [])
+      dMap.get(row.meeting_id)!.push(row)
+    }
+    for (const m of meetingsList) {
+      const doctors = dMap.get(m.id) || []
+      m.doctors = doctors
+      m.doctor_name = doctors.map((d: any) => d.doctor_name).join(', ')
+    }
+  }
+  
+  return c.json({ data: { ...docR, meeting_count: meetingsList.length, last_meeting: meetingsList.length ? (meetingsList[0] as any).meeting_date : null, papers: papersR.results, meetings: meetingsList } })
 })
 
 doctors.post('/doctors', async (c) => {
@@ -72,7 +108,10 @@ doctors.delete('/doctors/:id', async (c) => {
   const id = c.req.param('id')
   const d = await c.env.DB.prepare('SELECT name FROM doctors WHERE id=?').bind(id).first() as any
   await c.env.DB.prepare('DELETE FROM doctor_papers WHERE doctor_id=?').bind(id).run()
-  await c.env.DB.prepare('DELETE FROM meetings WHERE doctor_id=?').bind(id).run()
+  // Delete meeting_doctors entries for this doctor
+  await c.env.DB.prepare('DELETE FROM meeting_doctors WHERE doctor_id=?').bind(id).run()
+  // Delete meetings where this doctor was the only participant
+  await c.env.DB.prepare(`DELETE FROM meetings WHERE id NOT IN (SELECT DISTINCT meeting_id FROM meeting_doctors) AND doctor_id=?`).bind(id).run()
   await c.env.DB.prepare('DELETE FROM doctors WHERE id=?').bind(id).run()
   await logActivity(c.env.DB, 'delete', 'doctor', Number(id), d?.name || '')
   return c.json({ success: true })

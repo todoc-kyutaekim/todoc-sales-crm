@@ -376,8 +376,8 @@ async function loadDash() {
         '<div class="mt-3 space-y-2">' + s.reminders.map(r => {
           const du = daysUntil(r.next_meeting_date);
           const urgency = du <= 1 ? 'bg-red-500/30 border-red-400/50' : du <= 3 ? 'bg-amber-500/20 border-amber-400/40' : 'bg-white/10 border-white/20';
-          return '<div class="flex items-center gap-3 px-3 py-2 rounded-lg border ' + urgency + ' cursor-pointer" onclick="viewDocProfile(' + r.doctor_id + ')">' +
-            '<div class="text-white/90 text-sm flex-1"><span class="font-semibold">' + (r.doctor_name || '') + '</span> <span class="text-white/60">· ' + (r.hospital_name || '') + '</span></div>' +
+          return '<div class="flex items-center gap-3 px-3 py-2 rounded-lg border ' + urgency + ' cursor-pointer" onclick="viewHosp(' + r.hospital_id + ')">' +
+            '<div class="text-white/90 text-sm flex-1"><span class="font-semibold">' + meetDoctorNames(r) + '</span>' + (r.doctors && r.doctors.length > 1 ? '<span class="text-[10px] text-white/50 ml-1">(' + r.doctors.length + '명)</span>' : '') + ' <span class="text-white/60">· ' + (r.hospital_name || '') + '</span></div>' +
             '<div class="text-right"><div class="text-white font-bold text-sm">' + fmtShort(r.next_meeting_date) + '</div><div class="text-white/70 text-[10px]">' + (du === 0 ? '오늘!' : du === 1 ? '내일' : du + '일 후') + '</div></div></div>'
         }).join('') + '</div></div>' : '') +
       // Stats cards
@@ -399,8 +399,8 @@ async function loadDash() {
       '<div class="px-4 lg:px-6 py-4 flex items-center justify-between"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-clock text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">최근 미팅</span></div><span class="text-[11px] text-slate-300 font-medium">최근 8건</span></div>' +
       '<div class="border-t border-gray-50">' + (s.recentMeetings.length ? s.recentMeetings.map(m =>
         '<div class="px-4 lg:px-6 py-3.5 tr flex items-center gap-3 lg:gap-4 cursor-pointer border-b border-gray-50 last:border-0" onclick="viewHosp(' + m.hospital_id + ')">' +
-        '<div class="hidden sm:block">' + avatar(m.doctor_photo, m.doctor_name) + '</div>' +
-        '<div class="flex-1 min-w-0"><div class="flex items-center gap-2 mb-0.5"><span class="font-semibold text-[13px] text-slate-800">' + m.doctor_name + '</span>' + mtBadge(m.meeting_type) + '</div><div class="text-xs text-slate-400 truncate">' + m.hospital_name + (m.purpose ? ' &middot; ' + m.purpose : '') + '</div></div>' +
+        '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:14px') + '</div>' +
+        '<div class="flex-1 min-w-0"><div class="flex items-center gap-2 mb-0.5"><span class="font-semibold text-[13px] text-slate-800">' + meetDoctorNames(m) + '</span>' + mtBadge(m.meeting_type) + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div><div class="text-xs text-slate-400 truncate">' + m.hospital_name + (m.purpose ? ' &middot; ' + m.purpose : '') + '</div></div>' +
         '<div class="text-right flex-shrink-0"><div class="text-xs font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div></div>'
       ).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="text-sm">아직 미팅 기록이 없습니다</p></div>') + '</div></div>' +
       '</div>' +
@@ -557,6 +557,27 @@ function renderDoctorsTab(h, docs) {
     '</div></div>'
   ).join('') + '</div>' + aiBtn + '<div id="ai-doc-status"></div>';
 }
+function meetDoctorNames(m) {
+  if (m.doctors && m.doctors.length) return m.doctors.map(function(d) { return d.doctor_name || d.name }).join(', ');
+  return m.doctor_name || '-';
+}
+function meetDoctorAvatars(m, size) {
+  var sz = size || 'width:28px;height:28px;border-radius:8px;font-size:11px';
+  if (m.doctors && m.doctors.length > 1) {
+    return '<div class="flex -space-x-2">' + m.doctors.slice(0, 3).map(function(d) {
+      return avatar(d.doctor_photo || d.photo, d.doctor_name || d.name, sz)
+    }).join('') + (m.doctors.length > 3 ? '<div class="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 border-2 border-white">+' + (m.doctors.length - 3) + '</div>' : '') + '</div>';
+  }
+  return avatar(m.doctor_photo, m.doctor_name, sz);
+}
+function meetDoctorBadges(m) {
+  if (m.doctors && m.doctors.length > 1) {
+    return '<div class="flex flex-wrap gap-1 mt-1">' + m.doctors.map(function(d) {
+      return '<span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-md font-medium">' + (d.doctor_name || d.name) + '</span>';
+    }).join('') + '</div>';
+  }
+  return '';
+}
 function renderMeetingsTab(h, meets) {
   if (!meets.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">미팅 기록이 없습니다</p></div></div>';
   return '<div class="card-flat p-4 lg:p-6">' + meets.map((m, i) =>
@@ -564,8 +585,8 @@ function renderMeetingsTab(h, meets) {
     '<div class="flex flex-col items-center pt-1"><div class="tl-dot"></div>' + (i < meets.length - 1 ? '<div class="tl-line flex-1 mt-1"></div>' : '') + '</div>' +
     '<div class="flex-1">' +
     '<div class="flex items-center justify-between mb-2 flex-wrap gap-2">' +
-    '<div class="flex items-center gap-2">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800">' + (m.doctor_name || '-') + '</span></div>' +
-    '<div class="flex items-center gap-2"><span class="text-xs text-slate-400">' + fmtDate(m.meeting_date) + '</span><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="showMeetForm(' + h.id + ',' + m.doctor_id + ',' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="delMeet(' + m.id + ',' + h.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>' +
+    '<div class="flex items-center gap-2">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800">' + meetDoctorNames(m) + '</span>' + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
+    '<div class="flex items-center gap-2"><span class="text-xs text-slate-400">' + fmtDate(m.meeting_date) + '</span><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="showMeetForm(' + h.id + ',null,' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="delMeet(' + m.id + ',' + h.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>' +
     (m.purpose ? '<div class="text-[13px] font-medium text-slate-700 mb-1.5">' + m.purpose + '</div>' : '') +
     (m.content ? '<div class="text-xs text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + m.content + '</div>' : '') +
     '<div class="flex flex-wrap gap-2">' +
@@ -793,10 +814,11 @@ function renderProfileMeetings(d) {
     '<div class="flex flex-col items-center pt-1"><div class="tl-dot"></div>' + (i < meets.length - 1 ? '<div class="tl-line flex-1 mt-1"></div>' : '') + '</div>' +
     '<div class="flex-1">' +
     '<div class="flex items-center justify-between mb-2 flex-wrap gap-2">' +
-    '<div class="flex items-center gap-2">' + mtBadge(m.meeting_type) + '<span class="text-xs text-slate-400">' + (m.hospital_name || '') + '</span></div>' +
+    '<div class="flex items-center gap-2">' + mtBadge(m.meeting_type) + '<span class="text-xs text-slate-400">' + (m.hospital_name || '') + '</span>' + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명 참석</span>' : '') + '</div>' +
     '<div class="flex items-center gap-2"><span class="text-xs font-medium text-slate-500">' + fmtDate(m.meeting_date) + '</span>' +
     '<button class="btn btn-ghost text-xs px-1.5 py-1" onclick="showMeetFormFromProfile(' + d.hospital_id + ',' + d.id + ',' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button>' +
     '<button class="btn btn-ghost text-xs px-1.5 py-1" onclick="delMeetFromProfile(' + m.id + ',' + d.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>' +
+    (m.doctors && m.doctors.length > 1 ? '<div class="flex flex-wrap gap-1 mb-2">' + m.doctors.filter(function(dr) { return (dr.doctor_id || dr.id) != d.id }).map(function(dr) { return '<span class="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-md font-medium"><i class="fas fa-user-doctor mr-0.5 text-[8px]"></i>' + (dr.doctor_name || dr.name) + '</span>' }).join('') + '</div>' : '') +
     (m.purpose ? '<div class="text-[14px] font-semibold text-slate-700 mb-1.5">' + m.purpose + '</div>' : '') +
     (m.content ? '<div class="text-[13px] text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + m.content + '</div>' : '') +
     '<div class="flex flex-wrap gap-2">' +
@@ -869,15 +891,15 @@ function renderML(list) {
   document.getElementById('m-count').textContent = list.length + '건';
   document.getElementById('m-list').innerHTML = list.length ? list.map(m =>
     '<div class="px-4 lg:px-6 py-4 tr flex gap-3 lg:gap-4 border-b border-gray-50 last:border-0">' +
-    '<div class="hidden sm:block">' + avatar(m.doctor_photo, m.doctor_name, 'width:36px;height:36px;border-radius:10px;font-size:13px') + '</div>' +
-    '<div class="flex-1 min-w-0 cursor-pointer" onclick="viewDocProfile(' + m.doctor_id + ')">' +
-    '<div class="flex items-center gap-2 mb-0.5"><span class="font-semibold text-[13px] text-slate-800">' + (m.doctor_name || '-') + '</span><span class="text-xs text-slate-300">' + (m.hospital_name || '') + '</span>' + mtBadge(m.meeting_type) + '</div>' +
+    '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:13px') + '</div>' +
+    '<div class="flex-1 min-w-0 cursor-pointer" onclick="viewMeetDoctors(' + m.id + ',' + JSON.stringify((m.doctors||[]).map(function(d){return d.doctor_id||d.id})).replace(/"/g, '&quot;') + ')">' +
+    '<div class="flex items-center gap-2 mb-0.5"><span class="font-semibold text-[13px] text-slate-800">' + meetDoctorNames(m) + '</span><span class="text-xs text-slate-300">' + (m.hospital_name || '') + '</span>' + mtBadge(m.meeting_type) + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
     (m.purpose ? '<div class="text-[13px] text-slate-600 mb-1">' + m.purpose + '</div>' : '') +
     '<div class="flex flex-wrap gap-2 mt-1">' + (m.result ? '<span class="text-[11px] text-emerald-600 bg-emerald-50 rounded-md px-2 py-0.5"><i class="fas fa-check mr-0.5"></i>' + m.result + '</span>' : '') + (m.next_action ? '<span class="text-[11px] text-amber-600 bg-amber-50 rounded-md px-2 py-0.5"><i class="fas fa-arrow-right mr-0.5"></i>' + m.next_action + '</span>' : '') + '</div></div>' +
     '<div class="flex items-center gap-2 flex-shrink-0">' +
     '<div class="text-right"><div class="text-xs font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div>' +
     '<div class="flex flex-col gap-0.5">' +
-    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();showMeetFormGlobal(' + m.hospital_id + ',' + m.doctor_id + ',' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button>' +
+    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button>' +
     '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();delMeetGlobal(' + m.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div></div>'
   ).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="font-medium text-slate-500 mb-1">미팅 기록이 없습니다</p></div>';
 }
@@ -1059,45 +1081,113 @@ async function fetchAIProfile(hid) {
   btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles mr-1.5"></i>AI 프로필 자동 조회 (학력/경력/소개)';
 }
 async function showMeetForm(hid, did, mid) {
-  let m = { meeting_date: new Date().toISOString().split('T')[0], meeting_type: 'visit', purpose: '', content: '', result: '', next_action: '', next_meeting_date: '', doctor_id: did || '', hospital_id: hid };
-  if (mid) { try { const ms = (await API.get('/meetings?hospital_id=' + hid)).data.data; m = ms.find(x => x.id === mid) || m } catch (e) { } }
+  let m = { meeting_date: new Date().toISOString().split('T')[0], meeting_type: 'visit', purpose: '', content: '', result: '', next_action: '', next_meeting_date: '', doctor_ids: did ? [did] : [], hospital_id: hid };
+  if (mid) { try { const ms = (await API.get('/meetings?hospital_id=' + hid)).data; const found = ms.data.find(x => x.id === mid); if (found) { m = found; m.doctor_ids = (found.doctors || []).map(function(d) { return d.id || d.doctor_id }) || [found.doctor_id]; } } catch (e) { } }
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
-  const dO = [{ v: '', l: '-- 교수 선택 --' }].concat(docs.map(d => ({ v: d.id, l: d.name + ' (' + (d.position || '') + ')' })));
+  
+  // Build multi-select checkbox list
+  var doctorCheckboxes = docs.length ? 
+    '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+    '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
+    docs.map(function(d) {
+      var checked = (m.doctor_ids || []).map(Number).includes(d.id) ? ' checked' : '';
+      return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition">' +
+        '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer"' + checked + '>' +
+        '<div class="flex-1 min-w-0"><span class="text-[13px] font-medium text-slate-700">' + d.name + '</span>' +
+        (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
+        '</div></label>';
+    }).join('') + '</div></div>' :
+    '<div class="col-span-full"><label class="input-label">교수</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 교수가 없습니다. 먼저 교수를 추가하세요.</div></div>';
+  
   openModal(mid ? '미팅 수정' : '새 미팅 기록',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
-    field('교수 *', 'doctor_id', 'select', m.doctor_id || did || '', dO) + field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
+    doctorCheckboxes +
+    field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
     field('유형', 'meeting_type', 'select', m.meeting_type, [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) + field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (mid ? '저장' : '추가') + '</button></div></form>');
-  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.doctor_id) { toast('교수를 선택하세요', 'warn'); return } try { if (mid) { await API.put('/meetings/' + mid, f); toast('미팅 수정됨') } else { await API.post('/meetings', f); toast('미팅 기록됨') } closeModal(); viewHosp(hid) } catch (e) { toast('저장 실패', 'err') } };
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    // Get all checked doctor_ids
+    const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
+    if (!doctorIds.length) { toast('교수를 선택하세요', 'warn'); return }
+    const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
+    delete payload.doctor_ids_single;
+    try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewHosp(hid) } catch (e) { toast('저장 실패', 'err') }
+  };
 }
 async function showMeetFormFromProfile(hid, did, mid) {
-  let m = { meeting_date: new Date().toISOString().split('T')[0], meeting_type: 'visit', purpose: '', content: '', result: '', next_action: '', next_meeting_date: '', doctor_id: did, hospital_id: hid };
-  if (mid) { try { const ms = (await API.get('/meetings?doctor_id=' + did)).data.data; m = ms.find(x => x.id === mid) || m } catch (e) { } }
+  let m = { meeting_date: new Date().toISOString().split('T')[0], meeting_type: 'visit', purpose: '', content: '', result: '', next_action: '', next_meeting_date: '', doctor_ids: [did], hospital_id: hid };
+  if (mid) { try { const ms = (await API.get('/meetings?doctor_id=' + did)).data; const found = ms.data.find(x => x.id === mid); if (found) { m = found; m.doctor_ids = (found.doctors || []).map(function(d) { return d.id || d.doctor_id }) || [found.doctor_id]; } } catch (e) { } }
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
-  const dO = [{ v: '', l: '-- 교수 선택 --' }].concat(docs.map(d => ({ v: d.id, l: d.name })));
+  
+  var doctorCheckboxes = docs.length ?
+    '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+    '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
+    docs.map(function(d) {
+      var checked = (m.doctor_ids || []).map(Number).includes(d.id) ? ' checked' : '';
+      return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition">' +
+        '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer"' + checked + '>' +
+        '<div class="flex-1 min-w-0"><span class="text-[13px] font-medium text-slate-700">' + d.name + '</span>' +
+        (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
+        '</div></label>';
+    }).join('') + '</div></div>' :
+    '<div class="col-span-full"><label class="input-label">교수</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 교수가 없습니다.</div></div>';
+  
   openModal(mid ? '미팅 수정' : '새 미팅 기록',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
-    field('교수', 'doctor_id', 'select', did, dO) + field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
+    doctorCheckboxes +
+    field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
     field('유형', 'meeting_type', 'select', m.meeting_type, [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) + field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (mid ? '저장' : '추가') + '</button></div></form>');
-  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.doctor_id) { toast('교수를 선택하세요', 'warn'); return } try { if (mid) { await API.put('/meetings/' + mid, f); toast('미팅 수정됨') } else { await API.post('/meetings', f); toast('미팅 기록됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') } };
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
+    if (!doctorIds.length) { toast('교수를 선택하세요', 'warn'); return }
+    const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
+    try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') }
+  };
 }
-async function showMeetFormGlobal(hid, did, mid) {
-  let m = {}; if (mid) { try { const ms = (await API.get('/meetings?hospital_id=' + hid)).data.data; m = ms.find(x => x.id === mid) || {} } catch (e) { } }
+async function showMeetFormGlobal(hid, doctorIds, mid) {
+  // doctorIds can be an array or single value
+  if (!Array.isArray(doctorIds)) doctorIds = [doctorIds];
+  let m = {}; if (mid) { try { const ms = (await API.get('/meetings?hospital_id=' + hid)).data; const found = ms.data.find(x => x.id === mid); if (found) { m = found; doctorIds = (found.doctors || []).map(function(d) { return d.id || d.doctor_id }) || doctorIds; } } catch (e) { } }
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
-  const dO = [{ v: '', l: '-- 교수 선택 --' }].concat(docs.map(d => ({ v: d.id, l: d.name })));
+  
+  var doctorCheckboxes = docs.length ?
+    '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+    '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
+    docs.map(function(d) {
+      var checked = doctorIds.map(Number).includes(d.id) ? ' checked' : '';
+      return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition">' +
+        '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer"' + checked + '>' +
+        '<div class="flex-1 min-w-0"><span class="text-[13px] font-medium text-slate-700">' + d.name + '</span>' +
+        (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
+        '</div></label>';
+    }).join('') + '</div></div>' :
+    '<div class="col-span-full"><label class="input-label">교수</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 교수가 없습니다.</div></div>';
+  
   openModal('미팅 수정',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
-    field('교수', 'doctor_id', 'select', m.doctor_id || did, dO) + field('미팅일자 *', 'meeting_date', 'date', m.meeting_date || '') +
+    doctorCheckboxes +
+    field('미팅일자 *', 'meeting_date', 'date', m.meeting_date || '') +
     field('유형', 'meeting_type', 'select', m.meeting_type || 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) + field('목적', 'purpose', 'text', m.purpose || '') +
     field('미팅 내용', 'content', 'textarea', m.content || '') + field('결과', 'result', 'textarea', m.result || '') + field('후속 액션', 'next_action', 'textarea', m.next_action || '') +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">저장</button></div></form>');
-  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); try { await API.put('/meetings/' + mid, f); toast('미팅 수정됨'); closeModal(); loadMeet() } catch (e) { toast('저장 실패', 'err') } };
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const selectedIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
+    if (!selectedIds.length) { toast('교수를 선택하세요', 'warn'); return }
+    const payload = { ...f, doctor_ids: selectedIds, hospital_id: hid };
+    try { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨'); closeModal(); loadMeet() } catch (e) { toast('저장 실패', 'err') }
+  };
 }
 
 // ===== NEW MEETING (GLOBAL - select hospital first) =====
@@ -1111,7 +1201,7 @@ async function showNewMeetGlobal() {
     document.getElementById('modal-body').innerHTML = 
       '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
       '<div><label class="input-label">병원 *</label><select name="hospital_id" id="nm-hosp" class="input" onchange="updateNewMeetDocs()"><option value="">-- 병원 선택 --</option>' + hospOpts + '</select></div>' +
-      '<div><label class="input-label">교수 *</label><select name="doctor_id" id="nm-doc" class="input"><option value="">-- 먼저 병원 선택 --</option></select></div>' +
+      '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div></div></div>' +
       field('미팅일자 *', 'meeting_date', 'date', new Date().toISOString().split('T')[0]) +
       field('유형', 'meeting_type', 'select', 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
       field('목적', 'purpose', 'text', '') +
@@ -1123,18 +1213,27 @@ async function showNewMeetGlobal() {
       e.preventDefault();
       const f = Object.fromEntries(new FormData(e.target));
       if (!f.hospital_id) { toast('병원을 선택하세요', 'warn'); return }
-      if (!f.doctor_id) { toast('교수를 선택하세요', 'warn'); return }
+      const doctorIds = Array.from(document.querySelectorAll('#nm-doc-list input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
+      if (!doctorIds.length) { toast('교수를 선택하세요', 'warn'); return }
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
-      try { await API.post('/meetings', f); toast('미팅 기록됨'); closeModal(); if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); } catch (e) { toast('저장 실패', 'err') }
+      const payload = { ...f, doctor_ids: doctorIds };
+      try { await API.post('/meetings', payload); toast('미팅 기록됨'); closeModal(); if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); } catch (e) { toast('저장 실패', 'err') }
     };
   } catch (e) { toast('데이터를 불러올 수 없습니다', 'err'); closeModal(); }
 }
 function updateNewMeetDocs() {
   const hid = document.getElementById('nm-hosp')?.value;
-  const sel = document.getElementById('nm-doc');
-  if (!hid || !sel) { sel.innerHTML = '<option value="">-- 먼저 병원 선택 --</option>'; return }
+  const container = document.getElementById('nm-doc-list');
+  if (!hid || !container) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div>'; return }
   const docs = (window._newMeetDocs || []).filter(d => String(d.hospital_id) === String(hid));
-  sel.innerHTML = '<option value="">-- 교수 선택 --</option>' + docs.map(d => '<option value="' + d.id + '">' + d.name + (d.position ? ' (' + d.position + ')' : '') + '</option>').join('');
+  if (!docs.length) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">소속 교수가 없습니다</div>'; return }
+  container.innerHTML = '<div class="space-y-1">' + docs.map(function(d) {
+    return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition">' +
+      '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer">' +
+      '<div class="flex-1 min-w-0"><span class="text-[13px] font-medium text-slate-700">' + d.name + '</span>' +
+      (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
+      '</div></label>';
+  }).join('') + '</div>';
 }
 
 async function showPaperForm(did, pid) {
@@ -1226,6 +1325,10 @@ async function delDoc(id, hid) { showConfirm('교수 삭제', '이 교수와 관
 async function delMeet(id, hid) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + id); toast('미팅 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delMeetFromProfile(mid, did) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); viewDocProfile(did) } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delMeetGlobal(mid) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); loadMeet() } catch (e) { toast('삭제 실패', 'err') } }) }
+function viewMeetDoctors(mid, doctorIds) {
+  if (doctorIds && doctorIds.length === 1) { viewDocProfile(doctorIds[0]); return; }
+  if (doctorIds && doctorIds.length > 0) { viewDocProfile(doctorIds[0]); return; }
+}
 async function delPaper(pid, did) { showConfirm('논문 삭제', '이 논문을 삭제하시겠습니까?', async () => { try { await API.delete('/papers/' + pid); toast('논문 삭제됨'); viewDocProfile(did) } catch (e) { toast('삭제 실패', 'err') } }) }
 
 // ===== CI STATS =====

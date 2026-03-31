@@ -49,7 +49,9 @@ hospitals.put('/:id', async (c) => {
 hospitals.delete('/:id', async (c) => {
   const id = c.req.param('id')
   const h = await c.env.DB.prepare('SELECT name FROM hospitals WHERE id=?').bind(id).first() as any
-  // CASCADE: delete meetings, papers, doctors first
+  // CASCADE: delete meeting_doctors, meetings, papers, doctors first
+  await c.env.DB.prepare('DELETE FROM meeting_doctors WHERE meeting_id IN (SELECT id FROM meetings WHERE hospital_id=?)').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM meeting_doctors WHERE doctor_id IN (SELECT id FROM doctors WHERE hospital_id=?)').bind(id).run()
   await c.env.DB.prepare('DELETE FROM doctor_papers WHERE doctor_id IN (SELECT id FROM doctors WHERE hospital_id=?)').bind(id).run()
   await c.env.DB.prepare('DELETE FROM meetings WHERE hospital_id=?').bind(id).run()
   await c.env.DB.prepare('DELETE FROM doctors WHERE hospital_id=?').bind(id).run()
