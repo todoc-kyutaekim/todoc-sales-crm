@@ -581,28 +581,44 @@ async function fetchAIDoctors(hid) {
   if (!h) return;
   var statusEl = document.getElementById('ai-doc-status');
   if (!statusEl) return;
-  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 인공와우 관련 교수를 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">최대 30초 정도 소요될 수 있습니다</p></div>';
+  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 인공와우 관련 교수를 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">병원 웹사이트를 검색하여 실제 데이터를 수집합니다 (최대 60초)</p></div>';
   try {
     var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region });
     var doctors = res.data.data || [];
+    var source = res.data.source || '';
+    var crawled = res.data.crawled || false;
     if (!doctors.length) {
-      statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-info-circle text-slate-400 text-lg mb-2"></i><p class="text-sm text-slate-500">AI가 해당 병원의 인공와우 관련 교수 정보를 찾지 못했습니다.</p><p class="text-xs text-slate-400 mt-1">수동으로 교수를 추가해주세요.</p></div>';
+      statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-info-circle text-slate-400 text-lg mb-2"></i><p class="text-sm text-slate-500">해당 병원의 인공와우 관련 교수 정보를 찾지 못했습니다.</p><p class="text-xs text-slate-400 mt-1">수동으로 교수를 추가해주세요.</p>' +
+        (res.data.message ? '<p class="text-xs text-slate-300 mt-2">' + res.data.message + '</p>' : '') + '</div>';
       return;
     }
-    // Show preview list with checkboxes
+    // Show preview list with checkboxes + source info
     var existingNames = (window._hospDetail?.docs || []).map(function(d) { return d.name; });
-    statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-2 mb-4"><i class="fas fa-wand-magic-sparkles text-violet-500"></i><span class="font-bold text-sm text-slate-700">AI 조회 결과 (' + doctors.length + '명)</span><span class="text-xs text-amber-500 ml-auto"><i class="fas fa-exclamation-triangle mr-1"></i>AI 정보는 부정확할 수 있습니다</span></div>' +
+    var sourceHtml = source ?
+      '<div class="mb-3 px-3 py-2 rounded-lg ' + (crawled ? 'bg-emerald-50 border border-emerald-100' : 'bg-blue-50 border border-blue-100') + '">' +
+      '<div class="flex items-center gap-2 text-xs ' + (crawled ? 'text-emerald-700' : 'text-blue-700') + '">' +
+      '<i class="fas ' + (crawled ? 'fa-globe' : 'fa-search') + '"></i>' +
+      '<span class="font-semibold">' + (crawled ? '병원 웹사이트에서 직접 수집' : '웹 검색 기반 조회') + '</span></div>' +
+      (source ? '<div class="text-[10px] text-slate-400 mt-0.5 truncate"><i class="fas fa-link mr-1"></i>' + source + '</div>' : '') +
+      '</div>' : '';
+
+    statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-2 mb-3"><i class="fas fa-wand-magic-sparkles text-violet-500"></i><span class="font-bold text-sm text-slate-700">AI 조회 결과 (' + doctors.length + '명)</span></div>' +
+      sourceHtml +
       '<div class="space-y-2 mb-4">' + doctors.map(function(d, i) {
         var exists = existingNames.includes(d.name);
         return '<label class="flex items-center gap-3 p-3 rounded-xl border ' + (exists ? 'border-gray-100 bg-gray-50 opacity-50' : 'border-gray-200 hover:border-violet-200 hover:bg-violet-50/30 cursor-pointer') + ' transition">' +
           '<input type="checkbox" class="ai-doc-chk w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500" data-idx="' + i + '"' + (exists ? ' disabled' : ' checked') + '>' +
           '<div class="flex-1 min-w-0">' +
           '<div class="flex items-center gap-2"><span class="font-semibold text-[13px] text-slate-800">' + d.name + '</span><span class="text-xs text-slate-400">' + (d.position || '') + '</span>' +
+          infBadge(d.influence_level) +
           (exists ? '<span class="text-[10px] text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full font-medium">이미 등록됨</span>' : '') + '</div>' +
-          '<div class="text-xs text-slate-400 mt-0.5">' + (d.specialty || '') + '</div></div></label>';
+          '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-microscope mr-1 text-slate-300"></i>' + (d.specialty || '전문분야 미상') + '</div>' +
+          '<div class="text-[10px] text-slate-300 mt-0.5">' + (d.department || '이비인후과') + '</div>' +
+          '</div></label>';
       }).join('') + '</div>' +
-      '<div class="flex justify-end gap-2"><button class="btn btn-outline btn-sm" onclick="document.getElementById(\'ai-doc-status\').innerHTML=\'\'">닫기</button>' +
-      '<button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="addAIDoctors(' + hid + ')"><i class="fas fa-user-plus mr-1"></i>선택 교수 추가</button></div></div>';
+      '<div class="flex items-center justify-between"><span class="text-[10px] text-slate-400"><i class="fas fa-info-circle mr-1"></i>실제 병원 데이터 기반이나, 반드시 확인 후 사용하세요</span>' +
+      '<div class="flex gap-2"><button class="btn btn-outline btn-sm" onclick="document.getElementById(\'ai-doc-status\').innerHTML=\'\'">닫기</button>' +
+      '<button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="addAIDoctors(' + hid + ')"><i class="fas fa-user-plus mr-1"></i>선택 교수 추가</button></div></div></div>';
     window._aiDoctorsList = doctors;
   } catch(e) {
     statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-exclamation-circle text-red-400 text-lg mb-2"></i><p class="text-sm text-red-500">AI 조회에 실패했습니다.</p><p class="text-xs text-slate-400 mt-1">잠시 후 다시 시도해주세요.</p></div>';
@@ -1012,9 +1028,12 @@ async function fetchAIProfile(hid) {
     if (p.career) { document.querySelector('#fm textarea[name="career"]').value = p.career.replace(/\\n/g, '\n'); filled.push('경력'); }
     if (p.specialty && !document.querySelector('#fm input[name="specialty"]').value) { document.querySelector('#fm input[name="specialty"]').value = p.specialty; filled.push('전문분야'); }
     if (p.position && !document.querySelector('#fm input[name="position"]').value) { document.querySelector('#fm input[name="position"]').value = p.position; filled.push('직위'); }
+    var sourceUrl = p.source || '';
     if (filled.length) {
       toast(filled.join(', ') + ' 항목이 채워졌습니다. 확인 후 수정해주세요.');
-      status.innerHTML = '<i class="fas fa-check-circle text-emerald-500 mr-1"></i>' + filled.join(', ') + ' 자동 입력됨 · <span class="text-amber-500">AI 정보는 부정확할 수 있으니 반드시 확인하세요</span>';
+      status.innerHTML = '<i class="fas fa-check-circle text-emerald-500 mr-1"></i>' + filled.join(', ') + ' 자동 입력됨' +
+        (sourceUrl ? ' · <a href="' + sourceUrl + '" target="_blank" class="text-brand-500 hover:underline"><i class="fas fa-link mr-0.5"></i>출처</a>' : '') +
+        ' · <span class="text-amber-500">반드시 확인 후 사용하세요</span>';
     } else {
       toast('조회된 정보가 없습니다', 'warn');
       status.innerHTML = '<i class="fas fa-info-circle text-slate-400 mr-1"></i>조회된 정보가 없습니다. 수동으로 입력해주세요.';
