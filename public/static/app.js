@@ -242,10 +242,30 @@ function openModal(t, h, wide) {
   document.getElementById('modal').classList.remove('hidden');
 }
 function closeModal() { document.getElementById('modal').classList.add('hidden') }
+function tryCloseModal() {
+  var form = document.querySelector('#modal-body form');
+  if (form) {
+    var inputs = form.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=checkbox]):not([type=radio]), textarea');
+    var hasContent = false;
+    inputs.forEach(function(el) {
+      if (el.value && el.value.trim() !== '' && el.defaultValue !== undefined && el.value !== el.defaultValue) hasContent = true;
+      else if (el.value && el.value.trim() !== '' && el.defaultValue === '') hasContent = true;
+    });
+    if (hasContent) {
+      showConfirm('작성 중인 내용이 있습니다', '모달을 닫으면 입력한 내용이 사라집니다. 닫으시겠습니까?', function() { closeModal(); });
+      return;
+    }
+  }
+  closeModal();
+}
 
 // ===== Keyboard Shortcuts =====
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { closeModal(); confirmNo(); hideSearchResults(); }
+  if (e.key === 'Escape') {
+    var modalEl = document.getElementById('modal');
+    if (modalEl && !modalEl.classList.contains('hidden')) { tryCloseModal(); }
+    confirmNo(); hideSearchResults();
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('global-search')?.focus(); toggleMobileSearch(true); }
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
     e.preventDefault();

@@ -141,11 +141,11 @@ const HTML = `<!DOCTYPE html>
 </div><!-- /app-main -->
 
 <!-- Modal -->
-<div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-center justify-center p-4" onclick="if(event.target===this)closeModal()">
+<div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-center justify-center p-4" onclick="if(event.target===this)tryCloseModal()">
   <div id="modal-content" class="modal-box bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
     <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px]"></h3>
-      <button onclick="closeModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
+      <button onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
     </div>
     <div id="modal-body" class="p-6"></div>
   </div>
