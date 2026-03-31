@@ -80,7 +80,7 @@ auth.post('/register', async (c) => {
 // ===== Login =====
 auth.post('/login', async (c) => {
   const body = await c.req.json()
-  const { email, password } = body
+  const { email, password, rememberMe } = body
 
   if (!email || !password) {
     return c.json({ error: '이메일과 비밀번호를 입력해주세요.' }, 400)
@@ -99,9 +99,10 @@ auth.post('/login', async (c) => {
     return c.json({ error: '이메일 또는 비밀번호가 올바르지 않습니다.' }, 401)
   }
 
-  // Create session
+  // Create session — 30 days if rememberMe, 7 days otherwise
   const sessionId = generateSessionId()
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+  const ttl = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000
+  const expiresAt = new Date(Date.now() + ttl).toISOString()
   await c.env.DB.prepare('INSERT INTO sessions (id, user_id, expires_at) VALUES (?,?,?)')
     .bind(sessionId, user.id, expiresAt).run()
 

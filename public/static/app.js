@@ -18,6 +18,11 @@ function clearSession() {
   delete API.defaults.headers.common['X-Session-Id'];
 }
 
+function clearAutoLogin() {
+  localStorage.removeItem('todoc_remember');
+  localStorage.removeItem('todoc_saved_email');
+}
+
 // Attach session header on every request
 API.interceptors.request.use(cfg => {
   const sid = getSession();
@@ -83,16 +88,25 @@ function renderLoginForm() {
     '<form id="auth-form" class="space-y-4">' +
     '<div><label class="input-label">이메일</label><div class="relative"><i class="fas fa-envelope absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="email" type="email" class="input pl-10 w-full" placeholder="name@to-doc.com" autocomplete="email"></div></div>' +
     '<div><label class="input-label">비밀번호</label><div class="relative"><i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="password" type="password" class="input pl-10 w-full" placeholder="비밀번호" autocomplete="current-password"></div></div>' +
+    '<div class="flex items-center justify-between"><label class="flex items-center gap-2 cursor-pointer select-none"><input name="rememberMe" type="checkbox" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer" checked><span class="text-[13px] text-slate-500">자동 로그인</span></label></div>' +
     '<button type="submit" class="btn btn-primary w-full !py-3 text-sm font-bold">로그인</button></form>' +
     '<div class="mt-6 text-center"><span class="text-sm text-slate-400">계정이 없으신가요? </span><button onclick="renderRegisterForm()" class="text-sm text-brand-600 font-bold hover:text-brand-700 transition">회원가입</button></div>';
   document.getElementById('auth-form').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
+    const rememberMe = !!e.target.querySelector('input[name="rememberMe"]')?.checked;
     const btn = e.target.querySelector('button[type="submit"]');
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>로그인 중...';
     try {
-      const { data } = await API.post('/auth/login', { email: f.email, password: f.password });
+      const { data } = await API.post('/auth/login', { email: f.email, password: f.password, rememberMe });
       setSession(data.data.sessionId, data.data.user);
+      if (rememberMe) {
+        localStorage.setItem('todoc_remember', '1');
+        localStorage.setItem('todoc_saved_email', f.email);
+      } else {
+        localStorage.removeItem('todoc_remember');
+        localStorage.removeItem('todoc_saved_email');
+      }
       toast('환영합니다, ' + data.data.user.name + '님!');
       showAppScreen();
     } catch (err) {
@@ -123,7 +137,7 @@ function renderRegisterForm() {
     btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>가입 중...';
     try {
       const { data } = await API.post('/auth/register', { name: f.name, email: f.email, password: f.password });
-      setSession(data.data.sessionId, data.data.user);
+      setSession(data.data.sessionId, data.data.user, true);
       toast('가입 완료! 환영합니다, ' + data.data.user.name + '님!');
       showAppScreen();
     } catch (err) {
