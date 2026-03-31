@@ -9,8 +9,9 @@ import search from './routes/search'
 import activity from './routes/activity'
 import exports from './routes/exports'
 import auth from './routes/auth'
+import ai from './routes/ai'
 
-type Bindings = { DB: D1Database }
+type Bindings = { DB: D1Database; OPENAI_API_KEY: string; OPENAI_BASE_URL: string }
 const app = new Hono<{ Bindings: Bindings }>()
 app.use('/api/*', cors())
 
@@ -47,6 +48,7 @@ app.route('/api/ci-stats', cistats)
 app.route('/api/search', search)
 app.route('/api/activity', activity)
 app.route('/api/export', exports)
+app.route('/api/ai', ai)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x: any) => x.region) })
