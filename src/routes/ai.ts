@@ -80,6 +80,8 @@ async function crawlPageRaw(url: string): Promise<{ text: string; html: string }
     cleaned = cleaned.replace(/<head[\s\S]*?<\/head>/gi, '')
     cleaned = cleaned.replace(/<nav[\s\S]*?<\/nav>/gi, '')
     cleaned = cleaned.replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    // Preserve position info from HTML comments like <!--교수--> <!--부교수-->
+    cleaned = cleaned.replace(/<!--(교수|부교수|조교수|임상교수|임상부교수|임상조교수|전임의)-->/g, '[$1]')
     cleaned = cleaned.replace(/<!--[\s\S]*?-->/g, '')
     
     const text = cleaned
@@ -145,8 +147,10 @@ async function deepEnrichDoctor(doctorName: string, hospitalName: string, rawHtm
     if ((name.includes('서울대') && !name.includes('분당')) && rawHtml) {
       const nameIdx = rawHtml.indexOf(doctorName)
       if (nameIdx > 0) {
-        const surrounding = rawHtml.substring(Math.max(0, nameIdx - 500), nameIdx + 100)
-        const blogIdMatch = surrounding.match(/snuh\.org\/blog\/(\d+)/)
+        // Search in a wider range to find blog ID (both search.snuh.org and mainDoctor.do formats)
+        const surrounding = rawHtml.substring(Math.max(0, nameIdx - 2000), nameIdx + 500)
+        // Match blog/XXXXX from both formats: snuh.org/blog/XXXXX and /m/blog/XXXXX/philosophy.do
+        const blogIdMatch = surrounding.match(/(?:snuh\.org)?\/(?:m\/)?blog\/(\d+)/)
         if (blogIdMatch) {
           const blogId = blogIdMatch[1]
           const careerUrl = `https://www.snuh.org/blog/${blogId}/career.do`
@@ -572,6 +576,9 @@ function getHospitalSearchUrls(hospitalName: string): string[] {
 
   // Seoul National University Hospital (서울대학교병원 / 서울대병원) - NOT 분당
   if ((name.includes('서울대') || nameLower.includes('snuh')) && !name.includes('분당') && !nameLower.includes('snubh')) {
+    // PRIORITY 1: Official ENT doctor list page (has ALL professors with specialties)
+    urls.push('https://www.snuh.org/m/reservation/meddept/OL/mainDoctor.do')
+    // PRIORITY 2: Integrated search page (backup - may only show a subset)
     urls.push('http://search.snuh.org/search/search.jsp?wnquery=%EC%9D%B4%EB%B9%84%EC%9D%B8%ED%9B%84%EA%B3%BC&searchTarget=re_doctor&detailView=none')
   }
 
