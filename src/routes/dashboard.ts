@@ -33,12 +33,12 @@ dashboard.get('/', async (c) => {
         AND m.next_meeting_date >= date('now') AND m.next_meeting_date <= date('now','+7 days')
       ORDER BY m.next_meeting_date ASC LIMIT 10
     `).all(),
-    // Clinic stats
-    c.env.DB.prepare('SELECT COUNT(*) as c FROM clinics WHERE status="active"').first(),
-    c.env.DB.prepare('SELECT COUNT(*) as c FROM clinic_visits').first(),
+    // Clinic stats (with fallback in case clinics table doesn't exist yet)
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM clinics WHERE status="active"').first().catch(() => ({ c: 0 })),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM clinic_visits').first().catch(() => ({ c: 0 })),
     c.env.DB.prepare(`SELECT cv.*, cl.name as clinic_name, cl.region as clinic_region, cc.name as contact_name, cc.role as contact_role
       FROM clinic_visits cv LEFT JOIN clinics cl ON cv.clinic_id=cl.id LEFT JOIN clinic_contacts cc ON cv.contact_id=cc.id
-      ORDER BY cv.visit_date DESC LIMIT 5`).all(),
+      ORDER BY cv.visit_date DESC LIMIT 5`).all().catch(() => ({ results: [] })),
   ])
 
   // Helper: attach doctor names to meetings via meeting_doctors
