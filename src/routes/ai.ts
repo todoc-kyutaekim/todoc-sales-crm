@@ -51,14 +51,47 @@ async function webSearch(query: string): Promise<{ title: string; link: string; 
     }, 6000)
     const html = await res.text()
     const results: { title: string; link: string; snippet: string }[] = []
-    const linkRegex = /href="\/url\?q=(https?:\/\/[^&"]+)/g
+    
+    // Strategy 1: Extract from structured data-href blocks (modern Google)
+    const blockRegex = /<a[^>]*href="\/url\?q=(https?:\/\/[^&"]+)[^"]*"[^>]*>([\s\S]*?)<\/a>/g
     let match
-    while ((match = linkRegex.exec(html)) !== null && results.length < 10) {
+    while ((match = blockRegex.exec(html)) !== null && results.length < 10) {
       const link = decodeURIComponent(match[1])
       if (!link.includes('google.com') && !link.includes('youtube.com') && !link.includes('webcache')) {
-        results.push({ title: '', link, snippet: '' })
+        // Extract title from the anchor text
+        const titleText = match[2].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
+        results.push({ title: titleText || '', link, snippet: '' })
       }
     }
+    
+    // Strategy 2: Fallback link extraction if strategy 1 found nothing
+    if (results.length === 0) {
+      const linkRegex = /href="\/url\?q=(https?:\/\/[^&"]+)/g
+      while ((match = linkRegex.exec(html)) !== null && results.length < 10) {
+        const link = decodeURIComponent(match[1])
+        if (!link.includes('google.com') && !link.includes('youtube.com') && !link.includes('webcache')) {
+          results.push({ title: '', link, snippet: '' })
+        }
+      }
+    }
+    
+    // Strategy 3: Extract text snippets from nearby content
+    // Look for common Google snippet patterns in the full HTML
+    const snippetTexts: string[] = []
+    const cleanHtml = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '')
+    // Extract text blocks that look like Korean snippets (contain Korean chars and are 30+ chars)
+    const textBlocks = cleanHtml.replace(/<[^>]+>/g, '|').split('|').filter(t => {
+      const trimmed = t.trim()
+      return trimmed.length > 30 && /[가-힣]/.test(trimmed) && !/^\s*(검색결과|관련|더보기|이미지|뉴스|동영상)/.test(trimmed)
+    }).map(t => t.trim())
+    
+    // Attach snippets to results by proximity (best-effort)
+    for (let i = 0; i < Math.min(results.length, textBlocks.length); i++) {
+      if (!results[i].snippet && textBlocks[i]) {
+        results[i].snippet = textBlocks[i].substring(0, 300)
+      }
+    }
+    
     return results
   } catch (e) {
     return []
@@ -191,16 +224,24 @@ ai.post('/hospital-doctors', async (c) => {
     // Threshold: 3000 chars is enough for ~5-10 professor entries from hospital pages
     const needGoogleCrawl = !crawledContent || crawledContent.length < 3000
     if (needGoogleCrawl && searchResults.length > 0) {
+      // Collect both snippet data AND URL list (even if snippets are empty)
+      const relevantKeywords = ['교수', '인공와우', '이비인후과', '난청', '원장', '보청기', '전문의', '청각', '의료진', '의사', '대표원장', '부원장']
       const snippetData = searchResults
-        .filter(r => r.snippet && (r.snippet.includes('교수') || r.snippet.includes('인공와우') || r.snippet.includes('이비인후과') || r.snippet.includes('난청') || r.snippet.includes('원장') || r.snippet.includes('보청기') || r.snippet.includes('전문의') || r.snippet.includes('청각')))
-        .map(r => `${r.title}: ${r.snippet} (${r.link})`)
+        .filter(r => {
+          if (r.snippet) return relevantKeywords.some(kw => r.snippet.includes(kw))
+          if (r.title) return relevantKeywords.some(kw => r.title.includes(kw))
+          // Include all results from search even without snippet (the link itself is useful)
+          return true
+        })
+        .map(r => `${r.title || '(제목없음)'}: ${r.snippet || '(내용 없음)'} (${r.link})`)
         .join('\n')
       if (snippetData) {
         crawledContent = (crawledContent ? crawledContent + '\n\n===== Google 검색 보충 데이터 =====\n\n' : '') +
-          `[Google 검색 결과 snippet]\n${snippetData}\n\n`
+          `[Google 검색 결과]\n${snippetData}\n\n`
       }
 
-      // Pick top relevant Google links and crawl them all in parallel
+      // Pick top Google links and crawl them all in parallel
+      // Broaden URL filter for clinics (clinic pages use different URL patterns)
       const relevantLinks = searchResults.slice(0, 6).filter(r =>
         r.link.includes('doctor') || r.link.includes('medic') ||
         r.link.includes('search') || r.link.includes('staff') ||
@@ -208,13 +249,17 @@ ai.post('/hospital-doctors', async (c) => {
         r.link.includes('dept') || r.link.includes('department') ||
         r.link.includes('treatment') || r.link.includes('prof') ||
         r.link.includes('인공와우') || r.link.includes('ENT') ||
-        r.link.includes('이비인후')
-      ).slice(0, 2)
+        r.link.includes('이비인후') || r.link.includes('news') ||
+        r.link.includes('intro') || r.link.includes('about') ||
+        r.link.includes('clinic') || r.link.includes('soreee') ||
+        // For clinics, also try crawling the main domain pages
+        (isClinic && !r.link.includes('naver.com') && !r.link.includes('facebook.com'))
+      ).slice(0, 3)
 
       const googleCrawls = await Promise.all(relevantLinks.map(async (result) => {
         try {
           const content = await crawlPage(result.link)
-          if (content && content.length > 300 && (content.includes('이비인후과') || content.includes('교수') || content.includes('인공와우') || content.includes('원장') || content.includes('보청기') || content.includes('전문의'))) {
+          if (content && content.length > 200 && (content.includes('이비인후과') || content.includes('교수') || content.includes('인공와우') || content.includes('원장') || content.includes('보청기') || content.includes('전문의') || content.includes('난청') || content.includes('의사'))) {
             return { link: result.link, content }
           }
         } catch (e) { /* skip */ }
@@ -333,7 +378,7 @@ JSON 배열만 반환:
         return c.json({ data: cleaned, source: 'AI 학습 데이터 (확인 필요)', crawled: false })
       }
     } catch (e) { /* ignore */ }
-    return c.json({ data: [], message: '해당 병원의 정보를 찾을 수 없습니다.', source: '' })
+    return c.json({ data: [], message: '해당 기관의 의료진 정보를 찾을 수 없습니다.', source: '' })
   }
 
   // ===== PHASE 3: Single AI call — combined extraction (replaces 2-pass approach) =====
@@ -351,17 +396,23 @@ JSON 배열만 반환:
     enrichedContext += '\n\n[참고: 분당서울대병원(snubh.org)은 별도 기관입니다. 분당 소속 교수를 서울대병원 소속으로 잘못 분류하지 마세요.]\n'
   }
 
+  // Determine if crawled data is thin (for adjusting prompt strictness)
+  const crawledDataIsThin = !crawledContent || crawledContent.length < 1000
+
   // SINGLE combined AI prompt (replaces firstPass + finalExtraction)
   const combinedPrompt = isClinic
-    ? `${enrichedContext}\n\n위의 모든 데이터를 종합하여 ${region ? region + ' ' : ''}${hospitalName}의 의료진(원장, 부원장, 전문의 등)을 정리하세요.
+    ? `${enrichedContext}\n\n위의 데이터${crawledDataIsThin ? '와 당신의 학습 데이터를 종합' : '를 종합'}하여 ${region ? region + ' ' : ''}${hospitalName}의 의료진(원장, 부원장, 전문의 등)을 정리하세요.
 
 중요 규칙:
-1. 위 크롤링/검색 데이터에 실제로 나온 의료진만 포함 (없는 의료진 추측 금지)
-2. 원장 = high, 부원장/파트장 = medium, 전문의/일반의 = low
+1. ${crawledDataIsThin 
+    ? '위 검색 데이터가 부족하므로, 당신의 학습 데이터에서 알고 있는 의료진도 포함하세요. 단, 확실하지 않은 정보는 source에 "AI 학습 데이터 (확인 필요)"라고 명시하세요' 
+    : '위 크롤링/검색 데이터에 실제로 나온 의료진만 포함 (없는 의료진 추측 금지)'}
+2. 원장/대표원장 = high, 부원장/파트장 = medium, 전문의/일반의 = low
 3. 이비인후과, 난청, 보청기, 청각, 인공와우 관련 의료진을 우선 포함
 4. 사망/퇴직한 의료진은 제외
 5. position은 반드시 기재 — "원장", "부원장", "전문의", "대표원장" 등
 6. specialty에는 웹사이트에서 확인된 진료분야를 모두 기재
+7. 같은 의원의 다른 지점(강동점, 강서점 등) 의료진을 혼동하지 마세요
 
 각 의료진에 대해:
 - name: 정확한 이름
@@ -370,7 +421,7 @@ JSON 배열만 반환:
 - specialty: 진료분야 (난청, 보청기, 인공와우, 이명, 어지러움 등)
 - influence_level: "high", "medium", "low" (위 기준 적용)
 - notes: 관련 활동 요약 (없으면 빈 문자열)
-- source: 출처 URL
+- source: 출처 URL 또는 "AI 학습 데이터 (확인 필요)"
 
 JSON 배열만 반환:
 [{"name":"","department":"","position":"","specialty":"","influence_level":"","notes":"","source":""}]`
@@ -1043,6 +1094,22 @@ function getHospitalSearchUrls(hospitalName: string): string[] {
   // Konkuk University Hospital (건국대학교병원)
   if (name.includes('건국')) {
     urls.push('https://www.kuh.ac.kr/department/doctor.do?deptCode=ENT')
+  }
+
+  // ===== Clinics / 의원 =====
+  
+  // 소리의원 (soreeearclinic.com) - JS-rendered, but news pages may work
+  if (name.includes('소리의원') || name.includes('소리이비인후과')) {
+    urls.push('https://www.soreeearclinic.com/11848210')  // 의료진 소개 page
+    urls.push('https://www.soreeearclinic.com/34')  // 병원소개
+    urls.push('https://www.soreeearclinic.com/news/?bmode=view&idx=153069896')  // 정연훈 교수 영입 뉴스
+    urls.push('https://www.soreeearclinic.com/news/?bmode=view&idx=13984538')  // 배성천 원장 뉴스
+    urls.push('https://www.soreeearclinic.com/news/?bmode=view&idx=14610602')  // 신유리 원장 뉴스
+  }
+  
+  // 소리이비인후과 (soreeclinic.com) - separate entity
+  if (name.includes('소리이비인후과') && !name.includes('소리의원')) {
+    urls.push('http://m.soreeclinic.com/Module/DoctorInfo/DoctorInfo.asp')
   }
 
   return urls
