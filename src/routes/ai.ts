@@ -129,18 +129,21 @@ function hasMeaningfulDoctorData(text: string): boolean {
   // Count how many Korean names (2-4 syllable) appear near doctor-related keywords
   const koreanNamePattern = /[가-힣]{2,4}/g
   const names = text.match(koreanNamePattern) || []
-  const doctorKeywords = ['교수', '전문의', '전공', '세부전공', '진료분야', '인공와우', '난청', '이과']
+  const doctorKeywords = ['교수', '전문의', '전공', '세부전공', '진료분야', '인공와우', '난청', '이과', '원장', '부원장', '대표원장', '보청기', '청각']
   const hasKeywords = doctorKeywords.some(kw => text.includes(kw))
   // Need at least some names AND relevant keywords
   return names.length >= 3 && hasKeywords
 }
 
-// ===== 1. Fetch CI-related ENT professors for a hospital (OPTIMIZED) =====
+// ===== 1. Fetch CI-related ENT doctors for a hospital/clinic (OPTIMIZED) =====
 ai.post('/hospital-doctors', async (c) => {
-  const { hospitalName, region } = await c.req.json()
+  const { hospitalName, region, type } = await c.req.json()
   if (!hospitalName) return c.json({ error: 'hospitalName is required' }, 400)
 
-  const searchQuery = `${hospitalName} 이비인후과 의료진 교수 인공와우 난청`
+  const isClinic = type === 'clinic' || hospitalName.includes('의원') || hospitalName.includes('보청기') || hospitalName.includes('이비인후과') || hospitalName.includes('클리닉') || hospitalName.includes('센터')
+  const searchQuery = isClinic
+    ? `${hospitalName} 원장 의료진 의사 이비인후과 난청 보청기`
+    : `${hospitalName} 이비인후과 의료진 교수 인공와우 난청`
   let crawledContent = ''
   let sourceUrl = ''
   let rawSearchHtml = ''
@@ -189,7 +192,7 @@ ai.post('/hospital-doctors', async (c) => {
     const needGoogleCrawl = !crawledContent || crawledContent.length < 3000
     if (needGoogleCrawl && searchResults.length > 0) {
       const snippetData = searchResults
-        .filter(r => r.snippet && (r.snippet.includes('교수') || r.snippet.includes('인공와우') || r.snippet.includes('이비인후과') || r.snippet.includes('난청')))
+        .filter(r => r.snippet && (r.snippet.includes('교수') || r.snippet.includes('인공와우') || r.snippet.includes('이비인후과') || r.snippet.includes('난청') || r.snippet.includes('원장') || r.snippet.includes('보청기') || r.snippet.includes('전문의') || r.snippet.includes('청각')))
         .map(r => `${r.title}: ${r.snippet} (${r.link})`)
         .join('\n')
       if (snippetData) {
@@ -211,7 +214,7 @@ ai.post('/hospital-doctors', async (c) => {
       const googleCrawls = await Promise.all(relevantLinks.map(async (result) => {
         try {
           const content = await crawlPage(result.link)
-          if (content && content.length > 300 && (content.includes('이비인후과') || content.includes('교수') || content.includes('인공와우'))) {
+          if (content && content.length > 300 && (content.includes('이비인후과') || content.includes('교수') || content.includes('인공와우') || content.includes('원장') || content.includes('보청기') || content.includes('전문의'))) {
             return { link: result.link, content }
           }
         } catch (e) { /* skip */ }
@@ -228,7 +231,10 @@ ai.post('/hospital-doctors', async (c) => {
 
     // If still no content, try broader Google search with parallel crawl
     if (!crawledContent || crawledContent.length < 500) {
-      const broadSearch = await webSearch(`"${hospitalName}" "인공와우" OR "cochlear implant" 교수`)
+      const broadQuery = isClinic
+        ? `"${hospitalName}" 원장 의료진 전문의 의사`
+        : `"${hospitalName}" "인공와우" OR "cochlear implant" 교수`
+      const broadSearch = await webSearch(broadQuery)
       const broadCrawls = await Promise.all(broadSearch.slice(0, 2).map(async (result) => {
         try {
           const content = await crawlPage(result.link)
@@ -262,7 +268,29 @@ ai.post('/hospital-doctors', async (c) => {
 
   // If NO external data at all, use AI knowledge as fallback
   if (!hasAnyExternalData) {
-    const fallbackPrompt = `${region ? region + ' ' : ''}${hospitalName} 이비인후과에서 인공와우(CI) 수술, 난청 치료, 이과학을 전문으로 하는 현재 재직 중인 교수를 알려주세요.
+    const fallbackPrompt = isClinic
+      ? `${region ? region + ' ' : ''}${hospitalName}에서 근무하는 의료진(원장, 부원장, 전문의 등)을 알려주세요.
+
+중요 규칙:
+1. 현재 재직 중인 의료진만 포함 (퇴직자 제외)
+2. 이비인후과, 난청, 보청기, 청각 관련 의료진을 우선 포함
+3. 확실하지 않은 의료진은 포함하지 마세요
+4. 의원/클리닉의 경우 원장, 부원장, 전문의 등의 직위를 정확히 기재
+
+각 의료진에 대해:
+- name: 정확한 이름
+- department: "이비인후과" 또는 해당 진료과
+- position: "원장", "부원장", "전문의" 등
+- specialty: 전문분야 (난청, 보청기, 인공와우, 이명 등)
+- influence_level: "high" (원장/핵심), "medium" (부원장/전문의), "low" (일반)
+- notes: 관련 활동 (없으면 "")
+- source: "AI 학습 데이터 (확인 필요)"
+
+JSON 배열만 반환:
+[{"name":"","department":"","position":"","specialty":"","influence_level":"","notes":"","source":"AI 학습 데이터 (확인 필요)"}]
+
+알 수 없으면 빈 배열 [] 반환.`
+      : `${region ? region + ' ' : ''}${hospitalName} 이비인후과에서 인공와우(CI) 수술, 난청 치료, 이과학을 전문으로 하는 현재 재직 중인 교수를 알려주세요.
 
 중요 규칙:
 1. 현재 재직 중인 교수만 포함 (사망, 퇴직, 전출 교수 제외)
@@ -286,7 +314,9 @@ JSON 배열만 반환:
 알 수 없으면 빈 배열 [] 반환.`
 
     try {
-      const systemPrompt = '한국 의료계에 대해 잘 아는 전문가입니다. 확실하게 알고 있는 정보만 제공하며, 불확실한 정보는 제외합니다.'
+      const systemPrompt = isClinic
+        ? '한국 이비인후과 의원/클리닉에 대해 잘 아는 전문가입니다. 확실하게 알고 있는 정보만 제공하며, 불확실한 정보는 제외합니다.'
+        : '한국 의료계에 대해 잘 아는 전문가입니다. 확실하게 알고 있는 정보만 제공하며, 불확실한 정보는 제외합니다.'
       const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, fallbackPrompt, systemPrompt)
       const jsonMatch = raw.match(/\[[\s\S]*\]/)
       if (jsonMatch) {
@@ -294,7 +324,7 @@ JSON 배열만 반환:
         const cleaned = doctors.map((d: any) => ({
           name: (d.name || '').trim(),
           department: d.department || '이비인후과',
-          position: (d.position || '교수').trim(),
+          position: (d.position || (isClinic ? '원장' : '교수')).trim(),
           specialty: (d.specialty || '').trim(),
           influence_level: ['high', 'medium', 'low'].includes(d.influence_level) ? d.influence_level : 'medium',
           notes: (d.notes || '').trim(),
@@ -322,7 +352,29 @@ JSON 배열만 반환:
   }
 
   // SINGLE combined AI prompt (replaces firstPass + finalExtraction)
-  const combinedPrompt = `${enrichedContext}\n\n위의 모든 데이터를 종합하여 ${region ? region + ' ' : ''}${hospitalName} 이비인후과 교수 중 인공와우(CI)/난청/이과 관련 교수를 정리하세요.
+  const combinedPrompt = isClinic
+    ? `${enrichedContext}\n\n위의 모든 데이터를 종합하여 ${region ? region + ' ' : ''}${hospitalName}의 의료진(원장, 부원장, 전문의 등)을 정리하세요.
+
+중요 규칙:
+1. 위 크롤링/검색 데이터에 실제로 나온 의료진만 포함 (없는 의료진 추측 금지)
+2. 원장 = high, 부원장/파트장 = medium, 전문의/일반의 = low
+3. 이비인후과, 난청, 보청기, 청각, 인공와우 관련 의료진을 우선 포함
+4. 사망/퇴직한 의료진은 제외
+5. position은 반드시 기재 — "원장", "부원장", "전문의", "대표원장" 등
+6. specialty에는 웹사이트에서 확인된 진료분야를 모두 기재
+
+각 의료진에 대해:
+- name: 정확한 이름
+- department: "이비인후과" 또는 해당 진료과
+- position: "원장", "부원장", "전문의", "대표원장" 등 (반드시 기재)
+- specialty: 진료분야 (난청, 보청기, 인공와우, 이명, 어지러움 등)
+- influence_level: "high", "medium", "low" (위 기준 적용)
+- notes: 관련 활동 요약 (없으면 빈 문자열)
+- source: 출처 URL
+
+JSON 배열만 반환:
+[{"name":"","department":"","position":"","specialty":"","influence_level":"","notes":"","source":""}]`
+    : `${enrichedContext}\n\n위의 모든 데이터를 종합하여 ${region ? region + ' ' : ''}${hospitalName} 이비인후과 교수 중 인공와우(CI)/난청/이과 관련 교수를 정리하세요.
 
 중요 규칙:
 1. 위 크롤링/검색 데이터에 실제로 나온 교수만 포함 (없는 교수 추측 금지)
@@ -349,12 +401,14 @@ JSON 배열만 반환:
 [{"name":"","department":"","position":"","specialty":"","influence_level":"","notes":"","source":""}]`
 
   try {
-    const systemPrompt = '당신은 한국 병원 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
+    const systemPrompt = isClinic
+      ? '당신은 한국 이비인후과 의원/클리닉 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
+      : '당신은 한국 병원 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
     const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, combinedPrompt, systemPrompt)
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
     if (!jsonMatch) {
       console.error('[AI-DOCTORS] No JSON array in AI response. Raw (first 500):', raw.substring(0, 500))
-      return c.json({ data: [], message: '해당 병원의 인공와우 관련 교수 정보를 찾을 수 없습니다.', source: sourceUrl })
+      return c.json({ data: [], message: '해당 기관의 관련 의료진 정보를 찾을 수 없습니다.', source: sourceUrl })
     }
 
     const doctors = JSON.parse(jsonMatch[0])
@@ -381,6 +435,7 @@ ai.post('/doctor-profile', async (c) => {
   if (!doctorName || !hospitalName) return c.json({ error: 'doctorName and hospitalName required' }, 400)
 
   const dept = department || '이비인후과'
+  const isClinic = hospitalName.includes('의원') || hospitalName.includes('보청기') || hospitalName.includes('이비인후과') || hospitalName.includes('클리닉') || hospitalName.includes('센터')
   let crawledContent = ''
   let sourceUrl = ''
 
@@ -389,7 +444,7 @@ ai.post('/doctor-profile', async (c) => {
     
     for (const tryUrl of profileUrls) {
       const { text, html: rawHtml } = await crawlPageRaw(tryUrl)
-      if (text && text.length > 200 && (text.includes(doctorName) || text.includes('경력') || text.includes('학력'))) {
+      if (text && text.length > 200 && (text.includes(doctorName) || text.includes('경력') || text.includes('학력') || text.includes('원장') || text.includes('진료'))) {
         crawledContent = text
         sourceUrl = tryUrl
         
@@ -409,7 +464,10 @@ ai.post('/doctor-profile', async (c) => {
     }
 
     if (!crawledContent) {
-      const searchResults = await webSearch(`${hospitalName} ${doctorName} 교수 이비인후과 경력 학력`)
+      const searchQuery = isClinic
+        ? `${hospitalName} ${doctorName} 원장 의사 경력 학력 이비인후과`
+        : `${hospitalName} ${doctorName} 교수 이비인후과 경력 학력`
+      const searchResults = await webSearch(searchQuery)
       for (const result of searchResults.slice(0, 5)) {
         const content = await crawlPage(result.link)
         if (content && content.length > 200 && (content.includes(doctorName) || content.includes('경력'))) {
@@ -434,23 +492,26 @@ ai.post('/doctor-profile', async (c) => {
   } catch (e) { /* Continue */ }
 
   let contextInfo = ''
+  const titleLabel = isClinic ? '원장/의사' : '교수'
   if (crawledContent) {
-    contextInfo = `다음은 ${hospitalName} ${doctorName} 교수의 프로필 페이지에서 가져온 실제 정보입니다 (출처: ${sourceUrl}):\n\n${crawledContent.substring(0, 25000)}\n\n`
+    contextInfo = `다음은 ${hospitalName} ${doctorName} ${titleLabel}의 프로필 페이지에서 가져온 실제 정보입니다 (출처: ${sourceUrl}):\n\n${crawledContent.substring(0, 25000)}\n\n`
   }
 
-  const prompt = `${contextInfo}위 데이터에서 ${hospitalName} ${dept} ${doctorName} 교수의 프로필 정보를 추출하세요.
+  const prompt = `${contextInfo}위 데이터에서 ${hospitalName} ${dept} ${doctorName} ${titleLabel}의 프로필 정보를 추출하세요.
 
 중요 규칙:
 1. 위 크롤링 데이터에 실제로 있는 정보만 추출하세요
 2. 데이터에 없는 정보는 빈 문자열 ""로 남기세요 - 추측하지 마세요
 3. 확인할 수 없는 정보에는 "[업데이트 필요]"를 붙이지 마세요, 그냥 빈 문자열로 두세요
-4. 인공와우/이과/난청 관련 경력을 우선적으로 추출하세요
+4. ${isClinic ? '난청/보청기/청각/이비인후과 관련 경력을 우선적으로 추출하세요' : '인공와우/이과/난청 관련 경력을 우선적으로 추출하세요'}
 
 JSON 형식으로만 반환:
 {"bio":"한줄 소개(한국어)","education":"학력(줄바꿈으로 구분)","career":"주요 경력(줄바꿈으로 구분)","specialty":"세부 전공","position":"현재 직위","source":"${sourceUrl || ''}"}`
 
   try {
-    const systemPrompt = '한국 병원 의료진 프로필 데이터를 정확히 추출하는 전문가입니다. 크롤링된 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
+    const systemPrompt = isClinic
+      ? '한국 이비인후과 의원/클리닉 의료진 프로필 데이터를 정확히 추출하는 전문가입니다. 크롤링된 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
+      : '한국 병원 의료진 프로필 데이터를 정확히 추출하는 전문가입니다. 크롤링된 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
     const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, prompt, systemPrompt)
     const jsonMatch = raw.match(/\{[\s\S]*\}/)
     if (!jsonMatch) return c.json({ data: { bio: '', education: '', career: '', specialty: '', position: '' }, source: sourceUrl })

@@ -310,7 +310,7 @@ function renderSearchResults(d) {
     d.hospitals.forEach(h => { html += '<div class="search-item" onclick="hideSearchResults();viewHosp(' + h.id + ')"><div class="si-icon bg-blue-50 text-blue-500"><i class="fas fa-hospital"></i></div><div><div class="font-semibold text-slate-700">' + h.name + '</div><div class="text-[11px] text-slate-400">' + (h.region || '') + ' · ' + (h.grade || '-') + '급</div></div></div>'; });
   }
   if (d.doctors?.length) {
-    html += '<div class="search-cat"><i class="fas fa-user-doctor mr-1"></i>교수</div>';
+    html += '<div class="search-cat"><i class="fas fa-user-doctor mr-1"></i>의료진</div>';
     d.doctors.forEach(dc => { html += '<div class="search-item" onclick="hideSearchResults();viewDocProfile(' + dc.id + ')"><div class="si-icon bg-purple-50 text-purple-500"><i class="fas fa-user-doctor"></i></div><div><div class="font-semibold text-slate-700">' + dc.name + ' <span class="text-slate-400 font-normal text-xs">' + (dc.position || '') + '</span></div><div class="text-[11px] text-slate-400">' + (dc.hospital_name || '') + ' · ' + (dc.department || '') + '</div></div></div>'; });
   }
   if (d.meetings?.length) {
@@ -383,7 +383,7 @@ async function loadDash() {
       // Stats cards
       '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-5">' +
       sc('관리 기관', s.stats.hospitals, '개', 'fa-hospital', '#3366ff', '#eef4ff', 'hospitals') +
-      sc('등록 교수', s.stats.doctors, '명', 'fa-user-doctor', '#7c3aed', '#f5f3ff', 'doctors') +
+      sc('등록 의료진', s.stats.doctors, '명', 'fa-user-doctor', '#7c3aed', '#f5f3ff', 'doctors') +
       sc('총 미팅', s.stats.meetings, '건', 'fa-handshake', '#059669', '#ecfdf5', 'meetings') +
       '<div class="sc cursor-pointer" onclick="nav(\'meetings\')"><div class="flex items-center gap-4"><div class="sc-icon" style="background:#fffbeb"><i class="fas fa-calendar-day" style="color:#d97706"></i></div><div><p class="text-[11px] text-slate-400 font-medium mb-0.5">이번 달</p><div class="flex items-baseline gap-1"><span class="text-[22px] font-extrabold text-slate-800 tracking-tight">' + s.stats.monthMeetings + '</span><span class="text-xs text-slate-300 font-medium">건</span></div><div class="mt-0.5">' + monthDiffText + ' <span class="text-[10px] text-slate-300">vs 지난달</span></div></div></div></div>' +
       '</div>' +
@@ -551,8 +551,8 @@ function renderDetail() {
     '</div>';
 }
 function renderDoctorsTab(h, docs) {
-  var aiBtn = '<div class="mb-4 flex justify-end"><button class="btn btn-outline btn-sm !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIDoctors(' + h.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 교수 자동 조회</button></div>';
-  if (!docs.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-user-plus"></i></div><p class="font-medium text-slate-500 mb-1">소속 교수가 없습니다</p><p class="text-xs text-slate-400 mb-4">인공와우 관련 교수를 AI로 자동 추가해보세요</p><button class="btn btn-outline btn-sm !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIDoctors(' + h.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 교수 자동 조회</button><div id="ai-doc-status" class="mt-3"></div></div></div>';
+  var aiBtn = '<div class="mb-4 flex justify-end"><button class="btn btn-outline btn-sm !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIDoctors(' + h.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 의료진 자동 조회</button></div>';
+  if (!docs.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-user-plus"></i></div><p class="font-medium text-slate-500 mb-1">소속 의료진이 없습니다</p><p class="text-xs text-slate-400 mb-4">관련 의료진을 AI로 자동 추가해보세요</p><button class="btn btn-outline btn-sm !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIDoctors(' + h.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 의료진 자동 조회</button><div id="ai-doc-status" class="mt-3"></div></div></div>';
   return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' + docs.map(d =>
     '<div class="card-flat p-4 lg:p-5 flex gap-3 lg:gap-4 cursor-pointer" onclick="viewDocProfile(' + d.id + ')">' +
     '<div class="photo-up" onclick="event.stopPropagation();triggerPhoto(' + d.id + ',' + h.id + ')">' +
@@ -615,14 +615,14 @@ async function fetchAIDoctors(hid) {
   if (!h) return;
   var statusEl = document.getElementById('ai-doc-status');
   if (!statusEl) return;
-  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 인공와우 관련 교수를 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">병원 웹사이트 크롤링 + 뉴스 검색으로 정확한 데이터를 수집합니다</p><div class="mt-3 w-full bg-gray-100 rounded-full h-1.5"><div id="ai-progress-bar" class="bg-violet-500 h-1.5 rounded-full transition-all duration-1000" style="width:10%"></div></div><p class="text-[10px] text-slate-400 mt-2" id="ai-progress-text">병원 웹사이트 크롤링 중...</p></div>';
+  statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-spinner fa-spin text-violet-500 text-lg mb-2"></i><p class="text-sm font-medium text-slate-600">AI가 ' + h.name + ' 관련 의료진을 조회 중입니다...</p><p class="text-xs text-slate-400 mt-1">웹사이트 크롤링 + 뉴스 검색으로 정확한 데이터를 수집합니다</p><div class="mt-3 w-full bg-gray-100 rounded-full h-1.5"><div id="ai-progress-bar" class="bg-violet-500 h-1.5 rounded-full transition-all duration-1000" style="width:10%"></div></div><p class="text-[10px] text-slate-400 mt-2" id="ai-progress-text">병원 웹사이트 크롤링 중...</p></div>';
   // Animate progress bar
   var progressSteps = [
     { pct: 20, text: '병원 웹사이트 데이터 수집 중...', delay: 3000 },
     { pct: 35, text: '검색 엔진에서 보충 데이터 확인 중...', delay: 8000 },
     { pct: 50, text: 'AI 분석 시작...', delay: 15000 },
-    { pct: 65, text: '교수별 전문분야 확인 중...', delay: 25000 },
-    { pct: 78, text: '인공와우/난청 관련 교수 분류 중...', delay: 40000 },
+    { pct: 65, text: '의료진별 전문분야 확인 중...', delay: 25000 },
+    { pct: 78, text: '난청/인공와우 관련 의료진 분류 중...', delay: 40000 },
     { pct: 88, text: '결과 정리 중... 거의 완료!', delay: 55000 },
   ];
   var progressTimers = progressSteps.map(function(s) {
@@ -634,13 +634,13 @@ async function fetchAIDoctors(hid) {
     }, s.delay);
   });
   try {
-    var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region }, { timeout: 90000 });
+    var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region, type: h.type || '' }, { timeout: 90000 });
     progressTimers.forEach(function(t) { clearTimeout(t); });
     var doctors = res.data.data || [];
     var source = res.data.source || '';
     var crawled = res.data.crawled || false;
     if (!doctors.length) {
-      statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-info-circle text-slate-400 text-lg mb-2"></i><p class="text-sm text-slate-500">해당 병원의 인공와우 관련 교수 정보를 찾지 못했습니다.</p><p class="text-xs text-slate-400 mt-1">수동으로 교수를 추가해주세요.</p>' +
+      statusEl.innerHTML = '<div class="card-flat p-5 text-center"><i class="fas fa-info-circle text-slate-400 text-lg mb-2"></i><p class="text-sm text-slate-500">해당 기관의 관련 의료진 정보를 찾지 못했습니다.</p><p class="text-xs text-slate-400 mt-1">수동으로 의료진을 추가해주세요.</p>' +
         (res.data.message ? '<p class="text-xs text-slate-300 mt-2">' + res.data.message + '</p>' : '') + '</div>';
       return;
     }
@@ -678,7 +678,7 @@ async function fetchAIDoctors(hid) {
       }).join('') + '</div>' +
       '<div class="flex items-center justify-between"><span class="text-[10px] text-slate-400"><i class="fas fa-info-circle mr-1"></i>실제 병원 데이터 기반이나, 반드시 확인 후 사용하세요</span>' +
       '<div class="flex gap-2"><button class="btn btn-outline btn-sm" onclick="document.getElementById(\'ai-doc-status\').innerHTML=\'\'">닫기</button>' +
-      '<button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="addAIDoctors(' + hid + ')"><i class="fas fa-user-plus mr-1"></i>선택 교수 추가</button></div></div></div>';
+      '<button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="addAIDoctors(' + hid + ')"><i class="fas fa-user-plus mr-1"></i>선택 의료진 추가</button></div></div></div>';
     window._aiDoctorsList = doctors;
   } catch(e) {
     progressTimers.forEach(function(t) { clearTimeout(t); });
@@ -689,7 +689,7 @@ async function fetchAIDoctors(hid) {
 async function addAIDoctors(hid) {
   var doctors = window._aiDoctorsList || [];
   var checkboxes = document.querySelectorAll('.ai-doc-chk:checked:not(:disabled)');
-  if (!checkboxes.length) { toast('추가할 교수를 선택해주세요', 'warn'); return; }
+  if (!checkboxes.length) { toast('추가할 의료진을 선택해주세요', 'warn'); return; }
   var selected = Array.from(checkboxes).map(function(cb) { return doctors[parseInt(cb.dataset.idx)]; });
   var statusEl = document.getElementById('ai-doc-status');
   var added = 0;
@@ -704,12 +704,12 @@ async function addAIDoctors(hid) {
       }
     } catch(e) {}
   }
-  toast(added + '명의 교수가 추가되었습니다.');
+  toast(added + '명의 의료진이 추가되었습니다.');
   window._aiDoctorsList = null;
 
   // Auto-fetch PubMed papers for each added doctor in background
   if (addedDoctors.length > 0 && statusEl) {
-    statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-spinner fa-spin text-blue-500"></i><div><div class="text-sm font-semibold text-slate-700">PubMed 논문 자동 검색 중... (<span id="paper-progress">0</span>/' + addedDoctors.length + '명)</div><div class="text-xs text-slate-400 mt-0.5">각 교수의 연구 논문을 PubMed에서 가져옵니다</div></div></div><div id="paper-doctor-status" class="mt-3 space-y-1"></div></div>';
+    statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-spinner fa-spin text-blue-500"></i><div><div class="text-sm font-semibold text-slate-700">PubMed 논문 자동 검색 중... (<span id="paper-progress">0</span>/' + addedDoctors.length + '명)</div><div class="text-xs text-slate-400 mt-0.5">각 의료진의 연구 논문을 PubMed에서 가져옵니다</div></div></div><div id="paper-doctor-status" class="mt-3 space-y-1"></div></div>';
     var paperCount = 0;
     var doctorsDone = 0;
     for (var j = 0; j < addedDoctors.length; j++) {
@@ -742,7 +742,7 @@ async function addAIDoctors(hid) {
       var progEl = document.getElementById('paper-progress');
       if (progEl) progEl.textContent = doctorsDone;
     }
-    if (statusEl) statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-check-circle text-emerald-500"></i><div><div class="text-sm font-semibold text-slate-700">' + added + '명 교수 추가 + ' + paperCount + '편 논문 등록 완료</div><div class="text-xs text-slate-400 mt-0.5">교수 프로필에서 상세 정보를 확인하세요</div></div></div></div>';
+    if (statusEl) statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-check-circle text-emerald-500"></i><div><div class="text-sm font-semibold text-slate-700">' + added + '명 의료진 추가 + ' + paperCount + '편 논문 등록 완료</div><div class="text-xs text-slate-400 mt-0.5">의료진 프로필에서 상세 정보를 확인하세요</div></div></div></div>';
     setTimeout(function() { viewHosp(hid); }, 2000);
   } else {
     viewHosp(hid);
@@ -751,7 +751,7 @@ async function addAIDoctors(hid) {
 
 // ===== DOCTORS PAGE =====
 async function loadDoc() {
-  document.getElementById('page-title').textContent = '교수 관리';
+  document.getElementById('page-title').textContent = '의료진 관리';
   document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'doctors\')"><i class="fas fa-download text-xs"></i>CSV</button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat overflow-hidden">' + skeleton(6) + '</div></div>';
   try {
@@ -760,16 +760,16 @@ async function loadDoc() {
     const depts = deptR.data.data || [];
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="flex flex-wrap items-center gap-3 mb-6">' +
-      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="교수명/병원명" class="input pl-10" style="width:200px"></div>' +
+      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="의료진명/병원명" class="input pl-10" style="width:200px"></div>' +
       '<select id="d-inf" onchange="filterD()" class="input" style="width:100px"><option value="">전체</option><option value="high">핵심</option><option value="medium">주요</option><option value="low">일반</option></select>' +
       '<select id="d-dept" onchange="filterD()" class="input" style="width:120px"><option value="">전체 진료과</option>' + depts.map(dp => '<option>' + dp + '</option>').join('') + '</select>' +
       '<select id="d-visit" onchange="filterD()" class="input" style="width:130px"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
       '<span id="d-count" class="text-xs text-slate-300 font-medium ml-auto"></span></div>' +
       '<div class="card-flat overflow-hidden overflow-x-auto"><table class="w-full min-w-[700px]"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
-      '<th class="px-4 lg:px-6 py-3.5 text-left">교수</th><th class="px-4 py-3.5 text-left">소속 병원</th><th class="px-4 py-3.5 text-left hide-mobile">진료과</th><th class="px-4 py-3.5 text-left hide-mobile">전문분야</th><th class="px-4 py-3.5 text-center">영향력</th><th class="px-4 py-3.5 text-center">미팅</th><th class="px-4 py-3.5 text-left">최근</th></tr></thead>' +
+      '<th class="px-4 lg:px-6 py-3.5 text-left">의료진</th><th class="px-4 py-3.5 text-left">소속 병원</th><th class="px-4 py-3.5 text-left hide-mobile">진료과</th><th class="px-4 py-3.5 text-left hide-mobile">전문분야</th><th class="px-4 py-3.5 text-center">영향력</th><th class="px-4 py-3.5 text-center">미팅</th><th class="px-4 py-3.5 text-left">최근</th></tr></thead>' +
       '<tbody id="d-tbody" class="divide-y divide-gray-50"></tbody></table></div></div>';
     renderDR(docList);
-  } catch (e) { toast('교수 목록을 불러올 수 없습니다', 'err') }
+  } catch (e) { toast('의료진 목록을 불러올 수 없습니다', 'err') }
 }
 function renderDR(list) {
   document.getElementById('d-count').textContent = list.length + '명';
@@ -811,14 +811,14 @@ async function viewDocProfile(id) {
   try {
     const { data } = await API.get('/doctors/' + id); const d = data.data;
     window._docProfile = d; profileTab = 'overview';
-    document.getElementById('page-title').textContent = d.name + ' 교수';
-    document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'doctors\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>교수 목록</span>';
+    document.getElementById('page-title').textContent = d.name + ' ' + (d.position || '의료진');
+    document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'doctors\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>의료진 목록</span>';
     document.getElementById('header-actions').innerHTML =
       '<button class="btn btn-success btn-sm" onclick="showMeetForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>' +
       '<button class="btn btn-primary btn-sm" onclick="showPaperForm(' + d.id + ')"><i class="fas fa-file-medical text-xs"></i><span class="hidden sm:inline">논문</span></button>' +
       '<button class="btn btn-outline btn-sm" onclick="showDocForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-pen text-xs"></i></button>';
     renderDocProfile();
-  } catch (e) { toast('교수 정보를 불러올 수 없습니다', 'err') }
+  } catch (e) { toast('의료진 정보를 불러올 수 없습니다', 'err') }
 }
 function renderDocProfile() {
   const d = window._docProfile;
@@ -953,7 +953,7 @@ async function loadMeet() {
     const hospOpts = '<option value="">전체 병원</option>' + (hospR.data.data || []).map(h => '<option value="' + h.id + '">' + h.name + '</option>').join('');
     C.innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="flex flex-wrap items-center gap-3 mb-6">' +
-      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="교수/병원/목적 검색" class="input pl-10" style="width:200px"></div>' +
+      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10" style="width:200px"></div>' +
       '<select id="m-hospital" onchange="filterM()" class="input" style="width:150px">' + hospOpts + '</select>' +
       '<select id="m-type" onchange="filterM()" class="input" style="width:100px"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
       '<input id="m-from" type="date" onchange="filterM()" class="input hide-mobile" style="width:140px" placeholder="시작일">' +
@@ -1010,7 +1010,7 @@ async function loadActivity() {
         const icons = { create: 'fa-plus', update: 'fa-pen', delete: 'fa-trash' };
         const cls = { create: 'al-create', update: 'al-update', delete: 'al-delete' };
         const labels = { create: '생성', update: '수정', delete: '삭제' };
-        const eLabels = { hospital: '병원', doctor: '교수', meeting: '미팅', paper: '논문', clinic: '의원', clinic_contact: '의원관계자', clinic_visit: '의원방문' };
+        const eLabels = { hospital: '병원', doctor: '의료진', meeting: '미팅', paper: '논문', clinic: '의원', clinic_contact: '의원관계자', clinic_visit: '의원방문' };
         return '<div class="px-4 lg:px-6 py-3.5 tr flex items-center gap-3 border-b border-gray-50 last:border-0">' +
           '<div class="al-icon ' + (cls[l.action] || 'al-update') + '"><i class="fas ' + (icons[l.action] || 'fa-circle') + '"></i></div>' +
           '<div class="flex-1 min-w-0"><div class="text-[13px] text-slate-700"><span class="font-semibold">' + (eLabels[l.entity_type] || l.entity_type) + '</span> ' + (labels[l.action] || l.action) + (l.entity_name ? ': <span class="font-medium text-slate-800">' + l.entity_name + '</span>' : '') + '</div>' +
@@ -1222,17 +1222,17 @@ async function showHospForm(id) {
   setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
 }
 async function showDocForm(hid, did) {
-  let d = { name: '', department: '이비인후과', position: '교수', phone: '', email: '', specialty: '', influence_level: 'medium', notes: '', hospital_id: hid, bio: '', education: '', career: '' };
+  let d = { name: '', department: '이비인후과', position: '', phone: '', email: '', specialty: '', influence_level: 'medium', notes: '', hospital_id: hid, bio: '', education: '', career: '' };
   let hospName = '';
   if (did) { try { const dr = (await API.get('/doctors/' + did)).data.data; if (dr) { d = dr; hospName = dr.hospital_name || '' } } catch (e) { } }
   if (!hospName) { try { const hr = (await API.get('/hospitals/' + hid)).data.data; hospName = hr.name || '' } catch(e) {} }
-  openModal(did ? '교수 수정' : '새 교수 추가',
+  openModal(did ? '의료진 수정' : '새 의료진 추가',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' + field('이름 *', 'name', 'text', d.name) + field('진료과', 'department', 'text', d.department) + field('직위', 'position', 'text', d.position) + field('전화번호', 'phone', 'tel', d.phone) + field('이메일', 'email', 'email', d.email) + field('전문분야', 'specialty', 'text', d.specialty) + field('영향력', 'influence_level', 'select', d.influence_level, [{ v: 'high', l: '핵심' }, { v: 'medium', l: '주요' }, { v: 'low', l: '일반' }]) +
     '<div class="col-span-full"><button type="button" id="btn-ai-profile" class="btn btn-outline btn-sm w-full !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIProfile(\'' + hid + '\')"><i class="fas fa-wand-magic-sparkles mr-1.5"></i>AI 프로필 자동 조회 (학력/경력/소개)</button><div id="ai-profile-status" class="text-xs text-center text-slate-400 mt-1 hidden"></div></div>' +
     field('소개', 'bio', 'textarea', d.bio || '') + field('학력', 'education', 'textarea', (d.education || '').replace(/\\n/g, '\n')) + field('경력', 'career', 'textarea', (d.career || '').replace(/\\n/g, '\n')) + field('영업 메모', 'notes', 'textarea', d.notes) +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (did ? '저장' : '추가') + '</button></div></form>', true);
   window._docFormHospName = hospName;
-  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.name) { toast('이름을 입력하세요', 'warn'); return } try { if (did) { await API.put('/doctors/' + did, f); toast('교수 정보 수정됨') } else { await API.post('/doctors', f); toast('새 교수 추가됨') } closeModal(); if (window._docProfile && window._docProfile.id === did) viewDocProfile(did); else viewHosp(hid) } catch (e) { toast('저장 실패', 'err') } };
+  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.name) { toast('이름을 입력하세요', 'warn'); return } try { if (did) { await API.put('/doctors/' + did, f); toast('의료진 정보 수정됨') } else { await API.post('/doctors', f); toast('새 의료진 추가됨') } closeModal(); if (window._docProfile && window._docProfile.id === did) viewDocProfile(did); else viewHosp(hid) } catch (e) { toast('저장 실패', 'err') } };
   setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
 }
 
@@ -1244,7 +1244,7 @@ async function fetchAIProfile(hid) {
   var btn = document.getElementById('btn-ai-profile');
   var status = document.getElementById('ai-profile-status');
   btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i>AI 조회 중... (최대 30초 소요)';
-  status.textContent = hospName + ' ' + nameVal + ' 교수 정보 조회 중...'; status.classList.remove('hidden');
+  status.textContent = hospName + ' ' + nameVal + ' 의료진 정보 조회 중...'; status.classList.remove('hidden');
   try {
     var dept = document.querySelector('#fm input[name="department"]')?.value || '이비인후과';
     var res = await API.post('/ai/doctor-profile', { doctorName: nameVal, hospitalName: hospName, department: dept });
@@ -1278,7 +1278,7 @@ async function showMeetForm(hid, did, mid) {
   
   // Build multi-select checkbox list
   var doctorCheckboxes = docs.length ? 
-    '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+    '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
     '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
     docs.map(function(d) {
       var checked = (m.doctor_ids || []).map(Number).includes(d.id) ? ' checked' : '';
@@ -1288,7 +1288,7 @@ async function showMeetForm(hid, did, mid) {
         (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
         '</div></label>';
     }).join('') + '</div></div>' :
-    '<div class="col-span-full"><label class="input-label">교수</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 교수가 없습니다. 먼저 교수를 추가하세요.</div></div>';
+    '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다. 먼저 의료진을 추가하세요.</div></div>';
   
   openModal(mid ? '미팅 수정' : '새 미팅 기록',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
@@ -1303,7 +1303,7 @@ async function showMeetForm(hid, did, mid) {
     const f = Object.fromEntries(new FormData(e.target));
     // Get all checked doctor_ids
     const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
-    if (!doctorIds.length) { toast('교수를 선택하세요', 'warn'); return }
+    if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
     delete payload.doctor_ids_single;
     try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewHosp(hid) } catch (e) { toast('저장 실패', 'err') }
@@ -1315,7 +1315,7 @@ async function showMeetFormFromProfile(hid, did, mid) {
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
   
   var doctorCheckboxes = docs.length ?
-    '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+    '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
     '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
     docs.map(function(d) {
       var checked = (m.doctor_ids || []).map(Number).includes(d.id) ? ' checked' : '';
@@ -1325,7 +1325,7 @@ async function showMeetFormFromProfile(hid, did, mid) {
         (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
         '</div></label>';
     }).join('') + '</div></div>' :
-    '<div class="col-span-full"><label class="input-label">교수</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 교수가 없습니다.</div></div>';
+    '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다.</div></div>';
   
   openModal(mid ? '미팅 수정' : '새 미팅 기록',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
@@ -1339,7 +1339,7 @@ async function showMeetFormFromProfile(hid, did, mid) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
-    if (!doctorIds.length) { toast('교수를 선택하세요', 'warn'); return }
+    if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
     try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') }
   };
@@ -1351,7 +1351,7 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
   
   var doctorCheckboxes = docs.length ?
-    '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+    '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
     '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
     docs.map(function(d) {
       var checked = doctorIds.map(Number).includes(d.id) ? ' checked' : '';
@@ -1361,7 +1361,7 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
         (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
         '</div></label>';
     }).join('') + '</div></div>' :
-    '<div class="col-span-full"><label class="input-label">교수</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 교수가 없습니다.</div></div>';
+    '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다.</div></div>';
   
   openModal('미팅 수정',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
@@ -1375,7 +1375,7 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     const selectedIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
-    if (!selectedIds.length) { toast('교수를 선택하세요', 'warn'); return }
+    if (!selectedIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const payload = { ...f, doctor_ids: selectedIds, hospital_id: hid };
     try { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨'); closeModal(); loadMeet() } catch (e) { toast('저장 실패', 'err') }
   };
@@ -1392,7 +1392,7 @@ async function showNewMeetGlobal() {
     document.getElementById('modal-body').innerHTML = 
       '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
       '<div><label class="input-label">병원 *</label><select name="hospital_id" id="nm-hosp" class="input" onchange="updateNewMeetDocs()"><option value="">-- 병원 선택 --</option>' + hospOpts + '</select></div>' +
-      '<div class="col-span-full"><label class="input-label">참석 교수 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div></div></div>' +
+      '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div></div></div>' +
       field('미팅일자 *', 'meeting_date', 'date', new Date().toISOString().split('T')[0]) +
       field('유형', 'meeting_type', 'select', 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
       field('목적', 'purpose', 'text', '') +
@@ -1405,7 +1405,7 @@ async function showNewMeetGlobal() {
       const f = Object.fromEntries(new FormData(e.target));
       if (!f.hospital_id) { toast('병원을 선택하세요', 'warn'); return }
       const doctorIds = Array.from(document.querySelectorAll('#nm-doc-list input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
-      if (!doctorIds.length) { toast('교수를 선택하세요', 'warn'); return }
+      if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
       const payload = { ...f, doctor_ids: doctorIds };
       try { await API.post('/meetings', payload); toast('미팅 기록됨'); closeModal(); if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); } catch (e) { toast('저장 실패', 'err') }
@@ -1417,7 +1417,7 @@ function updateNewMeetDocs() {
   const container = document.getElementById('nm-doc-list');
   if (!hid || !container) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div>'; return }
   const docs = (window._newMeetDocs || []).filter(d => String(d.hospital_id) === String(hid));
-  if (!docs.length) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">소속 교수가 없습니다</div>'; return }
+  if (!docs.length) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">소속 의료진이 없습니다</div>'; return }
   container.innerHTML = '<div class="space-y-1">' + docs.map(function(d) {
     return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition">' +
       '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer">' +
@@ -1444,7 +1444,7 @@ async function searchPubMed(doctorId) {
   const container = document.getElementById('pubmed-results');
   if (!container) return;
   container.style.display = 'block';
-  container.innerHTML = '<div class="card-flat p-6"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center animate-pulse"><i class="fas fa-search text-brand-500 text-sm"></i></div><div><div class="font-semibold text-sm text-slate-700">PubMed에서 논문 검색 중...</div><div class="text-xs text-slate-400 mt-0.5">' + d.name + ' 교수 · ' + (d.hospital_name || '') + '</div></div></div></div>';
+  container.innerHTML = '<div class="card-flat p-6"><div class="flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-brand-50 flex items-center justify-center animate-pulse"><i class="fas fa-search text-brand-500 text-sm"></i></div><div><div class="font-semibold text-sm text-slate-700">PubMed에서 논문 검색 중...</div><div class="text-xs text-slate-400 mt-0.5">' + d.name + ' ' + (d.position || '의료진') + ' · ' + (d.hospital_name || '') + '</div></div></div></div>';
   try {
     const res = await API.post('/ai/doctor-papers', {
       doctorName: d.name,
@@ -1512,7 +1512,7 @@ async function addAllPubMed(doctorId) {
 
 // ===== DELETE =====
 async function delHosp(id) { showConfirm('기관 삭제', '이 기관과 소속 인원, 미팅 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/hospitals/' + id); toast('기관 삭제됨'); nav('hospitals') } catch (e) { toast('삭제 실패', 'err') } }) }
-async function delDoc(id, hid) { showConfirm('교수 삭제', '이 교수와 관련 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/doctors/' + id); toast('교수 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delDoc(id, hid) { showConfirm('의료진 삭제', '이 의료진과 관련 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/doctors/' + id); toast('의료진 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delMeet(id, hid) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + id); toast('미팅 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delMeetFromProfile(mid, did) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); viewDocProfile(did) } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delMeetGlobal(mid) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); loadMeet() } catch (e) { toast('삭제 실패', 'err') } }) }

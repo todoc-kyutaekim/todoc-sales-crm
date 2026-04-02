@@ -13,7 +13,7 @@ function toCsvRow(arr: string[]): string {
 // Export hospitals CSV (includes both hospitals and clinics)
 exports.get('/hospitals', async (c) => {
   const r = await c.env.DB.prepare('SELECT h.*, COUNT(DISTINCT d.id) as doctor_count, COUNT(DISTINCT m.id) as meeting_count, MAX(m.meeting_date) as last_meeting FROM hospitals h LEFT JOIN doctors d ON h.id = d.hospital_id LEFT JOIN meeting_doctors md ON d.id = md.doctor_id LEFT JOIN meetings m ON md.meeting_id = m.id AND m.hospital_id = h.id GROUP BY h.id ORDER BY h.name').all()
-  const header = toCsvRow(['ID', '병원명', '유형', '지역', '주소', '전화번호', '등급', '상태', '우선순위', '토닥접점', '교수수', '미팅수', '최근미팅', '난청환자', '보청기판매', 'CI의뢰', '메모', '등록일'])
+  const header = toCsvRow(['ID', '병원명', '유형', '지역', '주소', '전화번호', '등급', '상태', '우선순위', '토닥접점', '의료진수', '미팅수', '최근미팅', '난청환자', '보청기판매', 'CI의뢰', '메모', '등록일'])
   const rows = (r.results as any[]).map(h => toCsvRow([h.id, h.name, h.type === 'clinic' ? '의원' : '병원', h.region, h.address, h.phone, h.grade, h.status, h.priority || '', h.todoc_contact || '', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0, h.notes, h.created_at]))
   const bom = '\uFEFF'
   c.header('Content-Type', 'text/csv; charset=utf-8')
@@ -38,7 +38,7 @@ exports.get('/meetings', async (c) => {
     (SELECT GROUP_CONCAT(d.name, ', ') FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id WHERE md.meeting_id=m.id) as doctor_names,
     h.name as hospital_name 
     FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id ORDER BY m.meeting_date DESC`).all()
-  const header = toCsvRow(['ID', '일자', '유형', '교수', '병원', '목적', '내용', '결과', '후속액션', '다음미팅예정', '등록일'])
+  const header = toCsvRow(['ID', '일자', '유형', '의료진', '병원', '목적', '내용', '결과', '후속액션', '다음미팅예정', '등록일'])
   const rows = (r.results as any[]).map(m => toCsvRow([m.id, m.meeting_date, m.meeting_type, m.doctor_names || '', m.hospital_name, m.purpose, m.content, m.result, m.next_action, m.next_meeting_date || '', m.created_at]))
   const bom = '\uFEFF'
   c.header('Content-Type', 'text/csv; charset=utf-8')
