@@ -453,7 +453,7 @@ function sc(label, val, unit, icon, color, bg, link) {
 
 // ===== HOSPITALS =====
 async function loadHosp(typeFilter) {
-  document.getElementById('page-title').textContent = '병원 관리';
+  document.getElementById('page-title').textContent = '기관 관리';
   document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'hospitals\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-primary" onclick="showHospForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">추가</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">' + Array(6).fill('<div class="card p-5"><div class="space-y-3"><div class="skeleton rounded h-5 w-32"></div><div class="skeleton rounded h-3 w-48"></div></div></div>').join('') + '</div></div>';
   try {
@@ -461,7 +461,7 @@ async function loadHosp(typeFilter) {
     hospList = hR.data.data; const regions = rR.data.data;
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="flex flex-wrap items-center gap-3 mb-6">' +
-      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="병원/의원명 검색" class="input pl-10" style="width:200px"></div>' +
+      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="기관명 검색" class="input pl-10" style="width:200px"></div>' +
       '<select id="h-type" onchange="filterH()" class="input" style="width:100px"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option></select>' +
       '<select id="h-region" onchange="filterH()" class="input" style="width:110px"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
       '<select id="h-grade" onchange="filterH()" class="input" style="width:100px"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
@@ -469,26 +469,28 @@ async function loadHosp(typeFilter) {
       '<div id="h-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5"></div></div>';
     if (typeFilter) { document.getElementById('h-type').value = typeFilter; }
     filterH();
-  } catch (e) { toast('병원 목록을 불러올 수 없습니다', 'err') }
+  } catch (e) { toast('기관 목록을 불러올 수 없습니다', 'err') }
 }
 function renderH(list) {
-  document.getElementById('h-count').textContent = list.length + '개 병원/의원';
+  document.getElementById('h-count').textContent = list.length + '개 기관';
   document.getElementById('h-grid').innerHTML = list.length ? list.map(h => {
     const warn = h.last_meeting ? Math.floor((Date.now() - new Date(h.last_meeting + 'T00:00:00').getTime()) / 86400000) > 30 : '';
     const isClinic = h.type === 'clinic';
     return '<div class="card ' + (isClinic ? 'border-l-4 ' + (parseInt(h.priority) >= 4 ? 'border-l-amber-400' : parseInt(h.priority) >= 3 ? 'border-l-blue-400' : 'border-l-gray-200') : 'accent-' + h.grade) + ' p-5 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
-      '<div class="flex items-center gap-2 mb-3">' + (isClinic ? '<span class="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full"><i class="fas fa-clinic-medical mr-0.5"></i>의원</span>' + priorityStars(h.priority) + todocBadge(h.todoc_contact) : gradeBadge(h.grade)) + statusDot(h.status) + (warn ? '<span class="ml-auto text-[10px] text-red-400 bg-red-50 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-exclamation-triangle mr-0.5"></i>30일+</span>' : '') + '</div>' +
-      '<h3 class="font-bold text-slate-800 text-[15px] mb-1 truncate">' + (isClinic ? '<i class="fas fa-clinic-medical text-teal-400 mr-1.5 text-xs"></i>' : '') + h.name + '</h3>' +
+      '<div class="flex items-center gap-2 mb-3">' +
+      (isClinic ? '<span class="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full"><i class="fas fa-clinic-medical mr-0.5"></i>의원</span>' + priorityStars(h.priority) + todocBadge(h.todoc_contact) : '<span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full"><i class="fas fa-hospital mr-0.5"></i>병원</span>' + gradeBadge(h.grade)) +
+      statusDot(h.status) + (warn ? '<span class="ml-auto text-[10px] text-red-400 bg-red-50 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-exclamation-triangle mr-0.5"></i>30일+</span>' : '') + '</div>' +
+      '<h3 class="font-bold text-slate-800 text-[15px] mb-1 truncate">' + h.name + '</h3>' +
       '<p class="text-xs text-slate-400"><i class="fas fa-location-dot mr-1"></i>' + (h.region || '미지정') + '</p>' +
       '<div class="flex gap-2 mt-4">' +
-      '<div class="flex-1 bg-slate-50 rounded-xl p-2.5 text-center"><p class="text-[10px] text-slate-400 mb-0.5">' + (isClinic ? '관계자' : '교수') + '</p><p class="text-sm font-bold text-brand-600">' + (h.doctor_count || 0) + '</p></div>' +
-      '<div class="flex-1 bg-slate-50 rounded-xl p-2.5 text-center"><p class="text-[10px] text-slate-400 mb-0.5">' + (isClinic ? '방문' : '미팅') + '</p><p class="text-sm font-bold text-slate-600">' + (h.meeting_count || 0) + '</p></div>' +
+      '<div class="flex-1 bg-slate-50 rounded-xl p-2.5 text-center"><p class="text-[10px] text-slate-400 mb-0.5">인원</p><p class="text-sm font-bold text-brand-600">' + (h.doctor_count || 0) + '</p></div>' +
+      '<div class="flex-1 bg-slate-50 rounded-xl p-2.5 text-center"><p class="text-[10px] text-slate-400 mb-0.5">미팅</p><p class="text-sm font-bold text-slate-600">' + (h.meeting_count || 0) + '</p></div>' +
       '<div class="flex-1 bg-slate-50 rounded-xl p-2.5 text-center"><p class="text-[10px] text-slate-400 mb-0.5">최근</p><p class="text-[11px] font-semibold ' + (h.last_meeting ? daysClass(h.last_meeting) : 'text-slate-300') + '">' + (h.last_meeting ? daysAgo(h.last_meeting) : '없음') + '</p></div>' +
       '</div>' +
       (isClinic ? '<div class="flex gap-2 mt-3 pt-3 border-t border-gray-50">' + clinicMetric('fa-ear-listen', '난청환자', h.patient_count || 0) + clinicMetric('fa-headphones', '보청기', h.hearing_aid_sales || 0) + clinicMetric('fa-microchip', 'CI의뢰', h.ci_referrals || 0, h.ci_referrals > 0 ? 'text-violet-600' : '') + '</div>' : '') +
       (h.notes ? '<p class="text-[11px] text-slate-400 mt-3 line-clamp-1 leading-relaxed border-t border-gray-50 pt-3"><i class="fas fa-quote-left text-slate-200 mr-1"></i>' + h.notes + '</p>' : '') +
       '</div>'
-  }).join('') : '<div class="col-span-full empty"><div class="empty-icon"><i class="fas fa-hospital"></i></div><p class="font-medium text-slate-500 mb-1">등록된 병원/의원이 없습니다</p><p class="text-sm text-slate-300">"추가" 버튼으로 시작하세요</p></div>';
+  }).join('') : '<div class="col-span-full empty"><div class="empty-icon"><i class="fas fa-hospital"></i></div><p class="font-medium text-slate-500 mb-1">등록된 기관이 없습니다</p><p class="text-sm text-slate-300">"추가" 버튼으로 시작하세요</p></div>';
 }
 function filterH() {
   const s = (document.getElementById('h-search')?.value || '').toLowerCase(), r = document.getElementById('h-region')?.value || '', g = document.getElementById('h-grade')?.value || '', t = document.getElementById('h-type')?.value || '';
@@ -503,15 +505,15 @@ async function viewHosp(id) {
     const [hR, dR, mR] = await Promise.all([API.get('/hospitals/' + id), API.get('/hospitals/' + id + '/doctors'), API.get('/meetings?hospital_id=' + id)]);
     const h = hR.data.data, docs = dR.data.data, meets = mR.data.data;
     document.getElementById('page-title').textContent = h.name;
-    document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'hospitals\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>병원 목록</span>';
+    document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'hospitals\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>기관 목록</span>';
     document.getElementById('header-actions').innerHTML =
-      '<button class="btn btn-primary btn-sm" onclick="showDocForm(' + h.id + ')"><i class="fas fa-user-plus text-xs"></i><span class="hidden sm:inline">교수</span></button>' +
+      '<button class="btn btn-primary btn-sm" onclick="showDocForm(' + h.id + ')"><i class="fas fa-user-plus text-xs"></i><span class="hidden sm:inline">인원</span></button>' +
       '<button class="btn btn-success btn-sm" onclick="showMeetForm(' + h.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>' +
       '<button class="btn btn-outline btn-sm" onclick="showHospForm(' + h.id + ')"><i class="fas fa-pen text-xs"></i></button>' +
       '<button class="btn btn-ghost text-red-400 hover:text-red-600 hover:bg-red-50 btn-sm" onclick="delHosp(' + h.id + ')"><i class="fas fa-trash text-xs"></i></button>';
     window._hospDetail = { h, docs, meets }; detailTab = 'doctors';
     renderDetail();
-  } catch (e) { toast('병원 정보를 불러올 수 없습니다', 'err') }
+  } catch (e) { toast('기관 정보를 불러올 수 없습니다', 'err') }
 }
 function renderDetail() {
   const { h, docs, meets } = window._hospDetail;
@@ -521,17 +523,25 @@ function renderDetail() {
   const topDoc = docs.reduce((best, d) => (!best || (d.meeting_count || 0) > (best.meeting_count || 0)) ? d : best, null);
   
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-5">' +
-    // Summary stats
-    '<div class="grid grid-cols-2 sm:grid-cols-4 ' + (isClinic ? 'lg:grid-cols-7' : '') + ' gap-3">' +
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">' + (isClinic ? '관계자' : '소속 교수') + '</div><div class="text-lg font-extrabold text-brand-600">' + docs.length + '<span class="text-xs text-slate-400 ml-0.5">명</span></div></div>' +
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">' + (isClinic ? '총 방문' : '총 미팅') + '</div><div class="text-lg font-extrabold text-slate-800">' + meets.length + '<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>' +
+    // Summary stats — unified layout for both types
+    '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">소속 인원</div><div class="text-lg font-extrabold text-brand-600">' + docs.length + '<span class="text-xs text-slate-400 ml-0.5">명</span></div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">총 미팅</div><div class="text-lg font-extrabold text-slate-800">' + meets.length + '<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>' +
     '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">최근 30일</div><div class="text-lg font-extrabold ' + (recent30 > 0 ? 'text-emerald-600' : 'text-red-400') + '">' + recent30 + '<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>' +
-    (isClinic ? '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">난청환자</div><div class="text-lg font-extrabold text-blue-600">' + (h.patient_count || 0) + '</div></div><div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">보청기</div><div class="text-lg font-extrabold text-teal-600">' + (h.hearing_aid_sales || 0) + '</div></div><div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">CI의뢰</div><div class="text-lg font-extrabold text-violet-600">' + (h.ci_referrals || 0) + '</div></div><div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">우선순위</div><div class="mt-1">' + priorityStars(h.priority) + '</div></div>' :
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">최다 미팅</div><div class="text-sm font-bold text-slate-700 truncate">' + (topDoc ? topDoc.name + ' (' + (topDoc.meeting_count || 0) + ')' : '-') + '</div></div>') +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">최다 미팅</div><div class="text-sm font-bold text-slate-700 truncate">' + (topDoc ? topDoc.name + ' (' + (topDoc.meeting_count || 0) + ')' : '-') + '</div></div>' +
     '</div>' +
-    // Hospital info
+    // Clinic-specific metrics (shown only for clinics)
+    (isClinic ? '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-ear-listen text-slate-300 mr-0.5"></i>난청환자</div><div class="text-lg font-extrabold text-blue-600">' + (h.patient_count || 0) + '</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-headphones text-slate-300 mr-0.5"></i>보청기</div><div class="text-lg font-extrabold text-teal-600">' + (h.hearing_aid_sales || 0) + '</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-microchip text-slate-300 mr-0.5"></i>CI의뢰</div><div class="text-lg font-extrabold text-violet-600">' + (h.ci_referrals || 0) + '</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">우선순위</div><div class="mt-1">' + priorityStars(h.priority) + '</div></div>' +
+    '</div>' : '') +
+    // Info card — unified for both types
     '<div class="card-flat p-4 lg:p-6">' +
-    '<div class="flex flex-wrap items-center gap-2 mb-4">' + (isClinic ? '<span class="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full"><i class="fas fa-clinic-medical mr-0.5"></i>의원</span>' + priorityStars(h.priority) + todocBadge(h.todoc_contact) : gradeBadge(h.grade)) + statusDot(h.status) + '<div class="ml-auto flex items-center gap-4 text-xs text-slate-400">' + (h.phone ? '<span><i class="fas fa-phone mr-1"></i>' + h.phone + '</span>' : '') + '</div></div>' +
+    '<div class="flex flex-wrap items-center gap-2 mb-4">' +
+    (isClinic ? '<span class="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded-full"><i class="fas fa-clinic-medical mr-0.5"></i>의원</span>' + priorityStars(h.priority) + todocBadge(h.todoc_contact) : '<span class="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full"><i class="fas fa-hospital mr-0.5"></i>병원</span>' + gradeBadge(h.grade)) +
+    statusDot(h.status) + '<div class="ml-auto flex items-center gap-4 text-xs text-slate-400">' + (h.phone ? '<span><i class="fas fa-phone mr-1"></i>' + h.phone + '</span>' : '') + '</div></div>' +
     '<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">' +
     '<div><span class="text-slate-400 text-xs font-medium">지역</span><p class="font-semibold text-slate-700 mt-0.5">' + (h.region || '-') + '</p></div>' +
     '<div><span class="text-slate-400 text-xs font-medium">주소</span><p class="font-semibold text-slate-700 mt-0.5">' + (h.address || '-') + '</p></div>' +
@@ -539,8 +549,8 @@ function renderDetail() {
     (h.notes ? '<div class="mt-5 bg-amber-50/70 rounded-xl p-4 text-[13px] text-amber-800 leading-relaxed"><i class="fas fa-lightbulb text-amber-400 mr-1.5"></i>' + h.notes + '</div>' : '') +
     '</div>' +
     '<div class="flex border-b border-gray-100 px-1 overflow-x-auto">' +
-    '<div class="tab ' + (detailTab === 'doctors' ? 'active' : '') + '" onclick="detailTab=\'doctors\';renderDetail()"><i class="fas ' + (isClinic ? 'fa-users' : 'fa-user-doctor') + ' text-xs"></i>' + (isClinic ? '관계자' : '교수') + ' (' + docs.length + ')</div>' +
-    '<div class="tab ' + (detailTab === 'meetings' ? 'active' : '') + '" onclick="detailTab=\'meetings\';renderDetail()"><i class="fas fa-calendar-check text-xs"></i>' + (isClinic ? '방문 기록' : '미팅') + ' (' + meets.length + ')</div>' +
+    '<div class="tab ' + (detailTab === 'doctors' ? 'active' : '') + '" onclick="detailTab=\'doctors\';renderDetail()"><i class="fas fa-user-doctor text-xs"></i>인원 (' + docs.length + ')</div>' +
+    '<div class="tab ' + (detailTab === 'meetings' ? 'active' : '') + '" onclick="detailTab=\'meetings\';renderDetail()"><i class="fas fa-calendar-check text-xs"></i>미팅 (' + meets.length + ')</div>' +
     '</div>' +
     (detailTab === 'doctors' ? renderDoctorsTab(h, docs) : renderMeetingsTab(h, meets)) +
     '</div>';
@@ -1126,11 +1136,13 @@ async function showHospForm(id) {
   let h = { name: '', region: '', address: '', phone: '', grade: 'A', notes: '', status: 'active', type: 'hospital', priority: '3', todoc_contact: 'X', patient_count: 0, hearing_aid_sales: 0, ci_referrals: 0 };
   if (id) { try { h = (await API.get('/hospitals/' + id)).data.data } catch (e) { } }
   const isClinic = h.type === 'clinic';
-  openModal(id ? (isClinic ? '의원 수정' : '병원 수정') : '새 병원/의원 추가',
+  openModal(id ? '기관 정보 수정' : '새 기관 추가',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
     field('유형', 'type', 'select', h.type || 'hospital', [{ v: 'hospital', l: '병원' }, { v: 'clinic', l: '의원' }]) +
-    '<div class="relative col-span-full sm:col-span-1"><label class="input-label">이름 *</label><input type="text" name="name" value="' + (h.name || '') + '" class="input" placeholder="병원/의원명을 입력하세요" autocomplete="off"><div id="hosp-suggest" class="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-60 overflow-y-auto"></div></div>' +
-    field('지역', 'region', 'text', h.region) + field('주소', 'address', 'text', h.address) + field('전화번호', 'phone', 'tel', h.phone) + field('등급', 'grade', 'select', h.grade, [{ v: 'S', l: 'S급' }, { v: 'A', l: 'A급' }, { v: 'B', l: 'B급' }, { v: 'C', l: 'C급' }]) + field('상태', 'status', 'select', h.status, [{ v: 'active', l: '활성' }, { v: 'inactive', l: '비활성' }]) +
+    '<div class="relative col-span-full sm:col-span-1"><label class="input-label">이름 *</label><input type="text" name="name" value="' + (h.name || '') + '" class="input" placeholder="기관명을 입력하세요" autocomplete="off"><div id="hosp-suggest" class="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-60 overflow-y-auto"></div></div>' +
+    field('지역', 'region', 'text', h.region) + field('주소', 'address', 'text', h.address) + field('전화번호', 'phone', 'tel', h.phone) +
+    '<div id="grade-field"' + (isClinic ? ' class="hidden"' : '') + '>' + field('등급', 'grade', 'select', h.grade, [{ v: 'S', l: 'S급' }, { v: 'A', l: 'A급' }, { v: 'B', l: 'B급' }, { v: 'C', l: 'C급' }]) + '</div>' +
+    field('상태', 'status', 'select', h.status, [{ v: 'active', l: '활성' }, { v: 'inactive', l: '비활성' }]) +
     '<div id="clinic-fields" class="col-span-full grid grid-cols-1 sm:grid-cols-2 gap-4' + (isClinic ? '' : ' hidden') + '">' +
     field('우선순위', 'priority', 'select', h.priority, [{ v: '5', l: '★★★★★' }, { v: '4', l: '★★★★' }, { v: '3', l: '★★★' }, { v: '2', l: '★★' }, { v: '1', l: '★' }]) +
     field('토닥접점', 'todoc_contact', 'select', h.todoc_contact || 'X', [{ v: 'O', l: 'O (접점)' }, { v: '△', l: '△ (일부)' }, { v: 'X', l: 'X (미접점)' }]) +
@@ -1139,12 +1151,19 @@ async function showHospForm(id) {
     '<div><label class="input-label">CI 의뢰 실적</label><input type="number" name="ci_referrals" value="' + (h.ci_referrals || 0) + '" class="input" min="0"></div></div>' +
     field('메모', 'notes', 'textarea', h.notes) +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (id ? '저장' : '추가') + '</button></div></form>');
-  // Toggle clinic-specific fields based on type
+  // Toggle clinic/hospital specific fields based on type
   var typeSelect = document.querySelector('#fm select[name="type"]');
   if (typeSelect) {
     typeSelect.addEventListener('change', function() {
       var cf = document.getElementById('clinic-fields');
-      if (cf) { if (this.value === 'clinic') cf.classList.remove('hidden'); else cf.classList.add('hidden'); }
+      var gf = document.getElementById('grade-field');
+      if (this.value === 'clinic') {
+        if (cf) cf.classList.remove('hidden');
+        if (gf) gf.classList.add('hidden');
+      } else {
+        if (cf) cf.classList.add('hidden');
+        if (gf) gf.classList.remove('hidden');
+      }
     });
   }
   // Hospital name autocomplete — instant local + async AI supplement
@@ -1515,7 +1534,7 @@ async function addAllPubMed(doctorId) {
 }
 
 // ===== DELETE =====
-async function delHosp(id) { showConfirm('병원 삭제', '이 병원과 소속 교수, 미팅 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/hospitals/' + id); toast('병원 삭제됨'); nav('hospitals') } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delHosp(id) { showConfirm('기관 삭제', '이 기관과 소속 인원, 미팅 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/hospitals/' + id); toast('기관 삭제됨'); nav('hospitals') } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delDoc(id, hid) { showConfirm('교수 삭제', '이 교수와 관련 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/doctors/' + id); toast('교수 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delMeet(id, hid) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + id); toast('미팅 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delMeetFromProfile(mid, did) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); viewDocProfile(did) } catch (e) { toast('삭제 실패', 'err') } }) }

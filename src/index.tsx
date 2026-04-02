@@ -101,7 +101,7 @@ const HTML = `<!DOCTYPE html>
   <div class="h-px bg-slate-700/50 mx-5"></div>
   <nav class="flex-1 py-4 space-y-1 overflow-y-auto">
     <div onclick="nav('dashboard')" id="n-dashboard" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-pie"></i></span>대시보드</div>
-    <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>병원 관리</div>
+    <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>기관 관리</div>
     <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>교수 관리</div>
     <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 기록</div>
     <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
@@ -130,7 +130,7 @@ const HTML = `<!DOCTYPE html>
     <div id="search-wrap-outer" class="flex-1 max-w-md mx-2 hidden sm:block">
       <div class="relative" id="search-wrap">
         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>
-        <input id="global-search" type="text" placeholder="병원, 교수, 미팅 검색... (Ctrl+K)" class="input pl-9 pr-3 py-2 text-sm w-full !rounded-xl !border-gray-200 bg-gray-50 focus:bg-white" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off">
+        <input id="global-search" type="text" placeholder="기관, 교수, 미팅 검색... (Ctrl+K)" class="input pl-9 pr-3 py-2 text-sm w-full !rounded-xl !border-gray-200 bg-gray-50 focus:bg-white" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off">
         <div id="search-results" class="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-[70vh] overflow-y-auto"></div>
       </div>
     </div>
