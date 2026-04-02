@@ -10,11 +10,11 @@ function toCsvRow(arr: string[]): string {
   }).join(',')
 }
 
-// Export hospitals CSV
+// Export hospitals CSV (includes both hospitals and clinics)
 exports.get('/hospitals', async (c) => {
   const r = await c.env.DB.prepare('SELECT h.*, COUNT(DISTINCT d.id) as doctor_count, COUNT(DISTINCT m.id) as meeting_count, MAX(m.meeting_date) as last_meeting FROM hospitals h LEFT JOIN doctors d ON h.id = d.hospital_id LEFT JOIN meeting_doctors md ON d.id = md.doctor_id LEFT JOIN meetings m ON md.meeting_id = m.id AND m.hospital_id = h.id GROUP BY h.id ORDER BY h.name').all()
-  const header = toCsvRow(['ID', '병원명', '지역', '주소', '전화번호', '등급', '상태', '교수수', '미팅수', '최근미팅', '메모', '등록일'])
-  const rows = (r.results as any[]).map(h => toCsvRow([h.id, h.name, h.region, h.address, h.phone, h.grade, h.status, h.doctor_count, h.meeting_count, h.last_meeting || '', h.notes, h.created_at]))
+  const header = toCsvRow(['ID', '병원명', '유형', '지역', '주소', '전화번호', '등급', '상태', '우선순위', '토닥접점', '교수수', '미팅수', '최근미팅', '난청환자', '보청기판매', 'CI의뢰', '메모', '등록일'])
+  const rows = (r.results as any[]).map(h => toCsvRow([h.id, h.name, h.type === 'clinic' ? '의원' : '병원', h.region, h.address, h.phone, h.grade, h.status, h.priority || '', h.todoc_contact || '', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0, h.notes, h.created_at]))
   const bom = '\uFEFF'
   c.header('Content-Type', 'text/csv; charset=utf-8')
   c.header('Content-Disposition', 'attachment; filename="hospitals.csv"')
@@ -54,19 +54,6 @@ exports.get('/cistats', async (c) => {
   const bom = '\uFEFF'
   c.header('Content-Type', 'text/csv; charset=utf-8')
   c.header('Content-Disposition', 'attachment; filename="ci_stats.csv"')
-  return c.body(bom + header + '\n' + rows.join('\n'))
-})
-
-// Export clinics CSV
-exports.get('/clinics', async (c) => {
-  const r = await c.env.DB.prepare(`SELECT cl.*, COUNT(DISTINCT cc.id) as contact_count, COUNT(DISTINCT cv.id) as visit_count, MAX(cv.visit_date) as last_visit 
-    FROM clinics cl LEFT JOIN clinic_contacts cc ON cl.id=cc.clinic_id LEFT JOIN clinic_visits cv ON cl.id=cv.clinic_id 
-    GROUP BY cl.id ORDER BY cl.name`).all()
-  const header = toCsvRow(['ID', '의원명', '지역', '주소', '전화번호', '우선순위', '토닥접점', '상태', '관계자수', '방문수', '최근방문', '환자수', '보청기판매', 'CI의뢰', '메모', '등록일'])
-  const rows = (r.results as any[]).map(cl => toCsvRow([cl.id, cl.name, cl.region, cl.address, cl.phone, cl.priority, cl.todoc_contact, cl.status, cl.contact_count, cl.visit_count, cl.last_visit || '', cl.patient_count, cl.hearing_aid_sales, cl.ci_referrals, cl.notes, cl.created_at]))
-  const bom = '\uFEFF'
-  c.header('Content-Type', 'text/csv; charset=utf-8')
-  c.header('Content-Disposition', 'attachment; filename="clinics.csv"')
   return c.body(bom + header + '\n' + rows.join('\n'))
 })
 
