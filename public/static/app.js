@@ -42,11 +42,15 @@ API.interceptors.response.use(r => r, err => {
 function showAuthScreen() {
   document.getElementById('app-main').classList.add('hidden');
   document.getElementById('auth-screen').classList.remove('hidden');
+  var bn = document.getElementById('bottom-nav');
+  if (bn) bn.classList.add('hidden');
   renderLoginForm();
 }
 function showAppScreen() {
   document.getElementById('auth-screen').classList.add('hidden');
   document.getElementById('app-main').classList.remove('hidden');
+  var bn = document.getElementById('bottom-nav');
+  if (bn) bn.classList.remove('hidden');
   updateUserUI();
   nav('dashboard');
 }
@@ -225,6 +229,10 @@ function nav(p) {
   curPage = p;
   document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
   document.getElementById('n-' + p)?.classList.add('active');
+  // Update bottom nav
+  document.querySelectorAll('.btm-nav-item').forEach(e => e.classList.remove('active'));
+  var bnItem = document.getElementById('bn-' + p);
+  if (bnItem) bnItem.classList.add('active');
   document.getElementById('page-subtitle').textContent = '';
   document.getElementById('header-actions').innerHTML = '';
   if (window.innerWidth < 1024) {
@@ -232,6 +240,16 @@ function nav(p) {
     if (sb && !sb.classList.contains('-translate-x-full')) toggleSidebar();
   }
   ({ dashboard: loadDash, hospitals: loadHosp, doctors: loadDoc, meetings: loadMeet, cistats: loadCIStats, activity: loadActivity })[p]?.();
+}
+
+// ===== Mobile More Menu =====
+function toggleMoreMenu() {
+  var mm = document.getElementById('more-menu');
+  if (mm) mm.classList.toggle('hidden');
+}
+function closeMoreMenu() {
+  var mm = document.getElementById('more-menu');
+  if (mm) mm.classList.add('hidden');
 }
 
 function openModal(t, h, wide) {

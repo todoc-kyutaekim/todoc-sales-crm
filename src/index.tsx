@@ -54,12 +54,65 @@ app.get('/api/regions', async (c) => {
   return c.json({ data: r.results.map((x:any) => x.region) })
 })
 
+// PWA Manifest
+app.get('/manifest.json', (c) => {
+  return c.json({
+    name: 'TODOC CRM',
+    short_name: 'TODOC',
+    description: '토닥 인공와우 영업 관리 시스템',
+    start_url: '/',
+    display: 'standalone',
+    background_color: '#f8f9fb',
+    theme_color: '#3366ff',
+    orientation: 'any',
+    scope: '/',
+    lang: 'ko',
+    categories: ['business', 'productivity'],
+    icons: [
+      { src: '/static/icons/icon-72x72.png', sizes: '72x72', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/icon-96x96.png', sizes: '96x96', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/icon-128x128.png', sizes: '128x128', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/icon-144x144.png', sizes: '144x144', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/icon-152x152.png', sizes: '152x152', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/icon-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/icon-384x384.png', sizes: '384x384', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/icon-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+      { src: '/static/icons/maskable-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+    ]
+  })
+})
+
+// PWA Service Worker
+app.get('/sw.js', (c) => {
+  c.header('Content-Type', 'application/javascript')
+  c.header('Service-Worker-Allowed', '/')
+  c.header('Cache-Control', 'no-cache')
+  return c.body(SW_JS)
+})
+
 // SPA - serves HTML shell, all JS/CSS from CDN or inline
 app.get('*', (c) => c.html(HTML))
 
+const SW_JS = `const CACHE_NAME='todoc-crm-v2';
+const STATIC_ASSETS=['/','/static/style.css','/static/app.js','/static/icons/icon-192x192.png'];
+self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(STATIC_ASSETS).catch(()=>{})));self.skipWaiting()});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))));self.clients.claim()});
+self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET')return;if(u.pathname.startsWith('/api/'))return;if(u.origin!==self.location.origin){e.respondWith(caches.match(e.request).then(c=>{if(c)return c;return fetch(e.request).then(r=>{if(r.ok){const cl=r.clone();caches.open(CACHE_NAME).then(ca=>ca.put(e.request,cl))}return r}).catch(()=>c)}));return}e.respondWith(caches.match(e.request).then(c=>{const f=fetch(e.request).then(r=>{if(r.ok){const cl=r.clone();caches.open(CACHE_NAME).then(ca=>ca.put(e.request,cl))}return r}).catch(()=>c);return c||f}))});`
+
 const HTML = `<!DOCTYPE html>
 <html lang="ko"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no,viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="TODOC">
+<meta name="theme-color" content="#3366ff">
+<meta name="description" content="토닥 인공와우 영업 관리 시스템">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
+<link rel="icon" type="image/x-icon" href="/static/icons/favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
 <title>TODOC CRM</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
@@ -86,8 +139,8 @@ const HTML = `<!DOCTYPE html>
 <!-- Mobile overlay -->
 <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" onclick="toggleSidebar()"></div>
 
-<!-- Sidebar -->
-<aside id="sidebar" class="w-[250px] bg-gradient-to-b from-slate-900 to-slate-800 flex flex-col flex-shrink-0 select-none fixed lg:relative z-50 h-full -translate-x-full lg:translate-x-0 transition-transform duration-200">
+<!-- Sidebar (hidden on mobile - use bottom nav instead) -->
+<aside id="sidebar" class="w-[250px] bg-gradient-to-b from-slate-900 to-slate-800 flex-col flex-shrink-0 select-none fixed lg:relative z-50 h-full -translate-x-full lg:translate-x-0 transition-transform duration-200 hidden lg:flex">
   <div class="px-6 py-5 flex items-center gap-3">
     <div class="w-10 h-10 rounded-xl bg-brand-500 flex items-center justify-center shadow-lg shadow-brand-500/30">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm-2 13H8V9h2v7zm4 0h-2V9h2v7z" fill="#fff"/></svg>
@@ -102,7 +155,7 @@ const HTML = `<!DOCTYPE html>
   <nav class="flex-1 py-4 space-y-1 overflow-y-auto">
     <div onclick="nav('dashboard')" id="n-dashboard" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-pie"></i></span>대시보드</div>
     <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>기관 관리</div>
-    <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>교수 관리</div>
+    <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
     <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 기록</div>
     <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
     <div class="px-5 mb-2"><span class="text-[9px] text-slate-500 font-bold tracking-widest uppercase">Market Data</span></div>
@@ -118,10 +171,10 @@ const HTML = `<!DOCTYPE html>
 
 <!-- Main -->
 <main class="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#f8f9fb]">
-  <header class="h-[60px] bg-white border-b border-gray-100 flex items-center justify-between px-4 lg:px-7 flex-shrink-0 gap-2">
+  <header class="h-[56px] lg:h-[60px] bg-white border-b border-gray-100 flex items-center justify-between px-3 lg:px-7 flex-shrink-0 gap-1 lg:gap-2 safe-top">
     <div class="flex items-center gap-2 lg:gap-3 min-w-0">
-      <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1" onclick="toggleSidebar()"><i class="fas fa-bars text-lg"></i></button>
-      <h2 id="page-title" class="text-[15px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate"></h2>
+      <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1 hidden" onclick="toggleSidebar()"><i class="fas fa-bars text-lg"></i></button>
+      <h2 id="page-title" class="text-[14px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate"></h2>
       <span id="page-subtitle" class="text-xs text-slate-400 font-medium hidden sm:inline"></span>
     </div>
     <!-- Mobile Search Button -->
@@ -130,7 +183,7 @@ const HTML = `<!DOCTYPE html>
     <div id="search-wrap-outer" class="flex-1 max-w-md mx-2 hidden sm:block">
       <div class="relative" id="search-wrap">
         <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>
-        <input id="global-search" type="text" placeholder="기관, 교수, 미팅 검색... (Ctrl+K)" class="input pl-9 pr-3 py-2 text-sm w-full !rounded-xl !border-gray-200 bg-gray-50 focus:bg-white" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off">
+        <input id="global-search" type="text" placeholder="기관, 의료진, 미팅 검색... (Ctrl+K)" class="input pl-9 pr-3 py-2 text-sm w-full !rounded-xl !border-gray-200 bg-gray-50 focus:bg-white" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off">
         <div id="search-results" class="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-[70vh] overflow-y-auto"></div>
       </div>
     </div>
@@ -138,18 +191,47 @@ const HTML = `<!DOCTYPE html>
     <div class="h-5 w-px bg-gray-200 mx-1 hidden lg:block"></div>
     <div id="user-menu" class="relative flex-shrink-0"></div>
   </header>
-  <div id="content" class="flex-1 overflow-y-auto"></div>
+  <div id="content" class="flex-1 overflow-y-auto pb-[70px] lg:pb-0"></div>
 </main>
 </div><!-- /app-main -->
 
+<!-- Mobile Bottom Navigation -->
+<nav id="bottom-nav" class="btm-nav lg:hidden hidden">
+  <div onclick="nav('dashboard')" id="bn-dashboard" class="btm-nav-item">
+    <i class="fas fa-chart-pie"></i><span>대시보드</span>
+  </div>
+  <div onclick="nav('hospitals')" id="bn-hospitals" class="btm-nav-item">
+    <i class="fas fa-hospital"></i><span>기관</span>
+  </div>
+  <div onclick="nav('doctors')" id="bn-doctors" class="btm-nav-item">
+    <i class="fas fa-user-doctor"></i><span>의료진</span>
+  </div>
+  <div onclick="nav('meetings')" id="bn-meetings" class="btm-nav-item">
+    <i class="fas fa-calendar-check"></i><span>미팅</span>
+  </div>
+  <div onclick="toggleMoreMenu()" id="bn-more" class="btm-nav-item">
+    <i class="fas fa-ellipsis"></i><span>더보기</span>
+  </div>
+</nav>
+
+<!-- More Menu Popover -->
+<div id="more-menu" class="fixed inset-0 z-[55] hidden lg:hidden" onclick="closeMoreMenu()">
+  <div class="absolute bottom-[68px] right-3 bg-white rounded-2xl shadow-2xl border border-gray-100 w-48 py-2 overflow-hidden safe-bottom" onclick="event.stopPropagation()">
+    <div onclick="nav('cistats');closeMoreMenu()" class="more-menu-item"><i class="fas fa-chart-bar text-violet-500"></i>인공와우 통계</div>
+    <div onclick="nav('activity');closeMoreMenu()" class="more-menu-item"><i class="fas fa-clock-rotate-left text-slate-400"></i>활동 로그</div>
+    <div class="h-px bg-gray-100 my-1"></div>
+    <div onclick="showNewMeetGlobal();closeMoreMenu()" class="more-menu-item"><i class="fas fa-calendar-plus text-emerald-500"></i>빠른 미팅 추가</div>
+  </div>
+</div>
+
 <!-- Modal -->
-<div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-center justify-center p-4" onclick="if(event.target===this)tryCloseModal()">
-  <div id="modal-content" class="modal-box bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
-    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
+<div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-end lg:items-center justify-center lg:p-4" onclick="if(event.target===this)tryCloseModal()">
+  <div id="modal-content" class="modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] lg:max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between px-5 lg:px-6 py-3.5 lg:py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px]"></h3>
       <button onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
     </div>
-    <div id="modal-body" class="p-6"></div>
+    <div id="modal-body" class="p-5 lg:p-6"></div>
   </div>
 </div>
 
@@ -167,6 +249,18 @@ const HTML = `<!DOCTYPE html>
 </div>
 
 <script src="/static/app.js"></script>
+<script>
+// Register Service Worker for PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').then(reg => {
+      console.log('SW registered:', reg.scope);
+    }).catch(err => {
+      console.warn('SW registration failed:', err);
+    });
+  });
+}
+</script>
 </body></html>`
 
 export default app
