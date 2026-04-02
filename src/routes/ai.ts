@@ -556,8 +556,15 @@ ai.post('/doctor-profile', async (c) => {
 3. 확인할 수 없는 정보에는 "[업데이트 필요]"를 붙이지 마세요, 그냥 빈 문자열로 두세요
 4. ${isClinic ? '난청/보청기/청각/이비인후과 관련 경력을 우선적으로 추출하세요' : '인공와우/이과/난청 관련 경력을 우선적으로 추출하세요'}
 
+★ 출력 형식 규칙 (반드시 준수):
+- bio: 한 줄로 된 간결한 소개문 (예: "서울대학교 이비인후과 교수, 인공와우 전문가")
+- education: 학력 항목을 \\n으로 구분. 한 줄에 하나의 학력만. (예: "연세대학교 의과대학 졸업\\n연세대학교 대학원 의학석사\\n연세대학교 대학원 의학박사")
+- career: 경력 항목을 \\n으로 구분. 한 줄에 하나의 경력만. 시간순으로 정렬. (예: "삼성서울병원 이비인후과 전공의\\n서울대병원 이비인후과 임상강사\\n현 서울대병원 이비인후과 교수")
+- specialty: 세부 전공 (쉼표로 구분, 예: "인공와우, 난청, 이과학")
+- position: 현재 직위 하나만 (예: "교수", "대표원장")
+
 JSON 형식으로만 반환:
-{"bio":"한줄 소개(한국어)","education":"학력(줄바꿈으로 구분)","career":"주요 경력(줄바꿈으로 구분)","specialty":"세부 전공","position":"현재 직위","source":"${sourceUrl || ''}"}`
+{"bio":"","education":"","career":"","specialty":"","position":"","source":"${sourceUrl || ''}"}`
 
   try {
     const systemPrompt = isClinic
@@ -568,12 +575,15 @@ JSON 형식으로만 반환:
     if (!jsonMatch) return c.json({ data: { bio: '', education: '', career: '', specialty: '', position: '' }, source: sourceUrl })
 
     const profile = JSON.parse(jsonMatch[0])
-    const clean = (s: string) => (s || '').trim()
+    // Clean and normalize line breaks: AI sometimes returns literal "\n" strings
+    const clean = (s: string) => (s || '').replace(/\\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+    // Remove empty lines from education/career lists
+    const cleanList = (s: string) => clean(s).split('\n').map(l => l.trim()).filter(l => l.length > 0).join('\n')
     return c.json({
       data: {
         bio: clean(profile.bio),
-        education: clean(profile.education),
-        career: clean(profile.career),
+        education: cleanList(profile.education),
+        career: cleanList(profile.career),
         specialty: clean(profile.specialty),
         position: clean(profile.position),
         source: sourceUrl || ''
