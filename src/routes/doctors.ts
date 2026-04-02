@@ -125,6 +125,24 @@ doctors.post('/doctors/:id/photo', async (c) => {
   return c.json({ success: true })
 })
 
+// Profile update (bio, education, career, position, specialty) — partial update
+doctors.patch('/doctors/:id/profile', async (c) => {
+  const b = await c.req.json()
+  const id = c.req.param('id')
+  const sets: string[] = []
+  const vals: any[] = []
+  if (b.bio !== undefined) { sets.push('bio=?'); vals.push(b.bio) }
+  if (b.education !== undefined) { sets.push('education=?'); vals.push(b.education) }
+  if (b.career !== undefined) { sets.push('career=?'); vals.push(b.career) }
+  if (b.position !== undefined) { sets.push('position=?'); vals.push(b.position) }
+  if (b.specialty !== undefined) { sets.push('specialty=?'); vals.push(b.specialty) }
+  if (!sets.length) return c.json({ error: 'No fields to update' }, 400)
+  sets.push('updated_at=CURRENT_TIMESTAMP')
+  vals.push(id)
+  await c.env.DB.prepare(`UPDATE doctors SET ${sets.join(',')} WHERE id=?`).bind(...vals).run()
+  return c.json({ success: true })
+})
+
 doctors.delete('/doctors/:id/photo', async (c) => {
   await c.env.DB.prepare("UPDATE doctors SET photo='', updated_at=CURRENT_TIMESTAMP WHERE id=?").bind(c.req.param('id')).run()
   return c.json({ success: true })
