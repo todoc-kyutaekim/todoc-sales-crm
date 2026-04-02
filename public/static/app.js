@@ -256,7 +256,7 @@ function openModal(t, h, wide) {
   document.getElementById('modal-title').textContent = t;
   document.getElementById('modal-body').innerHTML = h;
   const mc = document.getElementById('modal-content');
-  mc.className = 'modal-box bg-white rounded-2xl shadow-2xl w-full max-h-[88vh] overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
+  mc.className = 'modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-h-[90vh] lg:max-h-[88vh] overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
   document.getElementById('modal').classList.remove('hidden');
 }
 function closeModal() { document.getElementById('modal').classList.add('hidden') }
@@ -298,9 +298,13 @@ function toggleMobileSearch(forceOpen) {
   if (!sw) return;
   if (forceOpen || sw.classList.contains('hidden')) {
     sw.classList.remove('hidden');
+    sw.classList.add('!block');
+    sw.style.cssText = 'position:fixed;top:52px;left:0;right:0;z-index:55;padding:8px 12px;background:#fff;border-bottom:1px solid #f0f0f3;box-shadow:0 4px 12px rgba(0,0,0,0.08)';
     setTimeout(() => document.getElementById('global-search')?.focus(), 50);
   } else {
     sw.classList.add('hidden');
+    sw.classList.remove('!block');
+    sw.style.cssText = '';
     hideSearchResults();
   }
 }
@@ -476,12 +480,12 @@ async function loadHosp(typeFilter) {
     const [hR, rR] = await Promise.all([API.get('/hospitals'), API.get('/regions')]);
     hospList = hR.data.data; const regions = rR.data.data;
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
-      '<div class="flex flex-wrap items-center gap-3 mb-6">' +
-      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="기관명 검색" class="input pl-10" style="width:200px"></div>' +
-      '<select id="h-type" onchange="filterH()" class="input" style="width:100px"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option></select>' +
-      '<select id="h-region" onchange="filterH()" class="input" style="width:110px"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
-      '<select id="h-grade" onchange="filterH()" class="input" style="width:100px"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
-      '<span id="h-count" class="text-xs text-slate-300 font-medium ml-auto"></span></div>' +
+      '<div class="filter-row">' +
+      '<div class="relative flex-1" style="min-width:140px"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="기관명 검색" class="input pl-10"></div>' +
+      '<select id="h-type" onchange="filterH()" class="input" style="max-width:110px"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option></select>' +
+      '<select id="h-region" onchange="filterH()" class="input" style="max-width:120px"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
+      '<select id="h-grade" onchange="filterH()" class="input" style="max-width:110px"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
+      '<span id="h-count" class="text-xs text-slate-300 font-medium"></span></div>' +
       '<div id="h-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5"></div></div>';
     if (typeFilter) { document.getElementById('h-type').value = typeFilter; }
     filterH();
@@ -624,8 +628,8 @@ function renderMeetingsTab(h, meets) {
     (m.purpose ? '<div class="text-[13px] font-medium text-slate-700 mb-1.5">' + m.purpose + '</div>' : '') +
     (m.content ? '<div class="text-xs text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + m.content + '</div>' : '') +
     '<div class="flex flex-wrap gap-2">' +
-    (m.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 min-w-[150px]"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + m.result + '</div>' : '') +
-    (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 min-w-[150px]"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + (m.next_meeting_date ? ' <span class="font-bold">(' + fmtShort(m.next_meeting_date) + ')</span>' : '') + '</div>' : '') +
+    (m.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + m.result + '</div>' : '') +
+    (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + (m.next_meeting_date ? ' <span class="font-bold">(' + fmtShort(m.next_meeting_date) + ')</span>' : '') + '</div>' : '') +
     '</div></div></div>'
   ).join('') + '</div>';
 }
@@ -882,15 +886,15 @@ async function loadDoc() {
     docList = dr.data.data;
     const depts = deptR.data.data || [];
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
-      '<div class="flex flex-wrap items-center gap-3 mb-6">' +
-      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="의료진명/병원명" class="input pl-10" style="width:200px"></div>' +
-      '<select id="d-inf" onchange="filterD()" class="input" style="width:100px"><option value="">전체</option><option value="high">핵심</option><option value="medium">주요</option><option value="low">일반</option></select>' +
-      '<select id="d-dept" onchange="filterD()" class="input" style="width:120px"><option value="">전체 진료과</option>' + depts.map(dp => '<option>' + dp + '</option>').join('') + '</select>' +
-      '<select id="d-visit" onchange="filterD()" class="input" style="width:130px"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
-      '<span id="d-count" class="text-xs text-slate-300 font-medium ml-auto"></span></div>' +
-      '<div class="card-flat overflow-hidden overflow-x-auto"><table class="w-full min-w-[700px]"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
+      '<div class="filter-row">' +
+      '<div class="relative flex-1" style="min-width:140px"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="의료진명/병원명" class="input pl-10"></div>' +
+      '<select id="d-inf" onchange="filterD()" class="input" style="max-width:100px"><option value="">전체</option><option value="high">핵심</option><option value="medium">주요</option><option value="low">일반</option></select>' +
+      '<select id="d-dept" onchange="filterD()" class="input" style="max-width:130px"><option value="">전체 진료과</option>' + depts.map(dp => '<option>' + dp + '</option>').join('') + '</select>' +
+      '<select id="d-visit" onchange="filterD()" class="input" style="max-width:140px"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
+      '<span id="d-count" class="text-xs text-slate-300 font-medium"></span></div>' +
+      '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
       '<th class="px-4 lg:px-6 py-3.5 text-left">의료진</th><th class="px-4 py-3.5 text-left">소속 병원</th><th class="px-4 py-3.5 text-left hide-mobile">진료과</th><th class="px-4 py-3.5 text-left hide-mobile">전문분야</th><th class="px-4 py-3.5 text-center">영향력</th><th class="px-4 py-3.5 text-center">미팅</th><th class="px-4 py-3.5 text-left">최근</th></tr></thead>' +
-      '<tbody id="d-tbody" class="divide-y divide-gray-50"></tbody></table></div></div>';
+      '<tbody id="d-tbody" class="divide-y divide-gray-50"></tbody></table></div></div></div>';
     renderDR(docList);
   } catch (e) { toast('의료진 목록을 불러올 수 없습니다', 'err') }
 }
@@ -962,15 +966,15 @@ function renderDocProfile() {
     (d.department ? '<span class="flex items-center gap-1.5"><i class="fas fa-stethoscope text-emerald-400"></i>' + d.department + '</span>' : '') +
     (d.specialty ? '<span class="flex items-center gap-1.5"><i class="fas fa-microscope text-purple-400"></i>' + d.specialty + '</span>' : '') +
     '</div></div>' +
-    '<div class="flex gap-2 lg:gap-3 pt-2 sm:pt-14 flex-wrap">' +
+    '<div class="flex gap-2 lg:gap-3 pt-2 sm:pt-14 flex-wrap profile-header-stats">' +
     profileStatBox('미팅', d.meeting_count || 0, '회', 'fa-handshake', '#3366ff', '#eef4ff') +
     profileStatBox('논문', d.papers?.length || 0, '편', 'fa-file-lines', '#7c3aed', '#f5f3ff') +
     profileStatBox('최근', d.last_meeting ? daysAgo(d.last_meeting) : '없음', '', 'fa-clock', '#059669', '#ecfdf5') +
     '</div></div></div></div>' +
     '<div class="flex flex-wrap gap-3 lg:gap-4">' +
-    (d.phone ? '<div class="flex-1 min-w-[200px] card-flat px-4 lg:px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-phone text-blue-500 text-sm"></i></div><div><div class="text-[10px] text-slate-400 font-medium">전화번호</div><div class="text-sm font-semibold text-slate-700">' + d.phone + '</div></div></div>' : '') +
-    (d.email ? '<div class="flex-1 min-w-[200px] card-flat px-4 lg:px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-envelope text-purple-500 text-sm"></i></div><div><div class="text-[10px] text-slate-400 font-medium">이메일</div><div class="text-sm font-semibold text-slate-700">' + d.email + '</div></div></div>' : '') +
-    (d.hospital_region ? '<div class="flex-1 min-w-[200px] card-flat px-4 lg:px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-map-marker-alt text-emerald-500 text-sm"></i></div><div><div class="text-[10px] text-slate-400 font-medium">근무지</div><div class="text-sm font-semibold text-slate-700">' + (d.hospital_address || d.hospital_region) + '</div></div></div>' : '') +
+    (d.phone ? '<div class="flex-1 contact-card card-flat px-4 lg:px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0"><i class="fas fa-phone text-blue-500 text-sm"></i></div><div class="min-w-0"><div class="text-[10px] text-slate-400 font-medium">전화번호</div><div class="text-sm font-semibold text-slate-700 truncate">' + d.phone + '</div></div></div>' : '') +
+    (d.email ? '<div class="flex-1 contact-card card-flat px-4 lg:px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-purple-50 flex items-center justify-center flex-shrink-0"><i class="fas fa-envelope text-purple-500 text-sm"></i></div><div class="min-w-0"><div class="text-[10px] text-slate-400 font-medium">이메일</div><div class="text-sm font-semibold text-slate-700 truncate">' + d.email + '</div></div></div>' : '') +
+    (d.hospital_region ? '<div class="flex-1 contact-card card-flat px-4 lg:px-5 py-3 flex items-center gap-3"><div class="w-9 h-9 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0"><i class="fas fa-map-marker-alt text-emerald-500 text-sm"></i></div><div class="min-w-0"><div class="text-[10px] text-slate-400 font-medium">근무지</div><div class="text-sm font-semibold text-slate-700 truncate">' + (d.hospital_address || d.hospital_region) + '</div></div></div>' : '') +
     '</div>' +
     '<div class="flex border-b border-gray-100 px-1 overflow-x-auto">' +
     '<div class="tab ' + (profileTab === 'overview' ? 'active' : '') + '" onclick="profileTab=\'overview\';renderDocProfile()"><i class="fas fa-user text-xs"></i>소개</div>' +
@@ -1024,8 +1028,8 @@ function renderProfileMeetings(d) {
     (m.purpose ? '<div class="text-[14px] font-semibold text-slate-700 mb-1.5">' + m.purpose + '</div>' : '') +
     (m.content ? '<div class="text-[13px] text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + m.content + '</div>' : '') +
     '<div class="flex flex-wrap gap-2">' +
-    (m.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 min-w-[150px]"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + m.result + '</div>' : '') +
-    (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 min-w-[150px]"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + '</div>' : '') +
+    (m.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + m.result + '</div>' : '') +
+    (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + '</div>' : '') +
     '</div></div></div>'
   ).join('') + '</div>';
   return html;
@@ -1077,13 +1081,13 @@ async function loadMeet() {
     // Build hospital filter options
     const hospOpts = '<option value="">전체 병원</option>' + (hospR.data.data || []).map(h => '<option value="' + h.id + '">' + h.name + '</option>').join('');
     C.innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
-      '<div class="flex flex-wrap items-center gap-3 mb-6">' +
-      '<div class="relative"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10" style="width:200px"></div>' +
-      '<select id="m-hospital" onchange="filterM()" class="input" style="width:150px">' + hospOpts + '</select>' +
-      '<select id="m-type" onchange="filterM()" class="input" style="width:100px"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
-      '<input id="m-from" type="date" onchange="filterM()" class="input hide-mobile" style="width:140px" placeholder="시작일">' +
-      '<input id="m-to" type="date" onchange="filterM()" class="input hide-mobile" style="width:140px" placeholder="종료일">' +
-      '<span id="m-count" class="text-xs text-slate-300 font-medium ml-auto"></span>' +
+      '<div class="filter-row">' +
+      '<div class="relative flex-1" style="min-width:140px"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10"></div>' +
+      '<select id="m-hospital" onchange="filterM()" class="input" style="max-width:160px">' + hospOpts + '</select>' +
+      '<select id="m-type" onchange="filterM()" class="input" style="max-width:110px"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
+      '<input id="m-from" type="date" onchange="filterM()" class="input hide-mobile" style="max-width:150px" placeholder="시작일">' +
+      '<input id="m-to" type="date" onchange="filterM()" class="input hide-mobile" style="max-width:150px" placeholder="종료일">' +
+      '<span id="m-count" class="text-xs text-slate-300 font-medium"></span>' +
       '</div>' +
       '<div id="m-list" class="card-flat p-0 overflow-hidden"></div></div>';
     renderML(window._meetList);
@@ -1717,7 +1721,7 @@ async function loadCIStats() {
   destroyCICharts();
   document.getElementById('page-title').textContent = '인공와우 이식술 통계';
   document.getElementById('page-subtitle').innerHTML = '<span class="text-[11px] text-slate-400">S5800 | HIRA 실제 데이터</span>';
-  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'cistats\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-outline btn-sm hide-mobile" onclick="showCompare()"><i class="fas fa-code-compare text-xs"></i>기간 비교</button><button class="btn btn-outline btn-sm hide-mobile" onclick="showCrossAnalysis()"><i class="fas fa-chart-column text-xs"></i>교차분석</button>';
+  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'cistats\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-outline btn-sm" onclick="showCompare()"><i class="fas fa-code-compare text-xs"></i><span class="hidden sm:inline">기간 비교</span></button><button class="btn btn-outline btn-sm hide-mobile" onclick="showCrossAnalysis()"><i class="fas fa-chart-column text-xs"></i>교차분석</button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 space-y-6"><div class="grid grid-cols-2 lg:grid-cols-3 gap-4">' + Array(6).fill('<div class="sc"><div class="space-y-2"><div class="skeleton rounded h-4 w-24"></div><div class="skeleton rounded h-7 w-16"></div></div></div>').join('') + '</div></div>';
   try {
     const { data: d } = await API.get('/ci-stats'); const s = d.data;
@@ -1749,11 +1753,11 @@ function renderCIContent(tab, s) {
     return '<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 lg:gap-4">' + s.insights.map(i => '<div class="sc !p-3 lg:!p-4"><div class="flex items-center gap-2 mb-2"><div class="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas ' + i.icon + ' text-brand-500 text-xs"></i></div></div><div class="text-[18px] lg:text-[20px] font-extrabold text-slate-800 mb-0.5">' + i.value + '</div><div class="text-[11px] font-semibold text-slate-500 mb-1">' + i.title + '</div><div class="text-[10px] text-slate-400">' + i.desc + '</div></div>').join('') + '</div>' +
       '<div class="grid grid-cols-1 lg:grid-cols-5 gap-6"><div class="lg:col-span-3 card-flat p-4 lg:p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-chart-line text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연도별 추이</span></div><div style="height:300px"><canvas id="chart-yearly"></canvas></div></div>' +
       '<div class="lg:col-span-2 card-flat p-4 lg:p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-venus-mars text-purple-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">성별 추이</span></div><div style="height:300px"><canvas id="chart-gender"></canvas></div></div></div>' +
-      '<div class="card-flat overflow-hidden overflow-x-auto"><div class="px-4 lg:px-6 py-4"><span class="font-bold text-sm text-slate-800">연도별 상세</span></div>' +
-      '<table class="w-full min-w-[600px]"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-3 text-left">연도</th><th class="px-4 py-3 text-right">환자수</th><th class="px-4 py-3 text-right">사용량</th><th class="px-4 py-3 text-right">금액(천원)</th><th class="px-4 py-3 text-right">남</th><th class="px-4 py-3 text-right">여</th><th class="px-4 py-3 text-right">증감</th></tr></thead>' +
-      '<tbody class="divide-y divide-gray-50">' + y.map((r, i) => { const g = i > 0 ? ((r.patients - y[i - 1].patients) / y[i - 1].patients * 100).toFixed(1) : '—'; const gc = i > 0 ? (r.patients > y[i - 1].patients ? 'text-emerald-600' : 'text-red-500') : 'text-slate-400'; return '<tr class="tr"><td class="px-4 py-3 font-bold text-sm text-slate-800">' + r.year + '</td><td class="px-4 py-3 text-right font-semibold text-sm text-brand-600">' + fmtNum(r.patients) + '</td><td class="px-4 py-3 text-right text-sm text-slate-600">' + fmtNum(r.usage) + '</td><td class="px-4 py-3 text-right text-sm text-slate-600">' + fmtNum(r.amount) + '</td><td class="px-4 py-3 text-right text-sm text-blue-600">' + fmtNum(r.male_patients) + '</td><td class="px-4 py-3 text-right text-sm text-pink-600">' + fmtNum(r.female_patients) + '</td><td class="px-4 py-3 text-right text-sm font-semibold ' + gc + '">' + (i > 0 ? (g > 0 ? '+' : '') + g + '%' : '—') + '</td></tr>' }).join('') + '</tbody></table></div>' +
+      '<div class="card-flat overflow-hidden"><div class="px-4 lg:px-6 py-4"><span class="font-bold text-sm text-slate-800">연도별 상세</span></div>' +
+      '<div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-3 text-left">연도</th><th class="px-4 py-3 text-right">환자수</th><th class="px-4 py-3 text-right">사용량</th><th class="px-4 py-3 text-right">금액(천원)</th><th class="px-4 py-3 text-right">남</th><th class="px-4 py-3 text-right">여</th><th class="px-4 py-3 text-right">증감</th></tr></thead>' +
+      '<tbody class="divide-y divide-gray-50">' + y.map((r, i) => { const g = i > 0 ? ((r.patients - y[i - 1].patients) / y[i - 1].patients * 100).toFixed(1) : '—'; const gc = i > 0 ? (r.patients > y[i - 1].patients ? 'text-emerald-600' : 'text-red-500') : 'text-slate-400'; return '<tr class="tr"><td class="px-4 py-3 font-bold text-sm text-slate-800">' + r.year + '</td><td class="px-4 py-3 text-right font-semibold text-sm text-brand-600">' + fmtNum(r.patients) + '</td><td class="px-4 py-3 text-right text-sm text-slate-600">' + fmtNum(r.usage) + '</td><td class="px-4 py-3 text-right text-sm text-slate-600">' + fmtNum(r.amount) + '</td><td class="px-4 py-3 text-right text-sm text-blue-600">' + fmtNum(r.male_patients) + '</td><td class="px-4 py-3 text-right text-sm text-pink-600">' + fmtNum(r.female_patients) + '</td><td class="px-4 py-3 text-right text-sm font-semibold ' + gc + '">' + (i > 0 ? (g > 0 ? '+' : '') + g + '%' : '—') + '</td></tr>' }).join('') + '</tbody></table></div></div>' +
       '<div class="card-flat p-4 lg:p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-landmark text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">정책 변천</span></div>' +
-      '<div class="flex items-start gap-0 overflow-x-auto pb-2">' + s.policyChanges.map((p, i) => '<div class="flex flex-col items-center min-w-[120px] lg:min-w-[140px] flex-1 relative"><div class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white font-bold text-xs shadow-lg z-10">' + p.year + '</div>' + (i < s.policyChanges.length - 1 ? '<div class="absolute top-5 left-[calc(50%+20px)] right-0 h-0.5 bg-brand-200"></div>' : '') + '<div class="text-[11px] text-slate-500 text-center mt-3 px-2">' + p.event + '</div></div>').join('') + '</div></div>';
+      '<div class="flex items-start gap-0 overflow-x-auto pb-2 policy-timeline">' + s.policyChanges.map((p, i) => '<div class="flex flex-col items-center min-w-[100px] lg:min-w-[140px] flex-1 relative"><div class="w-10 h-10 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center text-white font-bold text-xs shadow-lg z-10">' + p.year + '</div>' + (i < s.policyChanges.length - 1 ? '<div class="absolute top-5 left-[calc(50%+20px)] right-0 h-0.5 bg-brand-200"></div>' : '') + '<div class="text-[11px] text-slate-500 text-center mt-3 px-2">' + p.event + '</div></div>').join('') + '</div></div>';
   }
   if (tab === 'age') {
     const years = s.years, latestY = years[years.length - 1];
@@ -1765,9 +1769,9 @@ function renderCIContent(tab, s) {
       '<div class="card-flat p-4 lg:p-6"><div class="font-bold text-sm text-slate-800 mb-5">10세 구간별 추이</div><div style="height:320px"><canvas id="chart-age10-trend"></canvas></div></div>' +
       '<div class="card-flat p-4 lg:p-6"><div class="font-bold text-sm text-slate-800 mb-5">' + latestY + '년 연령분포</div><div style="height:320px"><canvas id="chart-age10-pie"></canvas></div></div></div>' +
       '<div class="card-flat p-4 lg:p-6"><div class="font-bold text-sm text-slate-800 mb-5">연령대별 성장률 (' + years[0] + '→' + latestY + ')</div><div style="height:280px"><canvas id="chart-age-growth"></canvas></div></div>' +
-      '<div class="card-flat overflow-hidden overflow-x-auto"><div class="px-4 lg:px-6 py-4"><span class="font-bold text-sm text-slate-800">' + latestY + '년 연령대별 남/여</span></div>' +
-      '<table class="w-full min-w-[600px]"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-3 text-left">연령</th><th class="px-3 py-3 text-right">남</th><th class="px-3 py-3 text-right">여</th><th class="px-3 py-3 text-right">합계</th></tr></thead>' +
-      '<tbody class="divide-y divide-gray-50">' + ageGroups10.map((ag, i) => { const m = maleAge.find(r => r.age_group === ag) || { patients: 0 }; const f = femaleAge.find(r => r.age_group === ag) || { patients: 0 }; return '<tr class="tr"><td class="px-4 py-2.5 font-semibold text-sm">' + ageLabels10[i] + '</td><td class="px-3 py-2.5 text-right text-sm text-blue-600">' + fmtNum(m.patients) + '</td><td class="px-3 py-2.5 text-right text-sm text-pink-600">' + fmtNum(f.patients) + '</td><td class="px-3 py-2.5 text-right font-bold text-sm">' + fmtNum(m.patients + f.patients) + '</td></tr>' }).join('') + '</tbody></table></div>';
+      '<div class="card-flat overflow-hidden"><div class="px-4 lg:px-6 py-4"><span class="font-bold text-sm text-slate-800">' + latestY + '년 연령대별 남/여</span></div>' +
+      '<div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-3 text-left">연령</th><th class="px-3 py-3 text-right">남</th><th class="px-3 py-3 text-right">여</th><th class="px-3 py-3 text-right">합계</th></tr></thead>' +
+      '<tbody class="divide-y divide-gray-50">' + ageGroups10.map((ag, i) => { const m = maleAge.find(r => r.age_group === ag) || { patients: 0 }; const f = femaleAge.find(r => r.age_group === ag) || { patients: 0 }; return '<tr class="tr"><td class="px-4 py-2.5 font-semibold text-sm">' + ageLabels10[i] + '</td><td class="px-3 py-2.5 text-right text-sm text-blue-600">' + fmtNum(m.patients) + '</td><td class="px-3 py-2.5 text-right text-sm text-pink-600">' + fmtNum(f.patients) + '</td><td class="px-3 py-2.5 text-right font-bold text-sm">' + fmtNum(m.patients + f.patients) + '</td></tr>' }).join('') + '</tbody></table></div></div>';
   }
   if (tab === 'region') {
     const years = s.years, latestY = years[years.length - 1];
@@ -1869,9 +1873,9 @@ async function showCrossAnalysis() {
     document.getElementById('modal-body').innerHTML = '<div class="space-y-4">' +
       '<div class="bg-brand-50 rounded-xl p-4"><div class="text-sm font-bold text-brand-800 mb-1">CRM 커버리지: ' + d.crmCoverage + '%</div><div class="text-xs text-brand-600">' + d.year + '년 기준 | 전체 CI 환자 ' + fmtNum(d.totalCIPatients) + '명 중 관리 병원 소재 지역</div></div>' +
       (d.uncovered.length ? '<div class="bg-red-50 rounded-xl p-4"><div class="text-sm font-bold text-red-800 mb-2"><i class="fas fa-exclamation-triangle mr-1"></i>미커버 성장 지역</div>' + d.uncovered.map(u => '<div class="flex items-center justify-between py-1.5 border-b border-red-100 last:border-0"><span class="text-sm font-semibold text-red-700">' + u.region + '</span><span class="text-sm text-red-600">' + fmtNum(u.ciPatients) + '명 (' + u.ciShare.toFixed(1) + '%)</span></div>').join('') + '</div>' : '') +
-      '<div class="card-flat overflow-hidden"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-2 text-left">지역</th><th class="px-3 py-2 text-right">CI 환자</th><th class="px-3 py-2 text-right">점유율</th><th class="px-3 py-2 text-right">관리 병원</th><th class="px-3 py-2 text-center">상태</th></tr></thead>' +
+      '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-2 text-left">지역</th><th class="px-3 py-2 text-right">CI 환자</th><th class="px-3 py-2 text-right">점유율</th><th class="px-3 py-2 text-right">관리 병원</th><th class="px-3 py-2 text-center">상태</th></tr></thead>' +
       '<tbody class="divide-y divide-gray-50">' + d.regions.map(r => '<tr class="tr"><td class="px-4 py-2 font-semibold text-sm">' + r.region + '</td><td class="px-3 py-2 text-right text-sm">' + fmtNum(r.ciPatients) + '</td><td class="px-3 py-2 text-right text-sm">' + r.ciShare.toFixed(1) + '%</td><td class="px-3 py-2 text-right text-sm font-bold ' + (r.crmHospitals > 0 ? 'text-brand-600' : 'text-slate-300') + '">' + r.crmHospitals + '</td><td class="px-3 py-2 text-center">' + (r.crmHospitals > 0 ? '<span class="text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">커버</span>' : (r.ciPatients > 0 ? '<span class="text-[10px] text-red-600 bg-red-50 px-2 py-0.5 rounded-full font-bold">미커버</span>' : '-')) + '</td></tr>').join('') +
-      '</tbody></table></div></div>';
+      '</tbody></table></div></div></div>';
   } catch (e) { document.getElementById('modal-body').innerHTML = '<div class="text-center py-8 text-red-400">분석 데이터를 불러올 수 없습니다</div>' }
 }
 

@@ -93,7 +93,7 @@ app.get('/sw.js', (c) => {
 // SPA - serves HTML shell, all JS/CSS from CDN or inline
 app.get('*', (c) => c.html(HTML))
 
-const SW_JS = `const CACHE_NAME='todoc-crm-v2';
+const SW_JS = `const CACHE_NAME='todoc-crm-v3';
 const STATIC_ASSETS=['/','/static/style.css','/static/app.js','/static/icons/icon-192x192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(STATIC_ASSETS).catch(()=>{})));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))));self.clients.claim()});
@@ -122,7 +122,7 @@ const HTML = `<!DOCTYPE html>
 <script>tailwind.config={theme:{extend:{fontFamily:{sans:['Pretendard','Inter','-apple-system','sans-serif']},colors:{brand:{50:'#eef4ff',100:'#d9e6ff',200:'#bcd2ff',300:'#8eb5ff',400:'#598eff',500:'#3366ff',600:'#1a4fff',700:'#0a3ae6',800:'#0d32ba',900:'#102d92'}}}}}</script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="h-screen overflow-hidden">
+<body class="h-screen overflow-hidden overflow-x-hidden">
 <div id="toast-wrap"></div>
 
 <!-- Auth Screen -->
@@ -171,10 +171,10 @@ const HTML = `<!DOCTYPE html>
 
 <!-- Main -->
 <main class="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#f8f9fb]">
-  <header class="h-[56px] lg:h-[60px] bg-white border-b border-gray-100 flex items-center justify-between px-3 lg:px-7 flex-shrink-0 gap-1 lg:gap-2 safe-top">
-    <div class="flex items-center gap-2 lg:gap-3 min-w-0">
+  <header class="h-[52px] lg:h-[60px] bg-white border-b border-gray-100 flex items-center px-2 lg:px-7 flex-shrink-0 gap-1 lg:gap-2 safe-top">
+    <div class="flex items-center gap-1.5 lg:gap-3 min-w-0 flex-1 overflow-hidden">
       <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1 hidden" onclick="toggleSidebar()"><i class="fas fa-bars text-lg"></i></button>
-      <h2 id="page-title" class="text-[14px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate"></h2>
+      <h2 id="page-title" class="text-[13px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate"></h2>
       <span id="page-subtitle" class="text-xs text-slate-400 font-medium hidden sm:inline"></span>
     </div>
     <!-- Mobile Search Button -->
@@ -191,7 +191,7 @@ const HTML = `<!DOCTYPE html>
     <div class="h-5 w-px bg-gray-200 mx-1 hidden lg:block"></div>
     <div id="user-menu" class="relative flex-shrink-0"></div>
   </header>
-  <div id="content" class="flex-1 overflow-y-auto pb-[70px] lg:pb-0"></div>
+  <div id="content" class="flex-1 overflow-y-auto overflow-x-hidden pb-[70px] lg:pb-0"></div>
 </main>
 </div><!-- /app-main -->
 
@@ -226,12 +226,12 @@ const HTML = `<!DOCTYPE html>
 
 <!-- Modal -->
 <div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-end lg:items-center justify-center lg:p-4" onclick="if(event.target===this)tryCloseModal()">
-  <div id="modal-content" class="modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-w-lg max-h-[92vh] lg:max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
-    <div class="flex items-center justify-between px-5 lg:px-6 py-3.5 lg:py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
+  <div id="modal-content" class="modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] lg:max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between px-4 lg:px-6 py-3 lg:py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px]"></h3>
       <button onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
     </div>
-    <div id="modal-body" class="p-5 lg:p-6"></div>
+    <div id="modal-body" class="p-4 lg:p-6"></div>
   </div>
 </div>
 

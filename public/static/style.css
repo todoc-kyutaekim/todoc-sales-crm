@@ -1,5 +1,5 @@
 *{margin:0;padding:0;box-sizing:border-box}
-body{font-family:'Pretendard','Inter',-apple-system,sans-serif;background:#f8f9fb;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent}
+body{font-family:'Pretendard','Inter',-apple-system,sans-serif;background:#f8f9fb;-webkit-text-size-adjust:100%;-webkit-tap-highlight-color:transparent;overflow-x:hidden}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#d1d5db;border-radius:10px}
 .fade-in{animation:fadeIn .3s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
@@ -128,6 +128,14 @@ textarea.input{resize:vertical;min-height:76px}
 .safe-top{padding-top:env(safe-area-inset-top,0)}
 .safe-bottom{padding-bottom:env(safe-area-inset-bottom,0)}
 
+/* ===== Mobile filter row ===== */
+.filter-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:16px}
+.filter-row .input{width:auto;min-width:0;flex:1 1 auto}
+
+/* ===== Responsive Tables ===== */
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -1px}
+.table-wrap table{min-width:100%}
+
 /* ===== Enhanced Mobile Responsive ===== */
 @media(max-width:1023px){
   .hide-mobile{display:none !important}
@@ -135,8 +143,12 @@ textarea.input{resize:vertical;min-height:76px}
 }
 
 @media(max-width:640px){
+  /* Global overflow prevention */
+  #content{overflow-x:hidden}
+  .p-4{padding:12px !important}
+  
   /* Buttons & inputs */
-  .btn{padding:7px 14px;font-size:12px;border-radius:9px;min-height:36px}
+  .btn{padding:7px 12px;font-size:12px;border-radius:9px;min-height:36px;gap:5px}
   .btn-sm{padding:6px 10px;font-size:11px;min-height:32px}
   .input{padding:10px 12px;font-size:14px;border-radius:10px}
   select.input{font-size:14px}
@@ -144,34 +156,35 @@ textarea.input{resize:vertical;min-height:76px}
 
   /* Cards & stat boxes */
   .sc{padding:14px;border-radius:12px}
+  .sc-icon{width:36px;height:36px;border-radius:10px;font-size:15px}
   .card,.card-flat{border-radius:12px}
   .reminder-banner{padding:14px;border-radius:12px}
 
   /* Toast */
-  #toast-wrap{top:auto;bottom:76px;right:12px;left:12px}
+  #toast-wrap{top:auto;bottom:76px;right:8px;left:8px}
   .toast{min-width:auto;font-size:12px;padding:10px 14px;border-radius:10px}
 
   /* Modal slide-up from bottom on mobile */
-  .modal-box{animation:slideUpModal .3s ease;border-radius:20px 20px 0 0}
+  .modal-box{animation:slideUpModal .3s ease;border-radius:20px 20px 0 0;max-height:90vh !important}
 
   /* Tab bar */
-  .tab{padding:9px 14px;font-size:12px;gap:5px}
+  .tab{padding:9px 12px;font-size:12px;gap:4px}
 
   /* Empty states */
-  .empty{padding:40px 16px}
-  .empty .empty-icon{width:52px;height:52px;border-radius:16px;font-size:20px}
+  .empty{padding:32px 12px}
+  .empty .empty-icon{width:48px;height:48px;border-radius:14px;font-size:18px}
 
   /* Badge sizes */
   .badge{font-size:10px;padding:2px 8px}
-  .mt{font-size:10px;padding:2px 8px;gap:3px}
+  .mt{font-size:10px;padding:2px 7px;gap:3px}
 
   /* Timeline */
   .tl-dot{width:8px;height:8px}
 
-  /* Table overflows */
+  /* Table overflows - allow horizontal scroll */
   table{font-size:12px}
-  th{font-size:10px !important;padding:8px 10px !important}
-  td{padding:8px 10px !important}
+  th{font-size:10px !important;padding:6px 8px !important;white-space:nowrap}
+  td{padding:6px 8px !important}
 
   /* Search dropdown */
   .search-item{padding:10px 14px;gap:8px;font-size:12px}
@@ -182,14 +195,58 @@ textarea.input{resize:vertical;min-height:76px}
 
   /* Better scrolling */
   * { -webkit-overflow-scrolling: touch }
+  
+  /* Filter row stacking */
+  .filter-row{gap:6px}
+  .filter-row .input{flex:1 1 calc(50% - 4px);min-width:80px;max-width:100%}
+  .filter-row .input.search-full{flex:1 1 100%}
+  
+  /* Prevent horizontal overflow from fixed widths */
+  [style*="width:200px"],
+  [style*="width:150px"],
+  [style*="width:140px"],
+  [style*="width:130px"],
+  [style*="width:120px"],
+  [style*="width:110px"],
+  [style*="width:100px"]{
+    width:auto !important;
+    min-width:0 !important;
+    flex:1 1 auto !important;
+  }
+  
+  /* Table min-width override for mobile */
+  .table-wrap table,
+  .overflow-x-auto table{
+    min-width:480px !important;
+  }
+  
+  /* Meeting result/action cards */
+  .meet-result-card{min-width:0 !important;flex:1 1 100% !important}
+  
+  /* Profile header compact on mobile */
+  .profile-header-stats{gap:6px !important}
+  .profile-header-stats > div{min-width:60px !important;padding:6px 8px !important}
+  
+  /* Contact info cards */
+  .contact-card{min-width:0 !important;flex:1 1 100% !important}
+  
+  /* CI Stats policy timeline */
+  .policy-timeline{overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px}
+  .policy-timeline > div{min-width:100px !important}
+  
+  /* Reminder banner items */
+  .reminder-banner .flex-1{min-width:0}
 }
 
 /* Very small screens */
 @media(max-width:380px){
   .btn{padding:6px 10px;font-size:11px;gap:4px}
   .btn-sm{padding:5px 8px;font-size:10px}
-  .sc{padding:12px}
+  .sc{padding:10px}
   .tab{padding:8px 10px;font-size:11px}
+  .sc-icon{width:32px;height:32px;font-size:13px}
+  
+  .filter-row .input{flex:1 1 100%}
 }
 
 /* PWA standalone mode adjustments */
