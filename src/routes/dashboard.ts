@@ -4,9 +4,8 @@ type Bindings = { DB: D1Database }
 const dashboard = new Hono<{ Bindings: Bindings }>()
 
 dashboard.get('/', async (c) => {
-  const [hospitals, clinicCount, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw] = await Promise.all([
-    c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="active" AND type="hospital"').first(),
-    c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="active" AND type="clinic"').first(),
+  const [hospitals, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw] = await Promise.all([
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="active"').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM doctors').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings').first(),
     c.env.DB.prepare("SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= date('now','start of month')").first(),
@@ -85,7 +84,6 @@ dashboard.get('/', async (c) => {
   return c.json({ data: {
     stats: {
       hospitals: (hospitals as any)?.c || 0,
-      clinics: (clinicCount as any)?.c || 0,
       doctors: (doctors as any)?.c || 0,
       meetings: (meetings as any)?.c || 0,
       monthMeetings: (monthMeetings as any)?.c || 0,

@@ -36,7 +36,7 @@ hospitals.post('/', async (c) => {
     'INSERT INTO hospitals (name,region,address,phone,grade,notes,status,type,priority,todoc_contact,patient_count,hearing_aid_sales,ci_referrals) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).bind(
     b.name.trim(), b.region || '', b.address || '', b.phone || '',
-    b.grade || (b.type === 'clinic' ? 'C' : 'A'),
+    b.grade || 'A',
     b.notes || '', b.status || 'active',
     b.type || 'hospital',
     b.priority || '3', b.todoc_contact || '', 
