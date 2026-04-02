@@ -551,7 +551,10 @@ function renderDetail() {
     '</div>';
 }
 function renderDoctorsTab(h, docs) {
-  var aiBtn = '<div class="mb-4 flex justify-end"><button class="btn btn-outline btn-sm !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIDoctors(' + h.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 의료진 자동 조회</button></div>';
+  var noProfileDocs = docs.filter(function(d) { return !d.bio && !d.education && !d.career; });
+  var aiBtn = '<div class="mb-4 flex flex-wrap justify-end gap-2">' +
+    (noProfileDocs.length > 0 ? '<button class="btn btn-outline btn-sm !border-blue-200 !text-blue-600 hover:!bg-blue-50" onclick="refreshAllProfiles(' + h.id + ')"><i class="fas fa-rotate mr-1.5 text-xs"></i>AI 프로필 일괄 조회 (' + noProfileDocs.length + '명)</button>' : '') +
+    '<button class="btn btn-outline btn-sm !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIDoctors(' + h.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 의료진 자동 조회</button></div>';
   if (!docs.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-user-plus"></i></div><p class="font-medium text-slate-500 mb-1">소속 의료진이 없습니다</p><p class="text-xs text-slate-400 mb-4">관련 의료진을 AI로 자동 추가해보세요</p><button class="btn btn-outline btn-sm !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIDoctors(' + h.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 의료진 자동 조회</button><div id="ai-doc-status" class="mt-3"></div></div></div>';
   return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' + docs.map(d =>
     '<div class="card-flat p-4 lg:p-5 flex gap-3 lg:gap-4 cursor-pointer" onclick="viewDocProfile(' + d.id + ')">' +
@@ -776,6 +779,81 @@ async function addAIDoctors(hid) {
   }
 }
 
+// ===== AI PROFILE BATCH REFRESH =====
+async function refreshAllProfiles(hid) {
+  var statusEl = document.getElementById('ai-doc-status');
+  if (!statusEl) return;
+  try {
+    var hospRes = await API.get('/hospitals/' + hid + '/doctors');
+    var allDocs = (hospRes.data && hospRes.data.data) || [];
+    var docs = allDocs.filter(function(d) { return !d.bio && !d.education && !d.career; });
+    if (!docs.length) { toast('프로필이 없는 의료진이 없습니다', 'warn'); return; }
+    var hospData = window._hospDetail?.h;
+    var hospitalName = hospData ? hospData.name : '';
+    statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-spinner fa-spin text-blue-500"></i><div><div class="text-sm font-semibold text-slate-700">AI 프로필 일괄 조회 중... (<span id="profile-batch-progress">0</span>/' + docs.length + '명)</div><div class="text-xs text-slate-400 mt-0.5">각 의료진의 학력·경력·소개를 자동으로 가져옵니다</div></div></div><div id="profile-batch-status" class="mt-3 space-y-1"></div></div>';
+    var profileCount = 0;
+    for (var i = 0; i < docs.length; i++) {
+      var dr = docs[i];
+      var bStatusEl = document.getElementById('profile-batch-status');
+      if (bStatusEl) bStatusEl.innerHTML += '<div id="pb-dr-' + dr.id + '" class="text-xs text-slate-400"><i class="fas fa-spinner fa-spin text-blue-400 mr-1"></i>' + dr.name + ' 프로필 조회 중...</div>';
+      try {
+        var profRes = await API.post('/ai/doctor-profile', { doctorName: dr.name, hospitalName: hospitalName, department: dr.department || '이비인후과' }, { timeout: 30000 });
+        var prof = profRes.data && profRes.data.data;
+        if (prof && (prof.bio || prof.education || prof.career)) {
+          var profileUpdate = {};
+          if (prof.bio) profileUpdate.bio = prof.bio;
+          if (prof.education) profileUpdate.education = prof.education.replace(/\\n/g, '\n');
+          if (prof.career) profileUpdate.career = prof.career.replace(/\\n/g, '\n');
+          if (prof.position) profileUpdate.position = prof.position;
+          if (prof.specialty) profileUpdate.specialty = prof.specialty;
+          await API.patch('/doctors/' + dr.id + '/profile', profileUpdate);
+          profileCount++;
+          var drEl = document.getElementById('pb-dr-' + dr.id);
+          if (drEl) { var filled = []; if (prof.bio) filled.push('소개'); if (prof.education) filled.push('학력'); if (prof.career) filled.push('경력'); drEl.innerHTML = '<i class="fas fa-check-circle text-emerald-500 mr-1"></i>' + dr.name + ' — ' + filled.join(', '); }
+        } else {
+          var drEl2 = document.getElementById('pb-dr-' + dr.id);
+          if (drEl2) drEl2.innerHTML = '<i class="fas fa-minus-circle text-slate-300 mr-1"></i>' + dr.name + ' — 프로필 정보 없음';
+        }
+      } catch(e) {
+        var drEl3 = document.getElementById('pb-dr-' + dr.id);
+        if (drEl3) drEl3.innerHTML = '<i class="fas fa-exclamation-circle text-red-400 mr-1"></i>' + dr.name + ' — 조회 실패';
+      }
+      var progEl = document.getElementById('profile-batch-progress');
+      if (progEl) progEl.textContent = (i + 1);
+    }
+    statusEl.innerHTML = '<div class="card-flat p-5"><div class="flex items-center gap-3"><i class="fas fa-check-circle text-emerald-500"></i><div><div class="text-sm font-semibold text-slate-700">프로필 일괄 조회 완료</div><div class="text-xs text-slate-400 mt-0.5">' + profileCount + '/' + docs.length + '명 프로필 수집 성공</div></div></div></div>';
+    setTimeout(function() { viewHosp(hid); }, 2000);
+  } catch(e) { toast('프로필 일괄 조회 실패', 'err'); }
+}
+
+async function refreshDocProfile(docId) {
+  var d = window._docProfile;
+  if (!d) return;
+  var btn = event.target.closest('button');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i>조회 중...'; }
+  try {
+    var profRes = await API.post('/ai/doctor-profile', { doctorName: d.name, hospitalName: d.hospital_name || '', department: d.department || '이비인후과' }, { timeout: 30000 });
+    var prof = profRes.data && profRes.data.data;
+    if (prof && (prof.bio || prof.education || prof.career)) {
+      var profileUpdate = {};
+      if (prof.bio) profileUpdate.bio = prof.bio;
+      if (prof.education) profileUpdate.education = prof.education.replace(/\\n/g, '\n');
+      if (prof.career) profileUpdate.career = prof.career.replace(/\\n/g, '\n');
+      if (prof.position) profileUpdate.position = prof.position;
+      if (prof.specialty) profileUpdate.specialty = prof.specialty;
+      await API.patch('/doctors/' + docId + '/profile', profileUpdate);
+      toast('프로필이 업데이트되었습니다');
+      viewDocProfile(docId);
+    } else {
+      toast('프로필 정보를 찾을 수 없습니다', 'warn');
+      if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles mr-1.5"></i>AI 프로필 조회'; }
+    }
+  } catch(e) {
+    toast('프로필 조회 실패', 'err');
+    if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-wand-magic-sparkles mr-1.5"></i>AI 프로필 조회'; }
+  }
+}
+
 // ===== DOCTORS PAGE =====
 async function loadDoc() {
   document.getElementById('page-title').textContent = '의료진 관리';
@@ -841,6 +919,7 @@ async function viewDocProfile(id) {
     document.getElementById('page-title').textContent = d.name + ' ' + (d.position || '의료진');
     document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'doctors\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>의료진 목록</span>';
     document.getElementById('header-actions').innerHTML =
+      ((!d.bio && !d.education && !d.career) ? '<button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="refreshDocProfile(' + d.id + ')"><i class="fas fa-wand-magic-sparkles text-xs mr-1"></i><span class="hidden sm:inline">AI 프로필</span></button>' : '') +
       '<button class="btn btn-success btn-sm" onclick="showMeetForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>' +
       '<button class="btn btn-primary btn-sm" onclick="showPaperForm(' + d.id + ')"><i class="fas fa-file-medical text-xs"></i><span class="hidden sm:inline">논문</span></button>' +
       '<button class="btn btn-outline btn-sm" onclick="showDocForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-pen text-xs"></i></button>';
@@ -894,9 +973,10 @@ function renderProfileTab(d) {
 function renderProfileOverview(d) {
   let html = '<div class="grid grid-cols-1 lg:grid-cols-5 gap-5 lg:gap-6">';
   html += '<div class="lg:col-span-3 space-y-5">';
+  if (!d.bio && !d.education && !d.career) { html += '<div class="card-flat p-5 lg:p-6"><div class="empty"><div class="empty-icon"><i class="fas fa-user-graduate"></i></div><p class="font-medium text-slate-500 mb-1">학력/경력/소개 정보가 없습니다</p><p class="text-xs text-slate-400 mb-4">AI로 자동 조회하여 프로필을 채워보세요</p><button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="refreshDocProfile(' + d.id + ')"><i class="fas fa-wand-magic-sparkles mr-1.5 text-xs"></i>AI 프로필 자동 조회</button></div></div>'; }
   if (d.bio) { html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-user-tie text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">소개</span></div><p class="text-sm text-slate-600 leading-relaxed">' + d.bio + '</p></div>'; }
-  if (d.education) { const eduLines = d.education.split('\n'); html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-graduation-cap text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">학력</span></div><div class="space-y-2.5">' + eduLines.map(e => '<div class="flex items-start gap-3"><div class="w-2 h-2 rounded-full bg-amber-300 mt-1.5 flex-shrink-0"></div><span class="text-sm text-slate-600">' + e + '</span></div>').join('') + '</div></div>'; }
-  if (d.career) { const cl = d.career.split('\n'); html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-briefcase text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">경력</span></div><div class="relative pl-5"><div class="absolute left-[3px] top-1 bottom-1 w-0.5 bg-emerald-100"></div><div class="space-y-3">' + cl.map(c => '<div class="flex items-start gap-3 relative"><div class="w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white shadow-sm flex-shrink-0 mt-1 -ml-[7px]"></div><span class="text-sm text-slate-600">' + c + '</span></div>').join('') + '</div></div></div>'; }
+  if (d.education) { const eduLines = d.education.split('\n').filter(e => e.trim()); html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-graduation-cap text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">학력</span></div><div class="space-y-2.5">' + eduLines.map(e => '<div class="flex items-start gap-3"><div class="w-2 h-2 rounded-full bg-amber-300 mt-1.5 flex-shrink-0"></div><span class="text-sm text-slate-600">' + e + '</span></div>').join('') + '</div></div>'; }
+  if (d.career) { const cl = d.career.split('\n').filter(c => c.trim()); html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-briefcase text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">경력</span></div><div class="relative pl-5"><div class="absolute left-[3px] top-1 bottom-1 w-0.5 bg-emerald-100"></div><div class="space-y-3">' + cl.map(c => '<div class="flex items-start gap-3 relative"><div class="w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white shadow-sm flex-shrink-0 mt-1 -ml-[7px]"></div><span class="text-sm text-slate-600">' + c + '</span></div>').join('') + '</div></div></div>'; }
   if (d.notes) { html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-sticky-note text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">영업 메모</span></div><div class="bg-amber-50/70 rounded-xl p-4 text-[13px] text-amber-800 leading-relaxed"><i class="fas fa-lightbulb text-amber-400 mr-1.5"></i>' + d.notes + '</div></div>'; }
   html += '</div><div class="lg:col-span-2 space-y-5">';
   html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-id-card text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기본 정보</span></div><div class="space-y-3">' + infoRow('이름', d.name) + infoRow('직위', d.position) + infoRow('진료과', d.department) + infoRow('전문분야', d.specialty) + infoRow('소속 병원', d.hospital_name) + infoRow('지역', d.hospital_region) + '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">영향력</span><span>' + infBadge(d.influence_level) + '</span></div></div></div>';
