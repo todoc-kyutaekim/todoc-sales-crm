@@ -19,8 +19,22 @@ dashboard.get('/', async (c) => {
     prevEndFilter = "date('now','start of year')"
   }
 
-  const [hospitals, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw] = await Promise.all([
+  const [hospitals, hospitalsAll, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw,
+    // New: this week's meetings
+    thisWeekMeetingsRaw,
+    // New: long-inactive hospitals (no meeting in 30+ days)
+    longInactiveRaw,
+    // New: recently added hospitals
+    recentHospitalsRaw,
+    // New: recently added doctors
+    recentDoctorsRaw,
+    // New: hospital code registration stats
+    codeRegistered, codeUnregistered,
+    // New: pipeline stage summary
+    pipelineSummaryRaw
+  ] = await Promise.all([
     c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="active"').first(),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM doctors').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings').first(),
     c.env.DB.prepare(`SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ${dateFilter}`).first(),
@@ -47,6 +61,53 @@ dashboard.get('/', async (c) => {
       WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
         AND m.next_meeting_date >= date('now') AND m.next_meeting_date <= date('now','+7 days')
       ORDER BY m.next_meeting_date ASC LIMIT 10
+    `).all(),
+    // This week's meetings (Mon-Sun)
+    c.env.DB.prepare(`
+      SELECT m.*, h.name as hospital_name
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE (m.meeting_date >= date('now','weekday 1','-7 days') AND m.meeting_date <= date('now','weekday 0'))
+         OR (m.next_meeting_date >= date('now','weekday 1','-7 days') AND m.next_meeting_date <= date('now','weekday 0'))
+      ORDER BY COALESCE(m.next_meeting_date, m.meeting_date) ASC LIMIT 15
+    `).all(),
+    // Long-inactive hospitals (last meeting > 30 days ago or never)
+    c.env.DB.prepare(`
+      SELECT h.id, h.name, h.region, h.grade, h.status, h.pipeline_stage,
+        MAX(m.meeting_date) as last_meeting_date,
+        CAST(julianday('now') - julianday(MAX(m.meeting_date)) AS INTEGER) as days_since
+      FROM hospitals h
+      LEFT JOIN meetings m ON m.hospital_id = h.id
+      GROUP BY h.id
+      HAVING last_meeting_date IS NULL OR days_since > 30
+      ORDER BY days_since DESC, h.name ASC
+      LIMIT 8
+    `).all(),
+    // Recently added hospitals (last 14 days)
+    c.env.DB.prepare(`
+      SELECT id, name, region, grade, status, type, created_at
+      FROM hospitals
+      WHERE created_at >= date('now', '-14 days')
+      ORDER BY created_at DESC LIMIT 5
+    `).all(),
+    // Recently added doctors (last 14 days)
+    c.env.DB.prepare(`
+      SELECT d.id, d.name, d.department, d.position, d.hospital_id, h.name as hospital_name, d.created_at
+      FROM doctors d LEFT JOIN hospitals h ON d.hospital_id = h.id
+      WHERE d.created_at >= date('now', '-14 days')
+      ORDER BY d.created_at DESC LIMIT 5
+    `).all(),
+    // Hospital code registration stats
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="active"').first(),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="inactive" OR status IS NULL').first(),
+    // Pipeline stage summary
+    c.env.DB.prepare(`
+      SELECT pipeline_stage, COUNT(*) as count
+      FROM hospitals
+      GROUP BY pipeline_stage
+      ORDER BY CASE pipeline_stage
+        WHEN 'contact' THEN 1 WHEN 'meeting' THEN 2 WHEN 'demo' THEN 3
+        WHEN 'proposal' THEN 4 WHEN 'contract' THEN 5 WHEN 'active_customer' THEN 6
+        ELSE 7 END
     `).all(),
   ])
 
@@ -80,6 +141,7 @@ dashboard.get('/', async (c) => {
   const recentMeetings = await enrichMeetings(recentMeetingsRaw.results as any[])
   const upcomingActions = await enrichMeetings(upcomingActionsRaw.results as any[])
   const reminders = await enrichMeetings(remindersRaw.results as any[])
+  const thisWeekMeetings = await enrichMeetings(thisWeekMeetingsRaw.results as any[])
 
   // CI KPI calculation
   let ciKpi: any = null
@@ -108,10 +170,13 @@ dashboard.get('/', async (c) => {
   return c.json({ data: {
     stats: {
       hospitals: (hospitals as any)?.c || 0,
+      hospitalsAll: (hospitalsAll as any)?.c || 0,
       doctors: (doctors as any)?.c || 0,
       meetings: (meetings as any)?.c || 0,
       monthMeetings: (monthMeetings as any)?.c || 0,
       lastMonthMeetings: (lastMonthMeetings as any)?.c || 0,
+      codeRegistered: (codeRegistered as any)?.c || 0,
+      codeUnregistered: (codeUnregistered as any)?.c || 0,
     },
     period,
     kpiTarget: kpiTarget || null,
@@ -122,6 +187,11 @@ dashboard.get('/', async (c) => {
     ciKpi,
     monthlyTrend: monthlyTrend.results,
     reminders,
+    thisWeekMeetings,
+    longInactive: longInactiveRaw.results,
+    recentHospitals: recentHospitalsRaw.results,
+    recentDoctors: recentDoctorsRaw.results,
+    pipelineSummary: pipelineSummaryRaw.results,
   }})
 })
 

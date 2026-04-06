@@ -222,24 +222,39 @@ const HTML = `<!DOCTYPE html>
   <div onclick="nav('hospitals')" id="bn-hospitals" class="btm-nav-item">
     <i class="fas fa-hospital"></i><span>기관</span>
   </div>
+  <!-- FAB spacer -->
+  <div class="btm-nav-fab-spacer"></div>
   <div onclick="nav('doctors')" id="bn-doctors" class="btm-nav-item">
     <i class="fas fa-user-doctor"></i><span>의료진</span>
   </div>
   <div onclick="nav('meetings')" id="bn-meetings" class="btm-nav-item">
     <i class="fas fa-calendar-check"></i><span>미팅</span>
   </div>
-  <div onclick="toggleMoreMenu()" id="bn-more" class="btm-nav-item">
-    <i class="fas fa-ellipsis"></i><span>더보기</span>
-  </div>
 </nav>
 
-<!-- More Menu Popover -->
-<div id="more-menu" class="fixed inset-0 z-[55] hidden lg:hidden" onclick="closeMoreMenu()">
-  <div class="absolute right-3 bg-white rounded-2xl shadow-2xl border border-gray-100 w-48 py-2 overflow-hidden" style="bottom:calc(64px + env(safe-area-inset-bottom, 0px) + 8px)" onclick="event.stopPropagation()">
-    <div onclick="nav('cistats');closeMoreMenu()" class="more-menu-item"><i class="fas fa-chart-bar text-violet-500"></i>인공와우 통계</div>
-    <div onclick="nav('activity');closeMoreMenu()" class="more-menu-item"><i class="fas fa-clock-rotate-left text-slate-400"></i>활동 로그</div>
-    <div class="h-px bg-gray-100 my-1"></div>
-    <div onclick="showNewMeetGlobal();closeMoreMenu()" class="more-menu-item"><i class="fas fa-calendar-plus text-emerald-500"></i>빠른 미팅 추가</div>
+<!-- Mobile FAB (Floating Action Button) -->
+<button id="mobile-fab" class="mobile-fab hidden" onclick="toggleFabMenu()">
+  <i class="fas fa-plus"></i>
+</button>
+<div id="fab-menu" class="fab-menu hidden">
+  <div class="fab-menu-bg" onclick="closeFabMenu()"></div>
+  <div class="fab-menu-items">
+    <div class="fab-menu-item" onclick="closeFabMenu();showNewMeetGlobal()">
+      <span class="fab-menu-label">빠른 미팅</span>
+      <div class="fab-menu-icon bg-emerald-500"><i class="fas fa-calendar-plus"></i></div>
+    </div>
+    <div class="fab-menu-item" onclick="closeFabMenu();showHospForm()">
+      <span class="fab-menu-label">기관 추가</span>
+      <div class="fab-menu-icon bg-blue-500"><i class="fas fa-hospital"></i></div>
+    </div>
+    <div class="fab-menu-item" onclick="closeFabMenu();nav('cistats')">
+      <span class="fab-menu-label">CI 통계</span>
+      <div class="fab-menu-icon bg-violet-500"><i class="fas fa-chart-bar"></i></div>
+    </div>
+    <div class="fab-menu-item" onclick="closeFabMenu();nav('activity')">
+      <span class="fab-menu-label">활동 로그</span>
+      <div class="fab-menu-icon bg-slate-500"><i class="fas fa-clock-rotate-left"></i></div>
+    </div>
   </div>
 </div>
 
