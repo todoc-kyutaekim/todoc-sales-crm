@@ -457,7 +457,7 @@ async function loadDash() {
         '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:14px') + '</div>' +
         '<div class="flex-1 min-w-0"><div class="flex items-center gap-2 mb-0.5"><span class="font-semibold text-[13px] text-slate-800">' + meetDoctorNames(m) + '</span>' + mtBadge(m.meeting_type) + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div><div class="text-xs text-slate-400 truncate">' + m.hospital_name + (m.purpose ? ' &middot; ' + m.purpose : '') + '</div></div>' +
         '<div class="text-right flex-shrink-0"><div class="text-xs font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div></div>'
-      ).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="text-sm">아직 미팅 기록이 없습니다</p></div>') + '</div></div>' +
+      ).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="text-sm">아직 미팅이 없습니다</p></div>') + '</div></div>' +
       '</div>' +
       '<div class="lg:col-span-2 space-y-6">' +
       // Upcoming actions
@@ -950,7 +950,7 @@ function meetDoctorBadges(m) {
   return '';
 }
 function renderMeetingsTab(h, meets) {
-  if (!meets.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">미팅 기록이 없습니다</p></div></div>';
+  if (!meets.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">미팅이 없습니다</p></div></div>';
   // Collect all doctors' clinic hours for this hospital
   var docs = window._hospDetail?.docs || [];
   var docsWithHours = docs.filter(function(d) { return d.clinic_hours; });
@@ -1418,7 +1418,7 @@ function renderProfileOverview(d) {
 }
 function renderProfileMeetings(d) {
   const meets = d.meetings || [];
-  if (!meets.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">미팅 기록이 없습니다</p></div></div>';
+  if (!meets.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">미팅이 없습니다</p></div></div>';
   const types = {}; meets.forEach(m => { types[m.meeting_type] = (types[m.meeting_type] || 0) + 1 });
   let html = '<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 lg:gap-4 mb-5">';
   html += '<div class="sc !p-3 lg:!p-4"><div class="text-[11px] text-slate-400 font-medium mb-1">전체</div><div class="text-[20px] font-extrabold text-slate-800">' + meets.length + '<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>';
@@ -1478,35 +1478,291 @@ function renderProfilePapers(d) {
 }
 
 // ===== MEETINGS PAGE =====
+var _meetViewMode = localStorage.getItem('meetView') || 'calendar';
+function setMeetView(mode) { _meetViewMode = mode; localStorage.setItem('meetView', mode); renderMeetPage(); }
+
 async function loadMeet() {
-  document.getElementById('page-title').textContent = '미팅 기록';
+  document.getElementById('page-title').textContent = '미팅 관리';
   document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'meetings\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-success" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">미팅 추가</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat p-0">' + skeleton(6) + '</div></div>';
   try {
     const [meetR, hospR] = await Promise.all([API.get('/meetings'), API.get('/hospitals')]);
     window._meetList = meetR.data.data;
     window._meetHosps = hospR.data.data;
-    const C = document.getElementById('content');
-    // Build hospital filter options
-    const hospOpts = '<option value="">전체 병원</option>' + (hospR.data.data || []).map(h => '<option value="' + h.id + '">' + h.name + '</option>').join('');
-    C.innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
-      '<div class="filter-row">' +
-      '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10"></div>' +
-      '<select id="m-hospital" onchange="filterM()" class="input filter-select-lg">' + hospOpts + '</select>' +
-      '<select id="m-type" onchange="filterM()" class="input filter-select"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
-      '<input id="m-from" type="date" onchange="filterM()" class="input hide-mobile filter-date" placeholder="시작일">' +
-      '<input id="m-to" type="date" onchange="filterM()" class="input hide-mobile filter-date" placeholder="종료일">' +
-      '<button class="btn btn-outline btn-sm" onclick="showCalendarView()"><i class="fas fa-calendar text-xs"></i><span class="hidden sm:inline">캘린더</span></button>' +
-      '<span id="m-count" class="text-xs text-slate-300 font-medium"></span>' +
-      '</div>' +
-      '<div id="m-list" class="card-flat p-0 overflow-hidden"></div></div>';
-    renderML(window._meetList);
-  } catch (e) { toast('미팅 기록을 불러올 수 없습니다', 'err') }
+    window._meetCalYear = new Date().getFullYear();
+    window._meetCalMonth = new Date().getMonth();
+    renderMeetPage();
+  } catch (e) { toast('미팅 관리 데이터를 불러올 수 없습니다', 'err') }
 }
+
+function renderMeetPage() {
+  var C = document.getElementById('content');
+  var hospOpts = '<option value="">전체 병원</option>' + (window._meetHosps || []).map(function(h) { return '<option value="' + h.id + '">' + h.name + '</option>'; }).join('');
+  var viewBtns = '<div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">' +
+    '<button class="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ' + (_meetViewMode === 'calendar' ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700') + '" onclick="setMeetView(\'calendar\')"><i class="fas fa-calendar-days mr-1"></i>캘린더</button>' +
+    '<button class="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ' + (_meetViewMode === 'upcoming' ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700') + '" onclick="setMeetView(\'upcoming\')"><i class="fas fa-clock mr-1"></i>예정</button>' +
+    '<button class="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ' + (_meetViewMode === 'list' ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700') + '" onclick="setMeetView(\'list\')"><i class="fas fa-list mr-1"></i>전체</button>' +
+    '</div>';
+
+  C.innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
+    '<div class="filter-row">' + viewBtns +
+    '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10"></div>' +
+    '<select id="m-hospital" onchange="filterM()" class="input filter-select-lg hide-mobile">' + hospOpts + '</select>' +
+    '<select id="m-type" onchange="filterM()" class="input filter-select hide-mobile"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
+    '<span id="m-count" class="text-xs text-slate-300 font-medium"></span>' +
+    '</div>' +
+    '<div id="m-body"></div></div>';
+
+  if (_meetViewMode === 'calendar') renderMeetCalendar();
+  else if (_meetViewMode === 'upcoming') renderMeetUpcoming();
+  else renderMeetList();
+}
+
+// --- Calendar View (inline, not modal) ---
+function renderMeetCalendar() {
+  var meets = window._meetList || [];
+  var y = window._meetCalYear, m = window._meetCalMonth;
+  var firstDay = new Date(y, m, 1).getDay();
+  var daysInMonth = new Date(y, m + 1, 0).getDate();
+  var monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+  var dayLabels = ['일','월','화','수','목','금','토'];
+  var todayStr = new Date().toISOString().split('T')[0];
+  // Group meetings by date
+  var meetMap = {};
+  meets.forEach(function(mt) {
+    if (!mt.meeting_date) return;
+    var d = mt.meeting_date.substring(0, 10);
+    if (!meetMap[d]) meetMap[d] = [];
+    meetMap[d].push(mt);
+  });
+  // Stats for this month
+  var monthPrefix = y + '-' + String(m + 1).padStart(2, '0');
+  var monthMeets = meets.filter(function(mt) { return mt.meeting_date && mt.meeting_date.startsWith(monthPrefix); });
+  var pastCount = 0, futureCount = 0;
+  monthMeets.forEach(function(mt) { if (mt.meeting_date <= todayStr) pastCount++; else futureCount++; });
+
+  var html = '<div class="card-flat p-4 lg:p-6 mb-4">' +
+    '<div class="flex items-center justify-between mb-5">' +
+    '<button class="btn btn-ghost btn-sm" onclick="window._meetCalMonth--;if(window._meetCalMonth<0){window._meetCalYear--;window._meetCalMonth=11;}renderMeetCalendar()"><i class="fas fa-chevron-left"></i></button>' +
+    '<div class="text-center"><span class="font-bold text-lg text-slate-800">' + y + '년 ' + monthNames[m] + '</span>' +
+    '<div class="flex items-center justify-center gap-3 mt-1 text-[11px]">' +
+    '<span class="text-slate-400"><i class="fas fa-calendar-check text-emerald-400 mr-1"></i>완료 <strong class="text-emerald-600">' + pastCount + '</strong></span>' +
+    '<span class="text-slate-400"><i class="fas fa-clock text-blue-400 mr-1"></i>예정 <strong class="text-blue-600">' + futureCount + '</strong></span>' +
+    '<span class="text-slate-400">총 <strong class="text-slate-700">' + monthMeets.length + '</strong>건</span></div></div>' +
+    '<button class="btn btn-ghost btn-sm" onclick="window._meetCalMonth++;if(window._meetCalMonth>11){window._meetCalYear++;window._meetCalMonth=0;}renderMeetCalendar()"><i class="fas fa-chevron-right"></i></button></div>';
+  // Day headers
+  html += '<div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold mb-2">' +
+    dayLabels.map(function(dl, i) { return '<div class="py-1 ' + (i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-slate-400') + '">' + dl + '</div>'; }).join('') + '</div>';
+  // Calendar grid
+  html += '<div class="grid grid-cols-7 gap-1">';
+  for (var i = 0; i < firstDay; i++) html += '<div class="h-14 lg:h-[88px]"></div>';
+  for (var d = 1; d <= daysInMonth; d++) {
+    var dateStr = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+    var dayMeets = meetMap[dateStr] || [];
+    var isToday = dateStr === todayStr;
+    var isPast = dateStr < todayStr;
+    var isFuture = dateStr > todayStr;
+    var dow = new Date(y, m, d).getDay();
+    var isSun = dow === 0, isSat = dow === 6;
+    var cellBg = isToday ? 'bg-brand-50 border-brand-300 ring-1 ring-brand-200' :
+      dayMeets.length > 0 ? (isFuture ? 'bg-blue-50/40 border-blue-200' : 'bg-white border-slate-200') :
+      isSun ? 'bg-red-50/20 border-slate-100' : isSat ? 'bg-blue-50/20 border-slate-100' : 'bg-white border-slate-100 hover:border-slate-200';
+    html += '<div class="h-14 lg:h-[88px] border rounded-lg p-1 ' + cellBg + ' overflow-hidden cursor-pointer transition-all hover:shadow-sm" onclick="showDayMeetsInline(\'' + dateStr + '\')">' +
+      '<div class="flex items-center justify-between">' +
+      '<span class="text-[11px] font-bold ' + (isToday ? 'bg-brand-500 text-white w-5 h-5 rounded-full flex items-center justify-center' : isSun ? 'text-red-400' : isSat ? 'text-blue-400' : 'text-slate-600') + '">' + d + '</span>' +
+      (dayMeets.length > 0 ? '<span class="text-[8px] font-bold px-1 py-0 rounded-full ' + (isFuture ? 'bg-blue-500 text-white' : 'bg-emerald-500 text-white') + '">' + dayMeets.length + '</span>' : '') + '</div>';
+    // Show meeting items
+    dayMeets.slice(0, 2).forEach(function(mt) {
+      var tc = { visit:'blue', phone:'emerald', conference:'violet', email:'amber', online:'indigo' };
+      var c = tc[mt.meeting_type] || 'slate';
+      var icon = { visit:'fa-hospital', phone:'fa-phone', conference:'fa-chalkboard-user', email:'fa-envelope', online:'fa-video' };
+      html += '<div class="text-[7px] lg:text-[9px] truncate rounded px-1 py-0.5 mt-0.5 flex items-center gap-0.5 ' +
+        (isFuture ? 'bg-' + c + '-100 text-' + c + '-700 font-semibold' : 'bg-' + c + '-50 text-' + c + '-500') + '">' +
+        '<i class="fas ' + (icon[mt.meeting_type] || 'fa-calendar') + ' text-[6px] lg:text-[7px]"></i>' + meetDoctorNames(mt) + '</div>';
+    });
+    if (dayMeets.length > 2) html += '<div class="text-[7px] lg:text-[8px] text-slate-400 mt-0.5 text-center">+' + (dayMeets.length - 2) + '</div>';
+    html += '</div>';
+  }
+  html += '</div>';
+  // Legend
+  html += '<div class="flex flex-wrap items-center gap-4 mt-4 text-[10px] text-slate-400">' +
+    '<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-500"></span>예정 미팅</span>' +
+    '<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-500"></span>완료 미팅</span>' +
+    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-brand-500"></span>오늘</span>' +
+    '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-blue-100 border border-blue-200"></span>방문</span>' +
+    '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-emerald-100 border border-emerald-200"></span>전화</span>' +
+    '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-violet-100 border border-violet-200"></span>학회</span>' +
+    '</div></div>';
+
+  // Upcoming section below calendar
+  var upcoming = meets.filter(function(mt) { return mt.meeting_date >= todayStr; }).sort(function(a, b) { return a.meeting_date.localeCompare(b.meeting_date); }).slice(0, 5);
+  var recent = meets.filter(function(mt) { return mt.meeting_date < todayStr; }).sort(function(a, b) { return b.meeting_date.localeCompare(a.meeting_date); }).slice(0, 5);
+
+  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">';
+  // Upcoming meetings
+  html += '<div class="card-flat p-4"><div class="flex items-center gap-2 mb-3"><div class="w-6 h-6 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-clock text-blue-500 text-[10px]"></i></div><span class="font-bold text-sm text-slate-800">예정된 미팅</span><span class="text-[10px] text-blue-500 font-medium">' + meets.filter(function(mt){return mt.meeting_date>=todayStr}).length + '건</span></div>';
+  if (upcoming.length) {
+    html += '<div class="space-y-2">' + upcoming.map(function(mt) {
+      var daysLeft = Math.ceil((new Date(mt.meeting_date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / 86400000);
+      var urgency = daysLeft === 0 ? 'bg-red-50 border-red-200 text-red-600' : daysLeft <= 3 ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-blue-50 border-blue-200 text-blue-600';
+      return '<div class="flex items-center gap-3 p-2.5 rounded-lg border ' + urgency + ' cursor-pointer hover:shadow-sm transition-all" onclick="showDayMeetsInline(\'' + mt.meeting_date + '\')">' +
+        '<div class="text-center flex-shrink-0 w-10"><div class="text-[10px] font-bold">' + (daysLeft === 0 ? 'D-DAY' : 'D-' + daysLeft) + '</div><div class="text-[9px] opacity-70">' + fmtShort(mt.meeting_date) + '</div></div>' +
+        '<div class="flex-1 min-w-0"><div class="flex items-center gap-1.5">' + mtBadge(mt.meeting_type) + '<span class="font-semibold text-xs truncate">' + meetDoctorNames(mt) + '</span></div>' +
+        '<div class="text-[10px] opacity-70 truncate">' + (mt.hospital_name || '') + (mt.purpose ? ' · ' + mt.purpose : '') + '</div></div></div>';
+    }).join('') + '</div>';
+  } else {
+    html += '<div class="text-center py-6 text-slate-300"><i class="fas fa-calendar-check text-2xl mb-2 block"></i><span class="text-xs">예정된 미팅이 없습니다</span></div>';
+  }
+  html += '</div>';
+  // Recent meetings
+  html += '<div class="card-flat p-4"><div class="flex items-center gap-2 mb-3"><div class="w-6 h-6 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-check-circle text-emerald-500 text-[10px]"></i></div><span class="font-bold text-sm text-slate-800">최근 미팅</span></div>';
+  if (recent.length) {
+    html += '<div class="space-y-2">' + recent.map(function(mt) {
+      var daysAgoN = Math.ceil((new Date(todayStr + 'T00:00:00') - new Date(mt.meeting_date + 'T00:00:00')) / 86400000);
+      return '<div class="flex items-center gap-3 p-2.5 rounded-lg bg-slate-50 border border-slate-100 cursor-pointer hover:shadow-sm transition-all" onclick="showDayMeetsInline(\'' + mt.meeting_date + '\')">' +
+        '<div class="text-center flex-shrink-0 w-10"><div class="text-[10px] font-medium text-slate-400">' + (daysAgoN === 0 ? '오늘' : daysAgoN + '일 전') + '</div><div class="text-[9px] text-slate-300">' + fmtShort(mt.meeting_date) + '</div></div>' +
+        '<div class="flex-1 min-w-0"><div class="flex items-center gap-1.5">' + mtBadge(mt.meeting_type) + '<span class="font-semibold text-xs text-slate-700 truncate">' + meetDoctorNames(mt) + '</span></div>' +
+        '<div class="text-[10px] text-slate-400 truncate">' + (mt.hospital_name || '') + (mt.result ? ' · ' + mt.result : '') + '</div></div></div>';
+    }).join('') + '</div>';
+  } else {
+    html += '<div class="text-center py-6 text-slate-300"><i class="fas fa-calendar-xmark text-2xl mb-2 block"></i><span class="text-xs">최근 미팅이 없습니다</span></div>';
+  }
+  html += '</div></div>';
+
+  document.getElementById('m-body').innerHTML = html;
+  document.getElementById('m-count').textContent = meets.length + '건';
+}
+
+// Inline day detail (replaces modal version for this page)
+window.showDayMeetsInline = function(dateStr) {
+  var dayMeets = (window._meetList || []).filter(function(m) { return m.meeting_date === dateStr; });
+  var meetDay = new Date(dateStr + 'T00:00:00');
+  var dayIdx = (meetDay.getDay() + 6) % 7;
+  var dayKr = dayIdx < 6 ? DAYS_KR[dayIdx] : '일';
+  var dayKey = dayIdx >= 0 && dayIdx < 6 ? DAYS_KEY[dayIdx] : '';
+  var todayStr = new Date().toISOString().split('T')[0];
+  var isFuture = dateStr > todayStr;
+  var isToday = dateStr === todayStr;
+
+  var html = '<div class="flex items-center gap-2 mb-3"><span class="text-[11px] px-2 py-0.5 rounded-full font-bold ' +
+    (isToday ? 'bg-brand-500 text-white' : isFuture ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700') + '">' +
+    (isToday ? '오늘' : isFuture ? '예정' : '완료') + '</span></div>';
+
+  if (dayMeets.length) {
+    html += '<div class="space-y-2">' + dayMeets.map(function(m) {
+      var schedInfo = '';
+      if (dayKey && m.doctors && m.doctors.length) {
+        var hints = [];
+        m.doctors.forEach(function(md) {
+          if (!md.clinic_hours) return;
+          var ch = parseClinicHours(md.clinic_hours);
+          if (ch.mon && !ch.mon_am && typeof ch.mon === 'string') { var m2={}; DAYS_KEY.forEach(function(k){if(ch[k])m2[k+'_am']=ch[k];}); m2.notes=ch.notes||''; ch=m2; }
+          var am = ch[dayKey + '_am'] || '', pm = ch[dayKey + '_pm'] || '';
+          if (am || pm) {
+            var isOff = am === '휴진' && (!pm || pm === '휴진');
+            hints.push('<span class="text-[9px] px-1.5 py-0.5 rounded-full ' + (isOff ? 'bg-red-50 text-red-400' : 'bg-cyan-50 text-cyan-600') + '">' +
+              md.name + ': ' + (am ? '오전 ' + am : '') + (am && pm ? ' / ' : '') + (pm ? '오후 ' + pm : '') + '</span>');
+          }
+        });
+        if (hints.length) schedInfo = '<div class="flex flex-wrap gap-1 mt-1">' + hints.join('') + '</div>';
+      }
+      return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md" onclick="closeModal();showMeetDetail(' + JSON.stringify(m).replace(/"/g, '&quot;') + ')">' +
+        '<div class="flex items-center gap-2 mb-1">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
+        '<div class="text-[11px] text-slate-400">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div>' +
+        (m.result ? '<div class="text-[10px] text-emerald-600 mt-1"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
+        (m.next_action ? '<div class="text-[10px] text-amber-600 mt-0.5"><i class="fas fa-arrow-right mr-0.5"></i>' + m.next_action + '</div>' : '') +
+        schedInfo + '</div>';
+    }).join('') + '</div>';
+  } else {
+    html += '<div class="text-center py-4 text-sm text-slate-400"><i class="fas fa-calendar-xmark text-xl text-slate-200 mb-2 block"></i>이 날 미팅이 없습니다</div>';
+  }
+  html += '<div class="mt-3 text-center"><button class="btn btn-success btn-sm" onclick="closeModal();showNewMeetGlobal()"><i class="fas fa-plus text-xs mr-1"></i>미팅 추가</button></div>';
+  openModal(fmtDate(dateStr) + ' (' + dayKr + ') 일정', html);
+};
+
+// --- Upcoming View ---
+function renderMeetUpcoming() {
+  var meets = window._meetList || [];
+  var todayStr = new Date().toISOString().split('T')[0];
+  var upcoming = meets.filter(function(mt) { return mt.meeting_date >= todayStr; }).sort(function(a, b) { return a.meeting_date.localeCompare(b.meeting_date); });
+  var past = meets.filter(function(mt) { return mt.meeting_date < todayStr; }).sort(function(a, b) { return b.meeting_date.localeCompare(a.meeting_date); });
+  var q = (document.getElementById('m-search')?.value || '').toLowerCase();
+  var t = document.getElementById('m-type')?.value || '';
+  var hid = document.getElementById('m-hospital')?.value || '';
+  var filterFn = function(m) {
+    if (q && !(meetDoctorNames(m)||'').toLowerCase().includes(q) && !(m.hospital_name||'').toLowerCase().includes(q) && !(m.purpose||'').toLowerCase().includes(q)) return false;
+    if (t && m.meeting_type !== t) return false;
+    if (hid && String(m.hospital_id) !== hid) return false;
+    return true;
+  };
+  upcoming = upcoming.filter(filterFn);
+  past = past.filter(filterFn);
+
+  var html = '';
+  // Upcoming section
+  html += '<div class="card-flat p-4 lg:p-6 mb-4"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-clock text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">예정된 미팅</span><span class="ml-auto text-xs text-blue-500 font-bold">' + upcoming.length + '건</span></div>';
+  if (upcoming.length) {
+    // Group by date
+    var grouped = {};
+    upcoming.forEach(function(mt) { var d = mt.meeting_date; if (!grouped[d]) grouped[d] = []; grouped[d].push(mt); });
+    Object.keys(grouped).sort().forEach(function(date) {
+      var daysLeft = Math.ceil((new Date(date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / 86400000);
+      var dayLabel = daysLeft === 0 ? '오늘' : daysLeft === 1 ? '내일' : daysLeft + '일 후';
+      html += '<div class="mb-3"><div class="flex items-center gap-2 mb-2"><span class="text-xs font-bold ' + (daysLeft === 0 ? 'text-red-500' : daysLeft <= 3 ? 'text-amber-500' : 'text-blue-500') + '">' + dayLabel + '</span><span class="text-[10px] text-slate-400">' + fmtDate(date) + '</span><div class="flex-1 h-px bg-slate-100"></div></div>';
+      html += '<div class="space-y-2 pl-2">' + grouped[date].map(function(mt) {
+        return renderMeetCard(mt, true);
+      }).join('') + '</div></div>';
+    });
+  } else {
+    html += '<div class="text-center py-8 text-slate-300"><i class="fas fa-calendar-check text-3xl mb-2 block"></i><span class="text-sm">예정된 미팅이 없습니다</span></div>';
+  }
+  html += '</div>';
+
+  // Past section
+  html += '<div class="card-flat p-4 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-check-circle text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">지난 미팅</span><span class="ml-auto text-xs text-slate-400 font-medium">' + past.length + '건</span></div>';
+  if (past.length) {
+    html += '<div class="space-y-2">' + past.slice(0, 20).map(function(mt) { return renderMeetCard(mt, false); }).join('') + '</div>';
+    if (past.length > 20) html += '<div class="text-center mt-3"><button class="btn btn-outline btn-sm" onclick="setMeetView(\'list\')">전체 보기 (' + past.length + '건)</button></div>';
+  } else {
+    html += '<div class="text-center py-6 text-slate-300"><i class="fas fa-calendar-xmark text-2xl mb-2 block"></i><span class="text-xs">지난 미팅이 없습니다</span></div>';
+  }
+  html += '</div>';
+
+  document.getElementById('m-body').innerHTML = html;
+  document.getElementById('m-count').textContent = (upcoming.length + past.length) + '건';
+}
+
+function renderMeetCard(m, isFuture) {
+  return '<div class="flex items-center gap-3 p-3 rounded-xl border ' + (isFuture ? 'border-blue-100 bg-blue-50/30' : 'border-slate-100 bg-white') + ' cursor-pointer hover:shadow-md transition-all" onclick="showDayMeetsInline(\'' + m.meeting_date + '\')">' +
+    '<div class="hidden sm:block flex-shrink-0">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:13px') + '</div>' +
+    '<div class="flex-1 min-w-0">' +
+    '<div class="flex items-center gap-1.5 mb-0.5">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800 truncate">' + meetDoctorNames(m) + '</span>' +
+    (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
+    '<div class="text-[11px] text-slate-400 truncate">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div>' +
+    (m.result ? '<div class="text-[10px] text-emerald-600 mt-0.5"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
+    (m.next_action ? '<div class="text-[10px] text-amber-600 mt-0.5"><i class="fas fa-arrow-right mr-0.5"></i>' + m.next_action + '</div>' : '') +
+    '</div>' +
+    '<div class="text-right flex-shrink-0"><div class="text-xs font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div>' +
+    '<div class="flex flex-col gap-0.5 flex-shrink-0">' +
+    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button>' +
+    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();delMeetGlobal(' + m.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>';
+}
+
+// --- List View ---
+function renderMeetList() { renderML(window._meetList || []); }
 function renderML(list) {
-  document.getElementById('m-count').textContent = list.length + '건';
-  document.getElementById('m-list').innerHTML = list.length ? list.map(m =>
-    '<div class="px-4 lg:px-6 py-4 tr flex gap-3 lg:gap-4 border-b border-gray-50 last:border-0">' +
+  var q = (document.getElementById('m-search')?.value || '').toLowerCase();
+  var t = document.getElementById('m-type')?.value || '';
+  var hid = document.getElementById('m-hospital')?.value || '';
+  var filtered = list.filter(function(m) {
+    if (q && !(meetDoctorNames(m)||'').toLowerCase().includes(q) && !(m.hospital_name||'').toLowerCase().includes(q) && !(m.purpose||'').toLowerCase().includes(q)) return false;
+    if (t && m.meeting_type !== t) return false;
+    if (hid && String(m.hospital_id) !== hid) return false;
+    return true;
+  });
+  document.getElementById('m-count').textContent = filtered.length + '건';
+  document.getElementById('m-body').innerHTML = '<div class="card-flat p-0 overflow-hidden">' + (filtered.length ? filtered.map(function(m) {
+    return '<div class="px-4 lg:px-6 py-4 tr flex gap-3 lg:gap-4 border-b border-gray-50 last:border-0">' +
     '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:13px') + '</div>' +
     '<div class="flex-1 min-w-0 cursor-pointer" onclick="viewMeetDoctors(' + m.id + ',' + JSON.stringify((m.doctors||[]).map(function(d){return d.doctor_id||d.id})).replace(/"/g, '&quot;') + ')">' +
     '<div class="flex items-center gap-2 mb-0.5"><span class="font-semibold text-[13px] text-slate-800">' + meetDoctorNames(m) + '</span><span class="text-xs text-slate-300">' + (m.hospital_name || '') + '</span>' + mtBadge(m.meeting_type) + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
@@ -1516,23 +1772,13 @@ function renderML(list) {
     '<div class="text-right"><div class="text-xs font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div>' +
     '<div class="flex flex-col gap-0.5">' +
     '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button>' +
-    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();delMeetGlobal(' + m.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div></div>'
-  ).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="font-medium text-slate-500 mb-1">미팅 기록이 없습니다</p></div>';
+    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();delMeetGlobal(' + m.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div></div>';
+  }).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="font-medium text-slate-500 mb-1">미팅이 없습니다</p></div>') + '</div>';
 }
 function filterM() {
-  const q = (document.getElementById('m-search')?.value || '').toLowerCase();
-  const t = document.getElementById('m-type')?.value || '';
-  const from = document.getElementById('m-from')?.value || '';
-  const to = document.getElementById('m-to')?.value || '';
-  const hid = document.getElementById('m-hospital')?.value || '';
-  renderML(window._meetList.filter(m => {
-    if (q && !(m.doctor_name || '').toLowerCase().includes(q) && !(m.hospital_name || '').toLowerCase().includes(q) && !(m.purpose || '').toLowerCase().includes(q)) return false;
-    if (t && m.meeting_type !== t) return false;
-    if (hid && String(m.hospital_id) !== hid) return false;
-    if (from && m.meeting_date < from) return false;
-    if (to && m.meeting_date > to) return false;
-    return true;
-  }));
+  if (_meetViewMode === 'calendar') renderMeetCalendar();
+  else if (_meetViewMode === 'upcoming') renderMeetUpcoming();
+  else renderMeetList();
 }
 
 // ===== ACTIVITY LOG =====
@@ -1859,7 +2105,7 @@ async function showMeetForm(hid, did, mid) {
     }).join('') + '</div></div>' :
     '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다. 먼저 의료진을 추가하세요.</div></div>';
   
-  openModal(mid ? '미팅 수정' : '새 미팅 기록',
+  openModal(mid ? '미팅 수정' : '새 미팅',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
     doctorCheckboxes +
     // Schedule preview panel
@@ -1879,7 +2125,7 @@ async function showMeetForm(hid, did, mid) {
     if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
     delete payload.doctor_ids_single;
-    try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewHosp(hid) } catch (e) { toast('저장 실패', 'err') }
+    try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 등록됨') } closeModal(); viewHosp(hid) } catch (e) { toast('저장 실패', 'err') }
   };
   // Insert template selector for new meetings
   if (!mid) { setTimeout(function() { var fm = document.getElementById('fm'); if (fm) insertTemplateSelector(fm); }, 100); }
@@ -1976,7 +2222,7 @@ async function showMeetFormFromProfile(hid, did, mid) {
     }).join('') + '</div></div>' :
     '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다.</div></div>';
   
-  openModal(mid ? '미팅 수정' : '새 미팅 기록',
+  openModal(mid ? '미팅 수정' : '새 미팅',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
     doctorCheckboxes +
     '<div class="col-span-full" id="meet-sched-preview"></div>' +
@@ -1993,7 +2239,7 @@ async function showMeetFormFromProfile(hid, did, mid) {
     const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
     if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
-    try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') }
+    try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 등록됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') }
   };
   setTimeout(updateMeetSchedulePreview, 50);
 }
@@ -2036,7 +2282,7 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
 
 // ===== NEW MEETING (GLOBAL - select hospital first) =====
 async function showNewMeetGlobal() {
-  openModal('새 미팅 기록', '<div class="text-center py-6 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div>', true);
+  openModal('새 미팅', '<div class="text-center py-6 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div>', true);
   try {
     const { data } = await API.get('/meetings/form-data');
     const hosps = data.data.hospitals || [];
@@ -2061,7 +2307,7 @@ async function showNewMeetGlobal() {
       if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
       const payload = { ...f, doctor_ids: doctorIds };
-      try { await API.post('/meetings', payload); toast('미팅 기록됨'); closeModal(); if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); } catch (e) { toast('저장 실패', 'err') }
+      try { await API.post('/meetings', payload); toast('미팅 등록됨'); closeModal(); if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); } catch (e) { toast('저장 실패', 'err') }
     };
   } catch (e) { toast('데이터를 불러올 수 없습니다', 'err'); closeModal(); }
 }
@@ -2164,11 +2410,11 @@ async function addAllPubMed(doctorId) {
 }
 
 // ===== DELETE =====
-async function delHosp(id) { showConfirm('기관 삭제', '이 기관과 소속 인원, 미팅 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/hospitals/' + id); toast('기관 삭제됨'); nav('hospitals') } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delHosp(id) { showConfirm('기관 삭제', '이 기관과 소속 인원, 미팅이 모두 삭제됩니다.', async () => { try { await API.delete('/hospitals/' + id); toast('기관 삭제됨'); nav('hospitals') } catch (e) { toast('삭제 실패', 'err') } }) }
 async function delDoc(id, hid) { showConfirm('의료진 삭제', '이 의료진과 관련 기록이 모두 삭제됩니다.', async () => { try { await API.delete('/doctors/' + id); toast('의료진 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
-async function delMeet(id, hid) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + id); toast('미팅 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
-async function delMeetFromProfile(mid, did) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); viewDocProfile(did) } catch (e) { toast('삭제 실패', 'err') } }) }
-async function delMeetGlobal(mid) { showConfirm('미팅 삭제', '이 미팅 기록을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); loadMeet() } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delMeet(id, hid) { showConfirm('미팅 삭제', '이 미팅을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + id); toast('미팅 삭제됨'); viewHosp(hid) } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delMeetFromProfile(mid, did) { showConfirm('미팅 삭제', '이 미팅을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); viewDocProfile(did) } catch (e) { toast('삭제 실패', 'err') } }) }
+async function delMeetGlobal(mid) { showConfirm('미팅 삭제', '이 미팅을 삭제하시겠습니까?', async () => { try { await API.delete('/meetings/' + mid); toast('미팅 삭제됨'); loadMeet() } catch (e) { toast('삭제 실패', 'err') } }) }
 function viewMeetDoctors(mid, doctorIds) {
   // Show meeting detail modal instead of navigating to doctor profile
   var meet = (window._meetList || []).find(function(m) { return m.id === mid; });

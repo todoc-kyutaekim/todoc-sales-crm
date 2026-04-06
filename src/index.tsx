@@ -174,7 +174,7 @@ const HTML = `<!DOCTYPE html>
     <div onclick="nav('dashboard')" id="n-dashboard" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-pie"></i></span>대시보드</div>
     <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>기관 관리</div>
     <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
-    <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 기록</div>
+    <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 관리</div>
     <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
     <div class="px-5 mb-2"><span class="text-[9px] text-slate-500 font-bold tracking-widest uppercase">Market Data</span></div>
     <div onclick="nav('cistats')" id="n-cistats" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
