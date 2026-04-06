@@ -43,14 +43,14 @@ function showAuthScreen() {
   document.getElementById('app-main').classList.add('hidden');
   document.getElementById('auth-screen').classList.remove('hidden');
   var bn = document.getElementById('bottom-nav');
-  if (bn) bn.classList.add('hidden');
+  if (bn) bn.classList.remove('show');
   renderLoginForm();
 }
 function showAppScreen() {
   document.getElementById('auth-screen').classList.add('hidden');
   document.getElementById('app-main').classList.remove('hidden');
   var bn = document.getElementById('bottom-nav');
-  if (bn) bn.classList.remove('hidden');
+  if (bn) bn.classList.add('show');
   updateUserUI();
   nav('dashboard');
 }
@@ -235,6 +235,13 @@ function nav(p) {
   if (bnItem) bnItem.classList.add('active');
   document.getElementById('page-subtitle').textContent = '';
   document.getElementById('header-actions').innerHTML = '';
+  // Close mobile search if open
+  var sw = document.getElementById('search-wrap-outer');
+  if (sw && sw.classList.contains('mobile-search-open')) {
+    sw.classList.remove('mobile-search-open');
+    sw.classList.add('hidden');
+    sw.style.cssText = '';
+  }
   if (window.innerWidth < 1024) {
     const sb = document.getElementById('sidebar');
     if (sb && !sb.classList.contains('-translate-x-full')) toggleSidebar();
@@ -256,10 +263,12 @@ function openModal(t, h, wide) {
   document.getElementById('modal-title').textContent = t;
   document.getElementById('modal-body').innerHTML = h;
   const mc = document.getElementById('modal-content');
-  mc.className = 'modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-h-[90vh] lg:max-h-[88vh] overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
-  document.getElementById('modal').classList.remove('hidden');
+  mc.className = 'modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
+  var mdl = document.getElementById('modal');
+  mdl.classList.remove('hidden');
+  mdl.style.display = 'flex';
 }
-function closeModal() { document.getElementById('modal').classList.add('hidden') }
+function closeModal() { var mdl = document.getElementById('modal'); mdl.classList.add('hidden'); mdl.style.display = ''; }
 function tryCloseModal() {
   var form = document.querySelector('#modal-body form');
   if (form) {
@@ -296,14 +305,15 @@ document.addEventListener('keydown', e => {
 function toggleMobileSearch(forceOpen) {
   const sw = document.getElementById('search-wrap-outer');
   if (!sw) return;
-  if (forceOpen || sw.classList.contains('hidden')) {
+  const isOpen = sw.classList.contains('mobile-search-open');
+  if (forceOpen || !isOpen) {
     sw.classList.remove('hidden');
-    sw.classList.add('!block');
-    sw.style.cssText = 'position:fixed;top:52px;left:0;right:0;z-index:55;padding:8px 12px;background:#fff;border-bottom:1px solid #f0f0f3;box-shadow:0 4px 12px rgba(0,0,0,0.08)';
+    sw.classList.add('mobile-search-open');
+    sw.style.cssText = '';
     setTimeout(() => document.getElementById('global-search')?.focus(), 50);
   } else {
+    sw.classList.remove('mobile-search-open');
     sw.classList.add('hidden');
-    sw.classList.remove('!block');
     sw.style.cssText = '';
     hideSearchResults();
   }

@@ -93,7 +93,7 @@ app.get('/sw.js', (c) => {
 // SPA - serves HTML shell, all JS/CSS from CDN or inline
 app.get('*', (c) => c.html(HTML))
 
-const SW_JS = `const CACHE_NAME='todoc-crm-v3';
+const SW_JS = `const CACHE_NAME='todoc-crm-v4';
 const STATIC_ASSETS=['/','/static/style.css','/static/app.js','/static/icons/icon-192x192.png'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(STATIC_ASSETS).catch(()=>{})));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))));self.clients.claim()});
@@ -122,7 +122,7 @@ const HTML = `<!DOCTYPE html>
 <script>tailwind.config={theme:{extend:{fontFamily:{sans:['Pretendard','Inter','-apple-system','sans-serif']},colors:{brand:{50:'#eef4ff',100:'#d9e6ff',200:'#bcd2ff',300:'#8eb5ff',400:'#598eff',500:'#3366ff',600:'#1a4fff',700:'#0a3ae6',800:'#0d32ba',900:'#102d92'}}}}}</script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="h-screen overflow-hidden overflow-x-hidden">
+<body class="h-screen overflow-hidden overflow-x-hidden" style="height:100vh;height:100dvh">
 <div id="toast-wrap"></div>
 
 <!-- Auth Screen -->
@@ -134,7 +134,7 @@ const HTML = `<!DOCTYPE html>
 </div>
 
 <!-- App Main -->
-<div id="app-main" class="flex h-screen hidden">
+<div id="app-main" class="flex hidden" style="height:100vh;height:100dvh">
 
 <!-- Mobile overlay -->
 <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" onclick="toggleSidebar()"></div>
@@ -171,10 +171,10 @@ const HTML = `<!DOCTYPE html>
 
 <!-- Main -->
 <main class="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#f8f9fb]">
-  <header class="h-[52px] lg:h-[60px] bg-white border-b border-gray-100 flex items-center px-2 lg:px-7 flex-shrink-0 gap-1 lg:gap-2 safe-top">
+  <header id="app-header" class="h-[48px] lg:h-[60px] bg-white border-b border-gray-100 flex items-center px-3 lg:px-7 flex-shrink-0 gap-1.5 lg:gap-2 safe-top" style="min-height:48px">
     <div class="flex items-center gap-1.5 lg:gap-3 min-w-0 flex-1 overflow-hidden">
       <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1 hidden" onclick="toggleSidebar()"><i class="fas fa-bars text-lg"></i></button>
-      <h2 id="page-title" class="text-[13px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate"></h2>
+      <h2 id="page-title" class="text-[14px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate leading-none"></h2>
       <span id="page-subtitle" class="text-xs text-slate-400 font-medium hidden sm:inline"></span>
     </div>
     <!-- Mobile Search Button -->
@@ -191,12 +191,13 @@ const HTML = `<!DOCTYPE html>
     <div class="h-5 w-px bg-gray-200 mx-1 hidden lg:block"></div>
     <div id="user-menu" class="relative flex-shrink-0"></div>
   </header>
-  <div id="content" class="flex-1 overflow-y-auto overflow-x-hidden pb-[70px] lg:pb-0"></div>
+  <div id="content" class="flex-1 overflow-y-auto overflow-x-hidden" style="padding-bottom:calc(64px + env(safe-area-inset-bottom, 0px))"></div>
+  <style>@media(min-width:1024px){#content{padding-bottom:0!important}}</style>
 </main>
 </div><!-- /app-main -->
 
 <!-- Mobile Bottom Navigation -->
-<nav id="bottom-nav" class="btm-nav lg:hidden hidden">
+<nav id="bottom-nav" class="btm-nav">
   <div onclick="nav('dashboard')" id="bn-dashboard" class="btm-nav-item">
     <i class="fas fa-chart-pie"></i><span>대시보드</span>
   </div>
@@ -216,7 +217,7 @@ const HTML = `<!DOCTYPE html>
 
 <!-- More Menu Popover -->
 <div id="more-menu" class="fixed inset-0 z-[55] hidden lg:hidden" onclick="closeMoreMenu()">
-  <div class="absolute bottom-[68px] right-3 bg-white rounded-2xl shadow-2xl border border-gray-100 w-48 py-2 overflow-hidden safe-bottom" onclick="event.stopPropagation()">
+  <div class="absolute right-3 bg-white rounded-2xl shadow-2xl border border-gray-100 w-48 py-2 overflow-hidden" style="bottom:calc(64px + env(safe-area-inset-bottom, 0px) + 8px)" onclick="event.stopPropagation()">
     <div onclick="nav('cistats');closeMoreMenu()" class="more-menu-item"><i class="fas fa-chart-bar text-violet-500"></i>인공와우 통계</div>
     <div onclick="nav('activity');closeMoreMenu()" class="more-menu-item"><i class="fas fa-clock-rotate-left text-slate-400"></i>활동 로그</div>
     <div class="h-px bg-gray-100 my-1"></div>
@@ -225,8 +226,8 @@ const HTML = `<!DOCTYPE html>
 </div>
 
 <!-- Modal -->
-<div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-end lg:items-center justify-center lg:p-4" onclick="if(event.target===this)tryCloseModal()">
-  <div id="modal-content" class="modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] lg:max-h-[88vh] overflow-y-auto" onclick="event.stopPropagation()">
+<div id="modal" class="fixed inset-0 modal-bg z-50 hidden items-end lg:items-center justify-center lg:p-4" onclick="if(event.target===this)tryCloseModal()">
+  <div id="modal-content" class="modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px)" onclick="event.stopPropagation()">
     <div class="flex items-center justify-between px-4 lg:px-6 py-3 lg:py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px]"></h3>
       <button onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
