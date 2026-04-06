@@ -70,11 +70,11 @@ function updateUserUI() {
   const el = document.getElementById('user-menu');
   if (el && currentUser) {
     el.innerHTML = '<div class="flex items-center gap-2 cursor-pointer group" onclick="toggleUserDropdown()">' +
-      '<div class="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center text-brand-600 font-bold text-sm">' + (currentUser.name || '?').charAt(0) + '</div>' +
+      '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold text-sm" style="background:linear-gradient(135deg,#3b7bf7,#2563eb);box-shadow:0 2px 6px rgba(37,99,235,.25)">' + (currentUser.name || '?').charAt(0) + '</div>' +
       '<span class="text-[12px] font-semibold text-slate-600 hidden lg:inline group-hover:text-brand-600 transition">' + currentUser.name + '</span>' +
       '<i class="fas fa-chevron-down text-[9px] text-slate-300 hidden lg:inline"></i></div>' +
-      '<div id="user-dropdown" class="absolute right-0 top-full mt-2 w-52 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden py-1">' +
-      '<div class="px-4 py-3 border-b border-gray-50"><div class="text-[13px] font-bold text-slate-800">' + currentUser.name + '</div><div class="text-[11px] text-slate-400">' + currentUser.email + '</div></div>' +
+      '<div id="user-dropdown" class="absolute right-0 top-full mt-2 w-56 bg-white z-50 hidden py-1" style="border-radius:14px;border:1px solid #eef0f5;box-shadow:0 12px 32px -4px rgba(16,24,40,.12),0 0 0 1px rgba(0,0,0,.03)">' +
+      '<div class="px-4 py-3" style="border-bottom:1px solid #eef0f5"><div class="text-[13px] font-bold text-slate-800">' + currentUser.name + '</div><div class="text-[11px] text-slate-400 mt-0.5">' + currentUser.email + '</div></div>' +
       '<div class="py-1">' +
       '<div class="px-4 py-2.5 text-[13px] text-slate-600 hover:bg-gray-50 cursor-pointer flex items-center gap-2.5 transition" onclick="showChangePassword()"><i class="fas fa-key text-slate-400 text-xs w-4"></i>비밀번호 변경</div>' +
       '<div class="px-4 py-2.5 text-[13px] text-red-500 hover:bg-red-50 cursor-pointer flex items-center gap-2.5 transition" onclick="doLogout()"><i class="fas fa-sign-out-alt text-xs w-4"></i>로그아웃</div>' +
@@ -97,16 +97,16 @@ document.addEventListener('click', e => {
 function renderLoginForm() {
   document.getElementById('auth-box').innerHTML =
     '<div class="text-center mb-8">' +
-    '<div class="w-16 h-16 rounded-2xl bg-brand-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-brand-500/30">' +
-    '<svg width="32" height="32" viewBox="0 0 24 24" fill="none"><path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm-2 13H8V9h2v7zm4 0h-2V9h2v7z" fill="#fff"/></svg></div>' +
-    '<h1 class="text-2xl font-extrabold text-slate-800 tracking-tight">TODOC CRM</h1>' +
-    '<p class="text-sm text-slate-400 mt-1">병원 영업 관리 시스템</p></div>' +
-    '<form id="auth-form" class="space-y-4">' +
+    '<div class="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-5" style="background:linear-gradient(135deg,#3b7bf7,#2563eb);box-shadow:0 8px 24px rgba(37,99,235,.3)">' +
+    '<svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm-2 13H8V9h2v7zm4 0h-2V9h2v7z" fill="#fff"/></svg></div>' +
+    '<h1 class="text-[22px] font-extrabold text-slate-800 tracking-tight leading-tight">TODOC CRM</h1>' +
+    '<p class="text-[13px] text-slate-400 mt-1.5 font-medium">인공와우 영업 관리 시스템</p></div>' +
+    '<form id="auth-form" class="space-y-5">' +
     '<div><label class="input-label">이메일</label><div class="relative"><i class="fas fa-envelope absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="email" type="email" class="input pl-10 w-full" placeholder="name@to-doc.com" autocomplete="email"></div></div>' +
     '<div><label class="input-label">비밀번호</label><div class="relative"><i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="password" type="password" class="input pl-10 w-full" placeholder="비밀번호" autocomplete="current-password"></div></div>' +
     '<div class="flex items-center justify-between"><label class="flex items-center gap-2 cursor-pointer select-none"><input name="rememberMe" type="checkbox" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer" checked><span class="text-[13px] text-slate-500">자동 로그인</span></label></div>' +
-    '<button type="submit" class="btn btn-primary w-full !py-3 text-sm font-bold">로그인</button></form>' +
-    '<div class="mt-6 text-center"><span class="text-sm text-slate-400">계정이 없으신가요? </span><button onclick="renderRegisterForm()" class="text-sm text-brand-600 font-bold hover:text-brand-700 transition">회원가입</button></div>';
+    '<button type="submit" class="btn btn-primary w-full !py-3 text-[13px] font-bold" style="border-radius:10px">로그인</button></form>' +
+    '<div class="mt-6 text-center"><span class="text-[13px] text-slate-400">계정이 없으신가요? </span><button onclick="renderRegisterForm()" class="text-[13px] text-brand-600 font-bold hover:text-brand-700 transition">회원가입</button></div>';
   document.getElementById('auth-form').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
@@ -310,7 +310,8 @@ function openModal(t, h, wide) {
   document.getElementById('modal-title').textContent = t;
   document.getElementById('modal-body').innerHTML = h;
   const mc = document.getElementById('modal-content');
-  mc.className = 'modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
+  mc.className = 'modal-box bg-white w-full overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
+  mc.style.cssText = 'max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)';
   var mdl = document.getElementById('modal');
   mdl.classList.remove('hidden');
   mdl.style.display = 'flex';
@@ -450,10 +451,10 @@ async function loadDash() {
   document.getElementById('page-title').textContent = '대시보드';
   document.getElementById('page-subtitle').textContent = '';
   document.getElementById('header-actions').innerHTML = 
-    '<select id="dash-period" class="input !py-1.5 !text-xs !w-auto !pr-7 !rounded-lg" onchange="_dashPeriod=this.value;loadDash()" style="max-width:110px"><option value="month"' + (_dashPeriod==='month'?' selected':'') + '>이번 달</option><option value="quarter"' + (_dashPeriod==='quarter'?' selected':'') + '>이번 분기</option><option value="year"' + (_dashPeriod==='year'?' selected':'') + '>올해</option></select>' +
+    '<select id="dash-period" class="input !py-1.5 !text-xs !w-auto !pr-7" onchange="_dashPeriod=this.value;loadDash()" style="max-width:110px;border-radius:8px"><option value="month"' + (_dashPeriod==='month'?' selected':'') + '>이번 달</option><option value="quarter"' + (_dashPeriod==='quarter'?' selected':'') + '>이번 분기</option><option value="year"' + (_dashPeriod==='year'?' selected':'') + '>올해</option></select>' +
     '<button class="btn btn-outline btn-sm" onclick="showPipelineView()"><i class="fas fa-columns text-xs"></i><span class="hidden sm:inline">파이프라인</span></button>' +
     '<button class="btn btn-success btn-sm" onclick="showNewMeetGlobal()"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">빠른 미팅</span></button>';
-  document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 space-y-6"><div class="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-5">' + Array(4).fill('<div class="sc"><div class="flex gap-4"><div class="skeleton rounded-xl" style="width:44px;height:44px"></div><div class="flex-1 space-y-2"><div class="skeleton rounded h-3 w-16"></div><div class="skeleton rounded h-6 w-20"></div></div></div></div>').join('') + '</div></div>';
+  document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 space-y-6"><div class="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">' + Array(4).fill('<div class="sc"><div class="flex items-center gap-3"><div class="skeleton" style="width:42px;height:42px;border-radius:10px"></div><div class="flex-1 space-y-2"><div class="skeleton" style="height:10px;width:50px;border-radius:4px"></div><div class="skeleton" style="height:20px;width:64px;border-radius:4px"></div></div></div></div>').join('') + '</div><div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="card-flat p-5"><div class="skeleton" style="height:14px;width:120px;border-radius:4px;margin-bottom:12px"></div><div class="skeleton" style="height:10px;width:100%;border-radius:6px"></div></div><div class="card-flat p-5"><div class="skeleton" style="height:14px;width:120px;border-radius:4px;margin-bottom:12px"></div><div class="flex gap-2">' + Array(4).fill('<div class="skeleton flex-1" style="height:48px;border-radius:8px"></div>').join('') + '</div></div></div></div>';
   try {
     const { data: d } = await API.get('/dashboard?period=' + _dashPeriod); const s = d.data;
     // Update reminder badge
@@ -465,11 +466,11 @@ async function loadDash() {
     
     // Pipeline stage labels
     var pipeLabels = { contact: '첫 접촉', meeting: '미팅 진행', demo: '데모', proposal: '제안', contract: '계약', active_customer: '활성 거래처' };
-    var pipeColors = { contact: '#94a3b8', meeting: '#3b82f6', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#059669', active_customer: '#3366ff' };
+    var pipeColors = { contact: '#94a3b8', meeting: '#3b82f6', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#059669', active_customer: '#2563eb' };
 
     C.innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-5">' +
       // Reminder banner
-      (s.reminders?.length ? '<div class="reminder-banner"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center flex-shrink-0"><i class="fas fa-bell text-white text-lg animate-bounce-gentle"></i></div><div class="flex-1 min-w-0"><div class="font-bold text-white text-sm mb-0.5">미팅 리마인더</div><div class="text-white/80 text-xs">앞으로 7일 이내 예정된 미팅이 <strong>' + s.reminders.length + '건</strong> 있습니다</div></div></div>' +
+      (s.reminders?.length ? '<div class="reminder-banner"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:rgba(255,255,255,.12)"><i class="fas fa-bell text-white text-lg animate-bounce-gentle"></i></div><div class="flex-1 min-w-0"><div class="font-bold text-white text-sm mb-0.5">미팅 리마인더</div><div class="text-white/70 text-xs">앞으로 7일 이내 예정된 미팅이 <strong class="text-white">' + s.reminders.length + '건</strong> 있습니다</div></div></div>' +
         '<div class="mt-3 space-y-2">' + s.reminders.map(r => {
           const du = daysUntil(r.next_meeting_date);
           const urgency = du <= 1 ? 'bg-red-500/30 border-red-400/50' : du <= 3 ? 'bg-amber-500/20 border-amber-400/40' : 'bg-white/10 border-white/20';
@@ -480,7 +481,7 @@ async function loadDash() {
 
       // ===== Stats overview row =====
       '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">' +
-      sc('관리 기관', s.stats.hospitalsAll || s.stats.hospitals, '개', 'fa-hospital', '#3366ff', '#eef4ff', 'hospitals') +
+      sc('관리 기관', s.stats.hospitalsAll || s.stats.hospitals, '개', 'fa-hospital', '#2563eb', '#eef4ff', 'hospitals') +
       sc('코드 등록', s.stats.codeRegistered || 0, '개', 'fa-check-circle', '#059669', '#ecfdf5', 'hospitals') +
       sc('등록 의료진', s.stats.doctors, '명', 'fa-user-doctor', '#7c3aed', '#f5f3ff', 'doctors') +
       sc('총 미팅', s.stats.meetings, '건', 'fa-handshake', '#0891b2', '#ecfeff', 'meetings') +
@@ -494,20 +495,20 @@ async function loadDash() {
       '</div>' +
 
       // ===== Hospital Code Registration + Pipeline Summary =====
-      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
+      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' +
       // Hospital code registration meter
-      '<div class="card-flat p-4 lg:p-5">' +
-        '<div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-id-card text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">병원코드 등록 현황</span></div>' +
+      '<div class="card-flat p-5">' +
+        '<div class="flex items-center gap-2.5 mb-4"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)"><i class="fas fa-id-card text-emerald-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">병원코드 등록 현황</span></div>' +
         (function() {
           var reg = s.stats.codeRegistered || 0, unreg = s.stats.codeUnregistered || 0, total = reg + unreg;
           var pct = total > 0 ? Math.round(reg / total * 100) : 0;
-          return '<div class="flex items-center gap-4 mb-2"><div class="flex-1"><div class="flex justify-between text-[11px] mb-1"><span class="text-slate-500">등록완료 <strong class="text-emerald-600">' + reg + '</strong></span><span class="text-slate-500">미등록 <strong class="text-amber-600">' + unreg + '</strong></span></div><div class="w-full bg-gray-100 rounded-full h-3 overflow-hidden"><div class="h-3 rounded-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-500" style="width:' + pct + '%"></div></div></div><div class="text-2xl font-extrabold text-emerald-600">' + pct + '<span class="text-sm">%</span></div></div>';
+          return '<div class="flex items-center gap-4 mb-3"><div class="flex-1"><div class="flex justify-between text-[11px] mb-1.5"><span class="text-slate-500 font-medium">등록완료 <strong class="text-emerald-600">' + reg + '</strong></span><span class="text-slate-500 font-medium">미등록 <strong class="text-amber-600">' + unreg + '</strong></span></div><div class="w-full bg-gray-100 rounded-full h-3.5 overflow-hidden"><div class="h-3.5 rounded-full transition-all duration-700" style="width:' + pct + '%;background:linear-gradient(90deg,#10b981,#059669)"></div></div></div><div class="text-right pl-2"><span class="text-2xl font-extrabold text-emerald-600 tracking-tight">' + pct + '</span><span class="text-[11px] text-emerald-600 font-bold">%</span></div></div>';
         })() +
       '</div>' +
       // Pipeline summary
-      '<div class="card-flat p-4 lg:p-5">' +
-        '<div class="flex items-center justify-between mb-3"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-filter text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">파이프라인 현황</span></div><button class="text-[11px] text-brand-500 font-semibold hover:underline" onclick="showPipelineView()">상세 →</button></div>' +
-        '<div class="flex gap-1.5 flex-wrap">' + (s.pipelineSummary || []).map(function(p) {
+      '<div class="card-flat p-5">' +
+        '<div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe)"><i class="fas fa-filter text-violet-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">파이프라인 현황</span></div><button class="text-[11px] text-brand-500 font-bold hover:text-brand-600 transition" onclick="showPipelineView()">상세보기 <i class="fas fa-chevron-right text-[8px] ml-0.5"></i></button></div>' +
+        '<div class="flex gap-2 flex-wrap">' + (s.pipelineSummary || []).map(function(p) {
           var label = pipeLabels[p.pipeline_stage] || p.pipeline_stage || '미설정';
           var color = pipeColors[p.pipeline_stage] || '#94a3b8';
           return '<div class="flex-1 min-w-[60px] text-center p-2 rounded-xl" style="background:' + color + '10"><div class="text-lg font-extrabold" style="color:' + color + '">' + p.count + '</div><div class="text-[10px] text-slate-500 font-medium mt-0.5">' + label + '</div></div>';
@@ -515,9 +516,9 @@ async function loadDash() {
       '</div>' +
       '</div>' +
 
-      // ===== This Week's Tasks (새 섹션) =====
+      // ===== This Week's Tasks =====
       (s.thisWeekMeetings?.length ? '<div class="card-flat p-0 overflow-hidden">' +
-        '<div class="px-4 lg:px-6 py-3.5 flex items-center justify-between bg-gradient-to-r from-blue-50 to-indigo-50"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center"><i class="fas fa-calendar-week text-blue-600 text-xs"></i></div><span class="font-bold text-sm text-slate-800">이번 주 일정</span><span class="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">' + s.thisWeekMeetings.length + '건</span></div></div>' +
+        '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="background:linear-gradient(135deg,#eff6ff 0%,#eef2ff 100%);border-bottom:1px solid #e0e7ff"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#dbeafe,#c7d2fe)"><i class="fas fa-calendar-week text-blue-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">이번 주 일정</span><span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold" style="background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff">' + s.thisWeekMeetings.length + '건</span></div></div>' +
         '<div class="border-t border-gray-50 divide-y divide-gray-50">' + s.thisWeekMeetings.slice(0, 6).map(function(m) {
           var mDate = m.next_meeting_date || m.meeting_date;
           var du = daysUntil(mDate);
@@ -529,8 +530,8 @@ async function loadDash() {
         }).join('') + '</div></div>' : '') +
 
       // ===== Long-inactive hospitals alert =====
-      (s.longInactive?.length ? '<div class="card-flat p-0 overflow-hidden border-l-4 border-red-300">' +
-        '<div class="px-4 lg:px-6 py-3.5 flex items-center justify-between bg-red-50/50"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-red-100 flex items-center justify-center"><i class="fas fa-exclamation-triangle text-red-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">장기 미접촉 기관</span><span class="text-[10px] text-red-500 font-semibold">30일 이상 미팅 없음</span></div></div>' +
+      (s.longInactive?.length ? '<div class="card-flat p-0 overflow-hidden" style="border-left:3px solid #fca5a5">' +
+        '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="background:linear-gradient(135deg,#fef2f2 0%,#fff1f2 100%);border-bottom:1px solid #fecaca"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fee2e2,#fecaca)"><i class="fas fa-exclamation-triangle text-red-500 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">장기 미접촉 기관</span><span class="text-[10px] text-red-500 font-bold">30일+ 미팅 없음</span></div></div>' +
         '<div class="border-t border-gray-50 divide-y divide-gray-50">' + s.longInactive.slice(0, 5).map(function(h) {
           return '<div class="px-4 lg:px-6 py-3 flex items-center gap-3 tr cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
             '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-bold flex-shrink-0 ' + (h.grade === 'S' ? 'bg-amber-100 text-amber-700' : h.grade === 'A' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500') + '">' + (h.grade || '-') + '</div>' +
@@ -540,32 +541,32 @@ async function loadDash() {
         }).join('') + '</div></div>' : '') +
 
       // KPI gauge (if target set)
-      (s.kpiTarget && s.kpiTarget.target_meetings > 0 ? '<div class="card-flat p-4 lg:p-5"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-bullseye text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">KPI 달성률</span></div><button class="btn btn-ghost btn-sm text-xs" onclick="showKPISettings()"><i class="fas fa-cog text-xs"></i> 설정</button></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-4">' + kpiGaugeCard('미팅', s.stats.monthMeetings, s.kpiTarget.target_meetings, 'fa-handshake', '#3366ff') + '</div></div>' :
+      (s.kpiTarget && s.kpiTarget.target_meetings > 0 ? '<div class="card-flat p-5"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef4ff,#dbeafe)"><i class="fas fa-bullseye text-brand-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">KPI 달성률</span></div><button class="btn btn-ghost btn-sm text-xs" onclick="showKPISettings()"><i class="fas fa-cog text-xs"></i> 설정</button></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-4">' + kpiGaugeCard('미팅', s.stats.monthMeetings, s.kpiTarget.target_meetings, 'fa-handshake', '#2563eb') + '</div></div>' :
         '<div class="card-flat p-4 flex items-center justify-between"><div class="flex items-center gap-2 text-sm text-slate-400"><i class="fas fa-bullseye text-slate-300"></i>KPI 목표가 설정되지 않았습니다</div><button class="btn btn-outline btn-sm" onclick="showKPISettings()"><i class="fas fa-plus text-xs mr-1"></i>설정</button></div>') +
       // CI KPI banner
       (s.ciKpi ? '<div class="card-flat p-4 lg:p-5 flex flex-wrap items-center gap-4 lg:gap-8"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-line text-indigo-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">인공와우 시장 현황 (' + s.ciKpi.year + '년)</div><div class="text-sm font-bold text-slate-800">환자 ' + fmtNum(s.ciKpi.patients) + '명</div></div></div><div class="flex gap-4 lg:gap-6 text-center flex-wrap"><div><div class="text-[10px] text-slate-400">시술건수</div><div class="text-sm font-bold text-brand-600">' + fmtNum(s.ciKpi.usage) + '</div></div><div><div class="text-[10px] text-slate-400">진료금액</div><div class="text-sm font-bold text-emerald-600">' + fmtAmount(s.ciKpi.amount) + '</div></div><div><div class="text-[10px] text-slate-400">환자 증가율</div><div class="text-sm font-bold ' + (parseFloat(s.ciKpi.growth_patients) > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (parseFloat(s.ciKpi.growth_patients) > 0 ? '+' : '') + s.ciKpi.growth_patients + '%</div></div></div><button class="btn btn-outline btn-sm ml-auto" onclick="nav(\'cistats\')">통계 상세 <i class="fas fa-arrow-right text-[10px]"></i></button></div>' : '') +
 
       // ===== Recently added highlights =====
       ((s.recentHospitals?.length || s.recentDoctors?.length) ?
-      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
-      (s.recentHospitals?.length ? '<div class="card-flat p-0 overflow-hidden"><div class="px-4 lg:px-6 py-3.5 flex items-center gap-2 bg-gradient-to-r from-emerald-50 to-teal-50"><div class="w-6 h-6 rounded-md bg-emerald-100 flex items-center justify-center"><i class="fas fa-plus-circle text-emerald-600 text-[10px]"></i></div><span class="font-bold text-[13px] text-slate-800">최근 등록 기관</span><span class="text-[10px] text-slate-400">14일 이내</span></div><div class="divide-y divide-gray-50">' +
+      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' +
+      (s.recentHospitals?.length ? '<div class="card-flat p-0 overflow-hidden"><div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="background:linear-gradient(135deg,#ecfdf5 0%,#f0fdfa 100%);border-bottom:1px solid #a7f3d0"><div class="w-7 h-7 rounded-md flex items-center justify-center" style="background:linear-gradient(135deg,#6ee7b7,#34d399)"><i class="fas fa-plus text-white text-[9px]"></i></div><span class="font-bold text-[13px] text-slate-800">최근 등록 기관</span><span class="text-[10px] text-emerald-600 font-medium">14일 이내</span></div><div class="divide-y divide-gray-50">' +
         s.recentHospitals.map(function(h) {
           return '<div class="px-4 lg:px-6 py-2.5 flex items-center gap-3 tr cursor-pointer" onclick="viewHosp(' + h.id + ')"><div class="flex-1 min-w-0"><span class="text-[13px] font-semibold text-slate-800 truncate">' + h.name + '</span><span class="text-[10px] text-slate-400 ml-2">' + (h.region || '') + '</span></div>' + statusDot(h.status) + '</div>';
         }).join('') + '</div></div>' : '') +
-      (s.recentDoctors?.length ? '<div class="card-flat p-0 overflow-hidden"><div class="px-4 lg:px-6 py-3.5 flex items-center gap-2 bg-gradient-to-r from-violet-50 to-purple-50"><div class="w-6 h-6 rounded-md bg-violet-100 flex items-center justify-center"><i class="fas fa-user-plus text-violet-600 text-[10px]"></i></div><span class="font-bold text-[13px] text-slate-800">최근 등록 의료진</span><span class="text-[10px] text-slate-400">14일 이내</span></div><div class="divide-y divide-gray-50">' +
+      (s.recentDoctors?.length ? '<div class="card-flat p-0 overflow-hidden"><div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="background:linear-gradient(135deg,#f5f3ff 0%,#ede9fe 100%);border-bottom:1px solid #ddd6fe"><div class="w-7 h-7 rounded-md flex items-center justify-center" style="background:linear-gradient(135deg,#c4b5fd,#a78bfa)"><i class="fas fa-user-plus text-white text-[9px]"></i></div><span class="font-bold text-[13px] text-slate-800">최근 등록 의료진</span><span class="text-[10px] text-violet-600 font-medium">14일 이내</span></div><div class="divide-y divide-gray-50">' +
         s.recentDoctors.map(function(d) {
           return '<div class="px-4 lg:px-6 py-2.5 flex items-center gap-3 tr cursor-pointer" onclick="viewDocProfile(' + d.id + ')"><div class="flex-1 min-w-0"><span class="text-[13px] font-semibold text-slate-800">' + d.name + '</span><span class="text-[10px] text-slate-400 ml-2">' + (d.position || '') + ' · ' + (d.hospital_name || '') + '</span></div></div>';
         }).join('') + '</div></div>' : '') +
       '</div>' : '') +
 
       // Monthly trend chart + right column
-      '<div class="grid grid-cols-1 lg:grid-cols-5 gap-5">' +
-      '<div class="lg:col-span-3 space-y-5">' +
+      '<div class="grid grid-cols-1 lg:grid-cols-5 gap-4">' +
+      '<div class="lg:col-span-3 space-y-4">' +
       // Monthly trend chart
-      (s.monthlyTrend?.length ? '<div class="card-flat p-4 lg:p-6"><div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-bar text-indigo-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">월별 미팅 추이</span></div><span class="text-[11px] text-slate-300">최근 6개월</span></div><div style="height:200px"><canvas id="chart-monthly"></canvas></div></div>' : '') +
+      (s.monthlyTrend?.length ? '<div class="card-flat p-5 lg:p-6"><div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef2ff,#e0e7ff)"><i class="fas fa-chart-bar text-indigo-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">월별 미팅 추이</span></div><span class="text-[11px] text-slate-300 font-medium">최근 6개월</span></div><div style="height:200px"><canvas id="chart-monthly"></canvas></div></div>' : '') +
       // Recent meetings
       '<div class="card-flat p-0 overflow-hidden">' +
-      '<div class="px-4 lg:px-6 py-3.5 flex items-center justify-between"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-clock text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">최근 미팅</span></div><span class="text-[11px] text-slate-300 font-medium">최근 8건</span></div>' +
+      '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="border-bottom:1px solid #eef0f5"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eff6ff,#dbeafe)"><i class="fas fa-clock text-blue-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">최근 미팅</span></div><span class="text-[11px] text-slate-300 font-medium">최근 8건</span></div>' +
       '<div class="border-t border-gray-50">' + (s.recentMeetings.length ? s.recentMeetings.map(m =>
         '<div class="px-4 lg:px-6 py-3 tr flex items-center gap-3 cursor-pointer border-b border-gray-50 last:border-0" onclick="viewHosp(' + m.hospital_id + ')">' +
         '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:14px') + '</div>' +
@@ -573,17 +574,17 @@ async function loadDash() {
         '<div class="text-right flex-shrink-0"><div class="text-[11px] font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div></div>'
       ).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="text-sm">아직 미팅이 없습니다</p></div>') + '</div></div>' +
       '</div>' +
-      '<div class="lg:col-span-2 space-y-5">' +
+      '<div class="lg:col-span-2 space-y-4">' +
       // Upcoming actions
       '<div class="card-flat p-0 overflow-hidden">' +
-      '<div class="px-4 lg:px-6 py-3.5 flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-list-check text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">후속 액션</span></div>' +
+      '<div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="border-bottom:1px solid #eef0f5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fffbeb,#fef3c7)"><i class="fas fa-list-check text-amber-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">후속 액션</span></div>' +
       '<div class="border-t border-gray-50">' + (s.upcomingActions.length ? s.upcomingActions.map(m =>
         '<div class="px-4 lg:px-6 py-3 tr border-b border-gray-50 last:border-0"><div class="flex items-center justify-between mb-1"><span class="text-[13px] font-semibold text-slate-700 truncate">' + (m.doctor_name || '-') + '</span>' + (m.next_meeting_date ? '<span class="text-[10px] font-bold ' + daysClass(m.next_meeting_date) + ' bg-gray-50 px-2 py-0.5 rounded-full">' + fmtShort(m.next_meeting_date) + '</span>' : '') + '</div><p class="text-[11px] text-slate-400 leading-relaxed truncate"><i class="fas fa-arrow-right text-amber-300 mr-1"></i>' + m.next_action + '</p></div>'
       ).join('') : '<div class="empty py-8"><div class="empty-icon"><i class="fas fa-check-circle"></i></div><p class="text-sm">완료할 액션이 없습니다</p></div>') + '</div></div>' +
       // Region stats
       '<div class="card-flat p-0 overflow-hidden">' +
-      '<div class="px-4 lg:px-6 py-3.5 flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">지역별 현황</span></div>' +
-      '<div class="border-t border-gray-50 p-4 lg:p-5 space-y-2.5">' + (s.regionStats.length ? s.regionStats.map(r => { const mx = Math.max(...s.regionStats.map(x => x.count)); return '<div class="flex items-center gap-3"><span class="text-[11px] font-semibold text-slate-500 w-10 text-right">' + r.region + '</span><div class="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden"><div class="bg-gradient-to-r from-brand-400 to-brand-500 h-full rounded-full flex items-center px-2.5 transition-all duration-500" style="width:' + Math.max(r.count / mx * 100, 20) + '%"><span class="text-[10px] font-bold text-white">' + r.count + '개</span></div></div></div>' }).join('') : '<div class="text-center text-sm text-slate-300 py-4">데이터 없음</div>') + '</div></div>' +
+      '<div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="border-bottom:1px solid #eef0f5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)"><i class="fas fa-map-location-dot text-emerald-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">지역별 현황</span></div>' +
+      '<div class="border-t border-gray-50 p-4 lg:p-5 space-y-3">' + (s.regionStats.length ? s.regionStats.map(r => { const mx = Math.max(...s.regionStats.map(x => x.count)); return '<div class="flex items-center gap-3"><span class="text-[11px] font-semibold text-slate-500 w-10 text-right">' + r.region + '</span><div class="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden"><div class="h-full rounded-full flex items-center px-2.5 transition-all duration-700" style="width:' + Math.max(r.count / mx * 100, 22) + '%;background:linear-gradient(90deg,#3b82f6,#2563eb)"><span class="text-[10px] font-bold text-white">' + r.count + '개</span></div></div></div>' }).join('') : '<div class="text-center text-sm text-slate-300 py-4">데이터 없음</div>') + '</div></div>' +
       '</div></div></div>';
     
     // Render monthly trend chart
@@ -591,23 +592,23 @@ async function loadDash() {
       setTimeout(() => {
         const el = document.getElementById('chart-monthly');
         if (!el) return;
-        Chart.defaults.font.family = 'Pretendard,sans-serif'; Chart.defaults.font.size = 11;
+        Chart.defaults.font.family = 'Pretendard,sans-serif'; Chart.defaults.font.size = 11; Chart.defaults.color = '#9aa1b4';
         dashCharts.push(new Chart(el, {
           type: 'bar',
           data: {
             labels: s.monthlyTrend.map(m => fmtMonthLabel(m.month)),
             datasets: [
-              { label: '방문', data: s.monthlyTrend.map(m => m.visit_count || 0), backgroundColor: 'rgba(51,102,255,0.7)', borderRadius: 4, barPercentage: 0.5 },
-              { label: '전화', data: s.monthlyTrend.map(m => m.phone_count || 0), backgroundColor: 'rgba(16,185,129,0.7)', borderRadius: 4, barPercentage: 0.5 },
-              { label: '학회', data: s.monthlyTrend.map(m => m.conf_count || 0), backgroundColor: 'rgba(124,58,237,0.7)', borderRadius: 4, barPercentage: 0.5 },
-              { label: '이메일', data: s.monthlyTrend.map(m => m.email_count || 0), backgroundColor: 'rgba(217,119,6,0.7)', borderRadius: 4, barPercentage: 0.5 },
-              { label: '온라인', data: s.monthlyTrend.map(m => m.online_count || 0), backgroundColor: 'rgba(99,102,241,0.7)', borderRadius: 4, barPercentage: 0.5 },
+              { label: '방문', data: s.monthlyTrend.map(m => m.visit_count || 0), backgroundColor: '#3b82f6', borderRadius: 6, barPercentage: 0.5 },
+              { label: '전화', data: s.monthlyTrend.map(m => m.phone_count || 0), backgroundColor: '#10b981', borderRadius: 6, barPercentage: 0.5 },
+              { label: '학회', data: s.monthlyTrend.map(m => m.conf_count || 0), backgroundColor: '#8b5cf6', borderRadius: 6, barPercentage: 0.5 },
+              { label: '이메일', data: s.monthlyTrend.map(m => m.email_count || 0), backgroundColor: '#f59e0b', borderRadius: 6, barPercentage: 0.5 },
+              { label: '온라인', data: s.monthlyTrend.map(m => m.online_count || 0), backgroundColor: '#6366f1', borderRadius: 6, barPercentage: 0.5 },
             ]
           },
           options: {
             responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 8, padding: 8, font: { size: 10 } } } },
-            scales: { y: { stacked: true, beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { stepSize: 1 } }, x: { stacked: true, grid: { display: false } } }
+            plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 8, boxHeight: 8, padding: 12, font: { size: 10, weight: '600' }, usePointStyle: true, pointStyle: 'circle' } } },
+            scales: { y: { stacked: true, beginAtZero: true, grid: { color: '#eef0f5', drawBorder: false }, ticks: { stepSize: 1, font: { size: 10 }, padding: 8 }, border: { display: false } }, x: { stacked: true, grid: { display: false }, ticks: { font: { size: 11, weight: '600' }, padding: 6 }, border: { display: false } } }
           }
         }));
       }, 150);
@@ -615,14 +616,21 @@ async function loadDash() {
   } catch (e) { console.error(e); document.getElementById('content').innerHTML = '<div class="p-7"><div class="card-flat p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i>데이터를 불러올 수 없습니다</div></div>' }
 }
 function sc(label, val, unit, icon, color, bg, link) {
-  return '<div class="sc cursor-pointer" onclick="' + (link ? "nav('" + link + "')" : '') + '"><div class="flex items-center gap-4"><div class="sc-icon" style="background:' + bg + '"><i class="fas ' + icon + '" style="color:' + color + '"></i></div><div><p class="text-[11px] text-slate-400 font-medium mb-0.5">' + label + '</p><div class="flex items-baseline gap-1"><span class="text-[22px] font-extrabold text-slate-800 tracking-tight">' + val + '</span><span class="text-xs text-slate-300 font-medium">' + unit + '</span></div></div></div></div>';
+  return '<div class="sc cursor-pointer" onclick="' + (link ? "nav('" + link + "')" : '') + '">' +
+    '<div class="flex items-center gap-3">' +
+    '<div class="sc-icon" style="background:' + bg + '"><i class="fas ' + icon + '" style="color:' + color + '"></i></div>' +
+    '<div class="min-w-0">' +
+    '<p class="text-[11px] text-slate-400 font-medium mb-0.5 truncate">' + label + '</p>' +
+    '<div class="flex items-baseline gap-1"><span class="text-[22px] font-extrabold tracking-tight" style="color:#1f2937;line-height:1.1">' + val + '</span><span class="text-[11px] text-slate-300 font-semibold">' + unit + '</span></div>' +
+    '</div></div></div>';
 }
 
 // ===== KPI Gauge =====
 function kpiGaugeCard(label, actual, target, icon, color) {
   var pct = target > 0 ? Math.min(Math.round(actual / target * 100), 100) : 0;
-  var barColor = pct >= 100 ? '#059669' : pct >= 70 ? '#3366ff' : pct >= 40 ? '#d97706' : '#ef4444';
-  return '<div class="flex items-center gap-3"><div class="flex-1"><div class="flex items-center justify-between mb-1"><span class="text-xs font-semibold text-slate-600"><i class="fas ' + icon + ' mr-1" style="color:' + color + '"></i>' + label + '</span><span class="text-xs font-bold" style="color:' + barColor + '">' + pct + '%</span></div><div class="w-full bg-gray-100 rounded-full h-2.5"><div class="h-2.5 rounded-full transition-all duration-500" style="width:' + pct + '%;background:' + barColor + '"></div></div><div class="text-[10px] text-slate-400 mt-0.5">' + actual + ' / ' + target + ' ' + (label === '미팅' ? '건' : '개') + '</div></div></div>';
+  var barColor = pct >= 100 ? '#059669' : pct >= 70 ? '#2563eb' : pct >= 40 ? '#d97706' : '#ef4444';
+  var barBg = pct >= 100 ? 'linear-gradient(90deg,#10b981,#059669)' : pct >= 70 ? 'linear-gradient(90deg,#3b82f6,#2563eb)' : pct >= 40 ? 'linear-gradient(90deg,#fbbf24,#d97706)' : 'linear-gradient(90deg,#f87171,#ef4444)';
+  return '<div class="flex items-center gap-3"><div class="flex-1"><div class="flex items-center justify-between mb-1.5"><span class="text-xs font-semibold text-slate-600"><i class="fas ' + icon + ' mr-1" style="color:' + color + '"></i>' + label + '</span><span class="text-xs font-bold" style="color:' + barColor + '">' + pct + '%</span></div><div class="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden"><div class="h-2.5 rounded-full transition-all duration-700" style="width:' + pct + '%;background:' + barBg + '"></div></div><div class="text-[10px] text-slate-400 mt-1 font-medium">' + actual + ' / ' + target + ' ' + (label === '미팅' ? '건' : '개') + '</div></div></div>';
 }
 
 // ===== KPI Settings Modal =====
@@ -1489,7 +1497,7 @@ function renderDocProfile() {
     (d.specialty ? '<span class="flex items-center gap-1.5"><i class="fas fa-microscope text-purple-400"></i>' + d.specialty + '</span>' : '') +
     '</div></div>' +
     '<div class="flex gap-2 lg:gap-3 pt-2 sm:pt-14 flex-wrap profile-header-stats">' +
-    profileStatBox('미팅', d.meeting_count || 0, '회', 'fa-handshake', '#3366ff', '#eef4ff') +
+    profileStatBox('미팅', d.meeting_count || 0, '회', 'fa-handshake', '#2563eb', '#eef4ff') +
     profileStatBox('논문', d.papers?.length || 0, '편', 'fa-file-lines', '#7c3aed', '#f5f3ff') +
     profileStatBox('최근', d.last_meeting ? daysAgo(d.last_meeting) : '없음', '', 'fa-clock', '#059669', '#ecfdf5') +
     '</div></div></div></div>' +
@@ -2725,7 +2733,7 @@ function renderCIChartsForTab(tab, s) {
   const defs = { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } };
   const years = s.years, y = s.yearly;
   const c10 = ['#818cf8', '#60a5fa', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#38bdf8', '#fb923c', '#ef4444'];
-  const rc = ['#3366ff', '#059669', '#d97706', '#8b5cf6', '#ef4444', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#64748b', '#0ea5e9', '#a855f7', '#14b8a6', '#f43f5e', '#eab308', '#6366f1', '#10b981'];
+  const rc = ['#2563eb', '#059669', '#d97706', '#8b5cf6', '#ef4444', '#ec4899', '#06b6d4', '#f97316', '#84cc16', '#64748b', '#0ea5e9', '#a855f7', '#14b8a6', '#f43f5e', '#eab308', '#6366f1', '#10b981'];
 
   if (tab === 'overview') {
     ciCharts.push(new Chart(document.getElementById('chart-yearly'), { type: 'bar', data: { labels: y.map(d => d.year + '년'), datasets: [{ label: '사용량', data: y.map(d => d.usage), backgroundColor: 'rgba(51,102,255,0.7)', borderRadius: 8, barPercentage: 0.4, order: 2 }, { label: '환자수', data: y.map(d => d.patients), type: 'line', borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', borderWidth: 2.5, pointRadius: 5, pointBackgroundColor: '#10b981', fill: true, tension: 0.4, order: 1 }] }, options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 15 } } }, scales: { y: { beginAtZero: false, grid: { color: 'rgba(0,0,0,0.04)' } }, x: { grid: { display: false } } } } }));
@@ -2754,13 +2762,13 @@ function renderCIChartsForTab(tab, s) {
   if (tab === 'institution') {
     const latestY = years[years.length - 1];
     const it = ['상급종합병원', '종합병원', '병원급', '의원급', '보건기관등'];
-    const ic = ['#3366ff', '#059669', '#d97706', '#8b5cf6', '#94a3b8'];
+    const ic = ['#2563eb', '#059669', '#d97706', '#8b5cf6', '#94a3b8'];
     ciCharts.push(new Chart(document.getElementById('chart-inst-trend'), { type: 'line', data: { labels: years.map(y => y + '년'), datasets: it.filter(t => years.some(yr => s.institution.find(x => x.year === yr && x.institution_type === t && x.patients > 0))).map((t, i) => ({ label: t, data: years.map(yr => { const r = s.institution.find(x => x.year === yr && x.institution_type === t); return r?.patients || 0 }), borderColor: ic[i], borderWidth: 2.5, pointRadius: 4, pointBackgroundColor: ic[i], tension: 0.4, fill: false })) }, options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10 } } }, scales: { y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' } }, x: { grid: { display: false } } } } }));
     const instL = s.institution.filter(r => r.year === latestY && r.patients > 0);
     ciCharts.push(new Chart(document.getElementById('chart-inst-pie'), { type: 'doughnut', data: { labels: instL.map(r => r.institution_type), datasets: [{ data: instL.map(r => r.patients), backgroundColor: ic.slice(0, instL.length), borderWidth: 2, borderColor: '#fff' }] }, options: { ...defs, cutout: '50%', plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, padding: 12 } } } } }));
   }
   if (tab === 'amount') {
-    ciCharts.push(new Chart(document.getElementById('chart-amount-trend'), { type: 'line', data: { labels: y.map(d => d.year + '년'), datasets: [{ label: '총 진료금액', data: y.map(d => d.amount), borderColor: '#3366ff', backgroundColor: 'rgba(51,102,255,0.1)', borderWidth: 3, pointRadius: 5, pointBackgroundColor: '#3366ff', fill: true, tension: 0.4 }] }, options: { ...defs, scales: { y: { beginAtZero: false, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => fmtAmount(v) } }, x: { grid: { display: false } } } } }));
+    ciCharts.push(new Chart(document.getElementById('chart-amount-trend'), { type: 'line', data: { labels: y.map(d => d.year + '년'), datasets: [{ label: '총 진료금액', data: y.map(d => d.amount), borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.08)', borderWidth: 2.5, pointRadius: 4, pointBackgroundColor: '#2563eb', fill: true, tension: 0.4 }] }, options: { ...defs, scales: { y: { beginAtZero: false, grid: { color: '#eef0f5' }, ticks: { callback: v => fmtAmount(v) } }, x: { grid: { display: false } } } } }));
     ciCharts.push(new Chart(document.getElementById('chart-amount-gender'), { type: 'bar', data: { labels: y.map(d => d.year + '년'), datasets: [{ label: '남성', data: y.map(d => d.male_amount), backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 6, barPercentage: 0.6 }, { label: '여성', data: y.map(d => d.female_amount), backgroundColor: 'rgba(244,114,182,0.7)', borderRadius: 6, barPercentage: 0.6 }] }, options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 15 } } }, scales: { y: { stacked: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => fmtAmount(v) } }, x: { stacked: true, grid: { display: false } } } } }));
   }
 }

@@ -120,7 +120,7 @@ const HTML = `<!DOCTYPE html>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="TODOC">
-<meta name="theme-color" content="#3366ff">
+<meta name="theme-color" content="#2563eb">
 <meta name="description" content="토닥 인공와우 영업 관리 시스템">
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
@@ -132,22 +132,22 @@ const HTML = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/axios@1.7.0/dist/axios.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>tailwind.config={theme:{extend:{fontFamily:{sans:['Pretendard','Inter','-apple-system','sans-serif']},colors:{brand:{50:'#eef4ff',100:'#d9e6ff',200:'#bcd2ff',300:'#8eb5ff',400:'#598eff',500:'#3366ff',600:'#1a4fff',700:'#0a3ae6',800:'#0d32ba',900:'#102d92'}}}}}</script>
+<script>tailwind.config={theme:{extend:{fontFamily:{sans:['Pretendard','Inter','-apple-system','sans-serif']},colors:{brand:{50:'#eef4ff',100:'#d9e6ff',200:'#bcd2ff',300:'#8eb5ff',400:'#598eff',500:'#2563eb',600:'#1d4ed8',700:'#1e40af',800:'#1e3a8a',900:'#102d92'}}}}}</script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="h-screen overflow-hidden overflow-x-hidden" style="height:100vh;height:100dvh">
 <div id="toast-wrap"></div>
 
 <!-- Auth Screen -->
-<div id="auth-screen" class="fixed inset-0 bg-gradient-to-br from-slate-50 via-white to-brand-50 z-[100] flex items-center justify-center p-4 hidden">
+<div id="auth-screen" class="fixed inset-0 z-[100] flex items-center justify-center p-4 hidden" style="background:linear-gradient(135deg, #f8f9fc 0%, #eef4ff 50%, #f1f3f9 100%)">
   <div class="w-full max-w-md">
-    <div id="auth-box" class="bg-white rounded-2xl shadow-xl border border-gray-100 p-8"></div>
-    <div class="text-center mt-6 text-[11px] text-slate-300">&copy; 2026 TODOC Inc. &middot; Cochlear Implant Solutions</div>
+    <div id="auth-box" class="bg-white rounded-2xl border border-gray-100/80 p-8" style="box-shadow:0 20px 40px -12px rgba(16,24,40,.12), 0 0 0 1px rgba(0,0,0,.03)"></div>
+    <div class="text-center mt-8 text-[11px] text-slate-300 tracking-wide">&copy; 2026 TODOC Inc. &middot; Cochlear Implant Solutions</div>
   </div>
 </div>
 
 <!-- Pull-to-Refresh indicator -->
-<div id="ptr-indicator" class="fixed top-0 left-0 right-0 z-[80] flex items-center justify-center py-3 bg-brand-500 text-white text-sm font-semibold transform -translate-y-full transition-transform duration-200" style="display:none">
+<div id="ptr-indicator" class="fixed top-0 left-0 right-0 z-[80] flex items-center justify-center py-3 text-white text-sm font-semibold transform -translate-y-full transition-transform duration-200" style="display:none;background:linear-gradient(135deg,#2563eb,#1d4ed8)">
   <i class="fas fa-sync-alt mr-2 ptr-spin"></i>새로고침 중...
 </div>
 
@@ -155,41 +155,42 @@ const HTML = `<!DOCTYPE html>
 <div id="app-main" class="flex hidden" style="height:100vh;height:100dvh">
 
 <!-- Mobile overlay -->
-<div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" onclick="toggleSidebar()"></div>
+<div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" style="backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)" onclick="toggleSidebar()"></div>
 
-<!-- Sidebar (hidden on mobile - use bottom nav instead) -->
-<aside id="sidebar" class="w-[250px] bg-gradient-to-b from-slate-900 to-slate-800 flex-col flex-shrink-0 select-none fixed lg:relative z-50 h-full -translate-x-full lg:translate-x-0 transition-transform duration-200 hidden lg:flex">
-  <div class="px-6 py-5 flex items-center gap-3">
-    <div class="w-10 h-10 rounded-xl bg-brand-500 flex items-center justify-center shadow-lg shadow-brand-500/30">
+<!-- Sidebar -->
+<aside id="sidebar" class="w-[250px] flex-col flex-shrink-0 select-none fixed lg:relative z-50 h-full -translate-x-full lg:translate-x-0 transition-transform duration-200 hidden lg:flex" style="background:linear-gradient(180deg, #0f172a 0%, #1e293b 100%)">
+  <div class="px-5 py-5 flex items-center gap-3">
+    <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:linear-gradient(135deg,#3b7bf7,#2563eb);box-shadow:0 4px 12px rgba(37,99,235,.35)">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm-2 13H8V9h2v7zm4 0h-2V9h2v7z" fill="#fff"/></svg>
     </div>
     <div>
-      <div class="text-white font-extrabold text-[15px] tracking-tight">TODOC</div>
-      <div class="text-slate-400 text-[10px] tracking-widest font-medium">SALES CRM</div>
+      <div class="text-white font-extrabold text-[15px] tracking-tight leading-tight">TODOC</div>
+      <div class="text-[10px] tracking-[.18em] font-semibold" style="color:rgba(148,163,184,.6)">SALES CRM</div>
     </div>
-    <button class="lg:hidden ml-auto text-slate-400 hover:text-white" onclick="toggleSidebar()"><i class="fas fa-xmark text-lg"></i></button>
+    <button class="lg:hidden ml-auto text-slate-400 hover:text-white transition" onclick="toggleSidebar()"><i class="fas fa-xmark text-lg"></i></button>
   </div>
-  <div class="h-px bg-slate-700/50 mx-5"></div>
-  <nav class="flex-1 py-4 space-y-1 overflow-y-auto">
+  <div class="h-px mx-5" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.15),transparent)"></div>
+  <nav class="flex-1 py-4 space-y-0.5 overflow-y-auto px-1">
+    <div class="px-4 mb-2"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Main</span></div>
     <div onclick="nav('dashboard')" id="n-dashboard" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-pie"></i></span>대시보드</div>
     <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>기관 관리</div>
     <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
     <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 관리</div>
-    <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
-    <div class="px-5 mb-2"><span class="text-[9px] text-slate-500 font-bold tracking-widest uppercase">Market Data</span></div>
+    <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)"></div>
+    <div class="px-4 mb-2"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Analytics</span></div>
     <div onclick="nav('cistats')" id="n-cistats" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
-    <div class="h-px bg-slate-700/50 mx-5 my-3"></div>
-    <div class="px-5 mb-2"><span class="text-[9px] text-slate-500 font-bold tracking-widest uppercase">System</span></div>
+    <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)"></div>
+    <div class="px-4 mb-2"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">System</span></div>
     <div onclick="nav('activity')" id="n-activity" class="nav-item"><span class="nav-icon"><i class="fas fa-clock-rotate-left"></i></span>활동 로그</div>
   </nav>
-  <div class="px-5 py-4 border-t border-slate-700/50">
-    <div class="text-[10px] text-slate-500 leading-relaxed font-medium">&copy; 2026 TODOC Inc.<br>Cochlear Implant Solutions</div>
+  <div class="px-5 py-4" style="border-top:1px solid rgba(148,163,184,.1)">
+    <div class="text-[10px] leading-relaxed font-medium" style="color:rgba(148,163,184,.35)">&copy; 2026 TODOC Inc.<br>Cochlear Implant Solutions</div>
   </div>
 </aside>
 
 <!-- Main -->
-<main class="flex-1 flex flex-col overflow-hidden min-w-0 bg-[#f8f9fb]">
-  <header id="app-header" class="h-[48px] lg:h-[60px] bg-white border-b border-gray-100 flex items-center px-3 lg:px-7 flex-shrink-0 gap-1.5 lg:gap-2 safe-top" style="min-height:48px">
+<main class="flex-1 flex flex-col overflow-hidden min-w-0" style="background:#f8f9fc">
+  <header id="app-header" class="h-[48px] lg:h-[60px] bg-white/90 flex items-center px-3 lg:px-7 flex-shrink-0 gap-1.5 lg:gap-3 safe-top" style="min-height:48px;border-bottom:1px solid #eef0f5;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
     <div class="flex items-center gap-1.5 lg:gap-3 min-w-0 flex-1 overflow-hidden">
       <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1 hidden" onclick="toggleSidebar()"><i class="fas fa-bars text-lg"></i></button>
       <h2 id="page-title" class="text-[14px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate leading-none"></h2>
@@ -200,13 +201,13 @@ const HTML = `<!DOCTYPE html>
     <!-- Global Search -->
     <div id="search-wrap-outer" class="flex-1 max-w-md mx-2 hidden sm:block">
       <div class="relative" id="search-wrap">
-        <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>
-        <input id="global-search" type="text" placeholder="기관, 의료진, 미팅 검색... (Ctrl+K)" class="input pl-9 pr-3 py-2 text-sm w-full !rounded-xl !border-gray-200 bg-gray-50 focus:bg-white" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off">
-        <div id="search-results" class="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-[70vh] overflow-y-auto"></div>
+        <i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>
+        <input id="global-search" type="text" placeholder="기관, 의료진, 미팅 검색... (Ctrl+K)" class="input pl-10 pr-3 py-2 text-sm w-full !border-gray-200 bg-gray-50/80 focus:bg-white" style="border-radius:10px" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off">
+        <div id="search-results" class="absolute top-full left-0 right-0 mt-1.5 bg-white border border-gray-100 z-50 hidden max-h-[70vh] overflow-y-auto" style="border-radius:14px;box-shadow:0 12px 32px -4px rgba(16,24,40,.12),0 0 0 1px rgba(0,0,0,.03)"></div>
       </div>
     </div>
     <div id="header-actions" class="flex items-center gap-1 lg:gap-2 flex-shrink-0"></div>
-    <div class="h-5 w-px bg-gray-200 mx-1 hidden lg:block"></div>
+    <div class="h-5 w-px bg-gray-200 mx-1.5 hidden lg:block"></div>
     <div id="user-menu" class="relative flex-shrink-0"></div>
   </header>
   <div id="content" class="flex-1 overflow-y-auto overflow-x-hidden" style="padding-bottom:calc(64px + env(safe-area-inset-bottom, 0px))"></div>
@@ -260,18 +261,18 @@ const HTML = `<!DOCTYPE html>
 
 <!-- Modal -->
 <div id="modal" class="fixed inset-0 modal-bg z-50 hidden items-end lg:items-center justify-center lg:p-4" onclick="if(event.target===this)tryCloseModal()">
-  <div id="modal-content" class="modal-box bg-white rounded-t-2xl lg:rounded-2xl shadow-2xl w-full max-w-lg overflow-y-auto" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px)" onclick="event.stopPropagation()">
-    <div class="flex items-center justify-between px-4 lg:px-6 py-3 lg:py-4 border-b border-gray-100 sticky top-0 bg-white z-10 rounded-t-2xl">
-      <h3 id="modal-title" class="font-bold text-slate-800 text-[15px]"></h3>
+  <div id="modal-content" class="modal-box bg-white w-full max-w-lg overflow-y-auto" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)" onclick="event.stopPropagation()">
+    <div class="flex items-center justify-between px-5 lg:px-6 py-3.5 lg:py-4 sticky top-0 bg-white z-10" style="border-bottom:1px solid #eef0f5;border-radius:20px 20px 0 0">
+      <h3 id="modal-title" class="font-bold text-slate-800 text-[15px] tracking-tight"></h3>
       <button onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
     </div>
-    <div id="modal-body" class="p-4 lg:p-6"></div>
+    <div id="modal-body" class="p-5 lg:p-6"></div>
   </div>
 </div>
 
 <!-- Confirm Dialog -->
 <div id="confirm-dialog" class="fixed inset-0 modal-bg z-[60] hidden flex items-center justify-center p-4">
-  <div class="modal-box bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 text-center">
+  <div class="bg-white w-full max-w-sm p-6 text-center" style="border-radius:20px;box-shadow:0 24px 48px -12px rgba(16,24,40,.18);animation:scaleIn .2s ease">
     <div id="confirm-icon" class="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4"><i class="fas fa-trash text-red-400 text-xl"></i></div>
     <h4 id="confirm-title" class="font-bold text-slate-800 text-[15px] mb-2"></h4>
     <p id="confirm-msg" class="text-sm text-slate-500 mb-6 leading-relaxed"></p>
