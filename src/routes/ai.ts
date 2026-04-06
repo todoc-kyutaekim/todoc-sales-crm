@@ -3,35 +3,102 @@ import { Hono } from 'hono'
 type Bindings = { DB: D1Database; OPENAI_API_KEY: string; OPENAI_BASE_URL: string }
 const ai = new Hono<{ Bindings: Bindings }>()
 
+// Model priority: fast & reliable for structured data extraction
+// gpt-5-mini is a reasoning model but much faster than gpt-5
+// claude-haiku-4-5 is excellent for data extraction (fast, accurate, no reasoning overhead)
+const AI_MODELS = ['claude-haiku-4-5', 'gpt-5-mini', 'claude-sonnet-4-5']
+
+async function callAIModel(apiKey: string, baseUrl: string, model: string, messages: any[], maxTokens: number): Promise<{ content: string; model: string; usage?: any }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 90000) // 90s timeout for AI calls
+  try {
+    const res = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ model, messages, temperature: 0.1, max_tokens: maxTokens }),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      const errText = await res.text()
+      console.error(`[AI-API] ${model} Error ${res.status}: ${errText.substring(0, 300)}`)
+      throw new Error(`AI API error ${res.status}`)
+    }
+    const data = await res.json() as any
+    const content = data.choices?.[0]?.message?.content || ''
+    const finishReason = data.choices?.[0]?.finish_reason
+    const usage = data.usage
+    
+    if (!content && finishReason === 'length') {
+      console.warn(`[AI-API] ${model} truncated (finish_reason=length). Usage:`, JSON.stringify(usage || {}))
+      throw new Error('Response truncated - all tokens used for reasoning')
+    }
+    if (!content) {
+      console.warn(`[AI-API] ${model} empty content. finish_reason=${finishReason}, usage:`, JSON.stringify(usage || {}))
+      throw new Error('Empty content from model')
+    }
+    console.log(`[AI-API] ${model} OK. Content length: ${content.length}, finish: ${finishReason}`)
+    return { content, model, usage }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function askAI(apiKey: string, baseUrl: string, prompt: string, systemPrompt?: string): Promise<string> {
   const messages: any[] = []
   if (systemPrompt) messages.push({ role: 'system', content: systemPrompt })
   messages.push({ role: 'user', content: prompt })
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({
-      model: 'gpt-5',
-      messages,
-      temperature: 0.1,
-      max_tokens: 16000
-    })
-  })
-  if (!res.ok) {
-    const errText = await res.text()
-    console.error(`[AI-API] Error ${res.status}: ${errText.substring(0, 500)}`)
-    throw new Error(`AI API error ${res.status}: ${errText}`)
+  // Try models in priority order with fallback
+  for (const model of AI_MODELS) {
+    try {
+      const result = await callAIModel(apiKey, baseUrl, model, messages, 16000)
+      return result.content
+    } catch (e: any) {
+      console.warn(`[AI-API] ${model} failed: ${e.message}. Trying next model...`)
+      continue
+    }
   }
-  const data = await res.json() as any
-  const content = data.choices?.[0]?.message?.content || ''
-  if (!content && data.choices?.[0]?.finish_reason === 'length') {
-    console.warn('[AI-API] Response truncated (finish_reason=length). Usage:', JSON.stringify(data.usage || {}))
+  
+  // All models failed
+  console.error('[AI-API] All models failed for prompt (first 200):', prompt.substring(0, 200))
+  throw new Error('All AI models failed')
+}
+
+// ===== JSON extraction helper =====
+// Handles: raw JSON, markdown code blocks (```json ... ```), and mixed text with JSON
+function extractJsonArray(raw: string): any[] | null {
+  // Try 1: Direct JSON array match
+  const directMatch = raw.match(/\[[\s\S]*\]/)
+  if (directMatch) {
+    try { return JSON.parse(directMatch[0]) } catch (e) { /* continue */ }
   }
-  if (!content) {
-    console.warn('[AI-API] Empty content. Full response:', JSON.stringify(data).substring(0, 500))
+  // Try 2: Markdown code block
+  const codeBlockMatch = raw.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/)
+  if (codeBlockMatch) {
+    try { return JSON.parse(codeBlockMatch[1]) } catch (e) { /* continue */ }
   }
-  return content
+  // Try 3: Clean up common issues (trailing commas, etc.)
+  if (directMatch) {
+    try {
+      const cleaned = directMatch[0]
+        .replace(/,\s*([}\]])/g, '$1')  // Remove trailing commas
+        .replace(/[\x00-\x1f]/g, ' ')   // Remove control chars
+      return JSON.parse(cleaned)
+    } catch (e) { /* continue */ }
+  }
+  return null
+}
+
+function extractJsonObject(raw: string): any | null {
+  const codeBlockMatch = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/)
+  if (codeBlockMatch) {
+    try { return JSON.parse(codeBlockMatch[1]) } catch (e) { /* continue */ }
+  }
+  const directMatch = raw.match(/\{[\s\S]*\}/)
+  if (directMatch) {
+    try { return JSON.parse(directMatch[0]) } catch (e) { /* continue */ }
+  }
+  return null
 }
 
 // ===== Fetch with timeout helper =====
@@ -371,9 +438,8 @@ JSON 배열만 반환:
         ? '한국 이비인후과 의원/클리닉에 대해 잘 아는 전문가입니다. 확실하게 알고 있는 정보만 제공하며, 불확실한 정보는 제외합니다.'
         : '한국 의료계에 대해 잘 아는 전문가입니다. 확실하게 알고 있는 정보만 제공하며, 불확실한 정보는 제외합니다.'
       const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, fallbackPrompt, systemPrompt)
-      const jsonMatch = raw.match(/\[[\s\S]*\]/)
-      if (jsonMatch) {
-        const doctors = JSON.parse(jsonMatch[0])
+      const doctors = extractJsonArray(raw)
+      if (doctors) {
         const cleaned = doctors.map((d: any) => ({
           name: (d.name || '').trim(),
           department: d.department || '이비인후과',
@@ -465,35 +531,10 @@ JSON 배열만 반환:
       : '당신은 한국 병원 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
     const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, combinedPrompt, systemPrompt)
     console.log('[AI-DOCTORS] Response length:', raw.length, 'chars. First 200:', raw.substring(0, 200))
-    const jsonMatch = raw.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) {
+    const doctors = extractJsonArray(raw)
+    if (!doctors) {
       console.error('[AI-DOCTORS] No JSON array in AI response. Raw (first 1000):', raw.substring(0, 1000))
-      // Try to extract from markdown code block
-      const codeBlockMatch = raw.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/)
-      if (codeBlockMatch) {
-        try {
-          const doctors = JSON.parse(codeBlockMatch[1])
-          const cleaned = doctors.map((d: any) => ({
-            name: (d.name || '').trim(),
-            department: d.department || '이비인후과',
-            position: (d.position || '').trim(),
-            specialty: (d.specialty || '').trim(),
-            influence_level: ['high', 'medium', 'low'].includes(d.influence_level) ? d.influence_level : 'medium',
-            notes: (d.notes || '').trim(),
-            source: d.source || sourceUrl || '웹 검색'
-          })).filter((d: any) => d.name.length > 0)
-          return c.json({ data: cleaned, source: sourceUrl || '웹 검색', crawled: !!crawledContent })
-        } catch (e2) { /* fall through */ }
-      }
       return c.json({ data: [], message: '해당 기관의 관련 의료진 정보를 찾을 수 없습니다.', source: sourceUrl })
-    }
-
-    let doctors: any[]
-    try {
-      doctors = JSON.parse(jsonMatch[0])
-    } catch (parseErr: any) {
-      console.error('[AI-DOCTORS] JSON parse error:', parseErr.message, 'Match (first 500):', jsonMatch[0].substring(0, 500))
-      return c.json({ data: [], message: 'AI 응답 파싱 실패', source: sourceUrl })
     }
     const cleaned = doctors.map((d: any) => ({
       name: (d.name || '').trim(),
@@ -603,10 +644,8 @@ JSON 형식으로만 반환:
       ? '한국 이비인후과 의원/클리닉 의료진 프로필 데이터를 정확히 추출하는 전문가입니다. 크롤링된 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
       : '한국 병원 의료진 프로필 데이터를 정확히 추출하는 전문가입니다. 크롤링된 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
     const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, prompt, systemPrompt)
-    const jsonMatch = raw.match(/\{[\s\S]*\}/)
-    if (!jsonMatch) return c.json({ data: { bio: '', education: '', career: '', specialty: '', position: '' }, source: sourceUrl })
-
-    const profile = JSON.parse(jsonMatch[0])
+    const profile = extractJsonObject(raw)
+    if (!profile) return c.json({ data: { bio: '', education: '', career: '', specialty: '', position: '' }, source: sourceUrl })
     // Clean and normalize line breaks: AI sometimes returns literal "\n" strings
     const clean = (s: string) => (s || '').replace(/\\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
     // Remove empty lines from education/career lists
@@ -640,10 +679,9 @@ Region: 서울, 경기, 부산, 대구, 광주, 대전, 인천, 울산, 세종, 
 
   try {
     const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, prompt)
-    const jsonMatch = raw.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) return c.json({ data: [] })
+    const hospitals = extractJsonArray(raw)
+    if (!hospitals) return c.json({ data: [] })
 
-    const hospitals = JSON.parse(jsonMatch[0])
     const cleaned = hospitals.map((h: any) => ({
       name: (h.name || '').trim(),
       region: (h.region || '').trim(),
@@ -886,11 +924,11 @@ ai.post('/doctor-papers', async (c) => {
           c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL,
           `Convert the Korean name "${nameKR}" to its common English/romanized forms used in academic publications. Return a JSON array of possible romanizations like ["Lee Jun Ho", "Lee JH"]. Only JSON array, no other text.`
         )
-        const match = aiRaw.match(/\[[\s\S]*\]/)
-        if (match) {
-          const aiNames = JSON.parse(match[0]).filter((n: string) => n.length > 2)
-          if (aiNames.length) {
-            return await searchPubMedWithNames(aiNames, hospitalEng, SEARCH_TERMS)
+        const aiNames = extractJsonArray(aiRaw)
+        if (aiNames && aiNames.length) {
+          const filtered = aiNames.filter((n: string) => n.length > 2)
+          if (filtered.length) {
+            return await searchPubMedWithNames(filtered, hospitalEng, SEARCH_TERMS)
           }
         }
       } catch (e) { /* ignore */ }

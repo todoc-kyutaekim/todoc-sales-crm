@@ -761,7 +761,7 @@ async function fetchAIDoctors(hid) {
     }, s.delay);
   });
   try {
-    var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region, type: h.type || '' }, { timeout: 90000 });
+    var res = await API.post('/ai/hospital-doctors', { hospitalName: h.name, region: h.region, type: h.type || '' }, { timeout: 120000 });
     progressTimers.forEach(function(t) { clearTimeout(t); });
     var doctors = res.data.data || [];
     var source = res.data.source || '';
@@ -847,7 +847,7 @@ async function addAIDoctors(hid) {
       
       // Step 1: Fetch profile (bio, education, career)
       try {
-        var profRes = await API.post('/ai/doctor-profile', { doctorName: dr.name, hospitalName: dr.hospitalName, department: '이비인후과' }, { timeout: 30000 });
+        var profRes = await API.post('/ai/doctor-profile', { doctorName: dr.name, hospitalName: dr.hospitalName, department: '이비인후과' }, { timeout: 60000 });
         var prof = profRes.data && profRes.data.data;
         if (prof && (prof.bio || prof.education || prof.career)) {
           var profileUpdate = {};
@@ -871,7 +871,7 @@ async function addAIDoctors(hid) {
       
       // Step 2: Fetch PubMed papers
       try {
-        var papersRes = await API.post('/ai/doctor-papers', { doctorName: dr.name, hospitalName: dr.hospitalName, specialty: '' }, { timeout: 30000 });
+        var papersRes = await API.post('/ai/doctor-papers', { doctorName: dr.name, hospitalName: dr.hospitalName, specialty: '' }, { timeout: 60000 });
         var papers = (papersRes.data && papersRes.data.data) || [];
         var addedPapers = 0;
         for (var k = 0; k < Math.min(papers.length, 10); k++) {
@@ -921,7 +921,7 @@ async function refreshAllProfiles(hid) {
       var bStatusEl = document.getElementById('profile-batch-status');
       if (bStatusEl) bStatusEl.innerHTML += '<div id="pb-dr-' + dr.id + '" class="text-xs text-slate-400"><i class="fas fa-spinner fa-spin text-blue-400 mr-1"></i>' + dr.name + ' 프로필 조회 중...</div>';
       try {
-        var profRes = await API.post('/ai/doctor-profile', { doctorName: dr.name, hospitalName: hospitalName, department: dr.department || '이비인후과' }, { timeout: 30000 });
+        var profRes = await API.post('/ai/doctor-profile', { doctorName: dr.name, hospitalName: hospitalName, department: dr.department || '이비인후과' }, { timeout: 60000 });
         var prof = profRes.data && profRes.data.data;
         if (prof && (prof.bio || prof.education || prof.career)) {
           var profileUpdate = {};
@@ -956,7 +956,7 @@ async function refreshDocProfile(docId) {
   var btn = event.target.closest('button');
   if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-1.5"></i>조회 중...'; }
   try {
-    var profRes = await API.post('/ai/doctor-profile', { doctorName: d.name, hospitalName: d.hospital_name || '', department: d.department || '이비인후과' }, { timeout: 30000 });
+    var profRes = await API.post('/ai/doctor-profile', { doctorName: d.name, hospitalName: d.hospital_name || '', department: d.department || '이비인후과' }, { timeout: 60000 });
     var prof = profRes.data && profRes.data.data;
     if (prof && (prof.bio || prof.education || prof.career)) {
       var profileUpdate = {};
