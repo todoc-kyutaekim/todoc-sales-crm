@@ -1527,19 +1527,30 @@ function renderMeetCalendar() {
   var monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
   var dayLabels = ['일','월','화','수','목','금','토'];
   var todayStr = new Date().toISOString().split('T')[0];
-  // Group meetings by date
+  // Group meetings by date (including next_meeting_date as scheduled)
   var meetMap = {};
   meets.forEach(function(mt) {
     if (!mt.meeting_date) return;
     var d = mt.meeting_date.substring(0, 10);
     if (!meetMap[d]) meetMap[d] = [];
     meetMap[d].push(mt);
+    // Also show next_meeting_date as upcoming scheduled meeting
+    if (mt.next_meeting_date) {
+      var nd = mt.next_meeting_date.substring(0, 10);
+      if (!meetMap[nd]) meetMap[nd] = [];
+      // Create a virtual entry for the next scheduled meeting
+      var existing = meetMap[nd].some(function(e) { return e.id === mt.id && e._isNextMeeting; });
+      if (!existing) {
+        meetMap[nd].push(Object.assign({}, mt, { _isNextMeeting: true, _originalDate: mt.meeting_date, meeting_date: nd }));
+      }
+    }
   });
   // Stats for this month
   var monthPrefix = y + '-' + String(m + 1).padStart(2, '0');
-  var monthMeets = meets.filter(function(mt) { return mt.meeting_date && mt.meeting_date.startsWith(monthPrefix); });
+  var allMonthEntries = [];
+  Object.keys(meetMap).forEach(function(d) { if (d.startsWith(monthPrefix)) meetMap[d].forEach(function(mt) { allMonthEntries.push({ date: d, mt: mt }); }); });
   var pastCount = 0, futureCount = 0;
-  monthMeets.forEach(function(mt) { if (mt.meeting_date <= todayStr) pastCount++; else futureCount++; });
+  allMonthEntries.forEach(function(e) { if (e.date <= todayStr) pastCount++; else futureCount++; });
 
   var html = '<div class="card-flat p-4 lg:p-6 mb-4">' +
     '<div class="flex items-center justify-between mb-5">' +
@@ -1548,7 +1559,7 @@ function renderMeetCalendar() {
     '<div class="flex items-center justify-center gap-3 mt-1 text-[11px]">' +
     '<span class="text-slate-400"><i class="fas fa-calendar-check text-emerald-400 mr-1"></i>완료 <strong class="text-emerald-600">' + pastCount + '</strong></span>' +
     '<span class="text-slate-400"><i class="fas fa-clock text-blue-400 mr-1"></i>예정 <strong class="text-blue-600">' + futureCount + '</strong></span>' +
-    '<span class="text-slate-400">총 <strong class="text-slate-700">' + monthMeets.length + '</strong>건</span></div></div>' +
+    '<span class="text-slate-400">총 <strong class="text-slate-700">' + allMonthEntries.length + '</strong>건</span></div></div>' +
     '<button class="btn btn-ghost btn-sm" onclick="window._meetCalMonth++;if(window._meetCalMonth>11){window._meetCalYear++;window._meetCalMonth=0;}renderMeetCalendar()"><i class="fas fa-chevron-right"></i></button></div>';
   // Day headers
   html += '<div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold mb-2">' +
@@ -1576,9 +1587,12 @@ function renderMeetCalendar() {
       var tc = { visit:'blue', phone:'emerald', conference:'violet', email:'amber', online:'indigo' };
       var c = tc[mt.meeting_type] || 'slate';
       var icon = { visit:'fa-hospital', phone:'fa-phone', conference:'fa-chalkboard-user', email:'fa-envelope', online:'fa-video' };
+      var isNext = mt._isNextMeeting;
       html += '<div class="text-[7px] lg:text-[9px] truncate rounded px-1 py-0.5 mt-0.5 flex items-center gap-0.5 ' +
-        (isFuture ? 'bg-' + c + '-100 text-' + c + '-700 font-semibold' : 'bg-' + c + '-50 text-' + c + '-500') + '">' +
-        '<i class="fas ' + (icon[mt.meeting_type] || 'fa-calendar') + ' text-[6px] lg:text-[7px]"></i>' + meetDoctorNames(mt) + '</div>';
+        (isNext ? 'bg-amber-100 text-amber-700 font-semibold border border-dashed border-amber-300' :
+         isFuture ? 'bg-' + c + '-100 text-' + c + '-700 font-semibold' : 'bg-' + c + '-50 text-' + c + '-500') + '">' +
+        '<i class="fas ' + (isNext ? 'fa-clock' : (icon[mt.meeting_type] || 'fa-calendar')) + ' text-[6px] lg:text-[7px]"></i>' +
+        (isNext ? '예정: ' : '') + meetDoctorNames(mt) + '</div>';
     });
     if (dayMeets.length > 2) html += '<div class="text-[7px] lg:text-[8px] text-slate-400 mt-0.5 text-center">+' + (dayMeets.length - 2) + '</div>';
     html += '</div>';
@@ -1592,22 +1606,33 @@ function renderMeetCalendar() {
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-blue-100 border border-blue-200"></span>방문</span>' +
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-emerald-100 border border-emerald-200"></span>전화</span>' +
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-violet-100 border border-violet-200"></span>학회</span>' +
+    '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-amber-100 border border-dashed border-amber-300"></span>다음 미팅 예정</span>' +
     '</div></div>';
 
-  // Upcoming section below calendar
-  var upcoming = meets.filter(function(mt) { return mt.meeting_date >= todayStr; }).sort(function(a, b) { return a.meeting_date.localeCompare(b.meeting_date); }).slice(0, 5);
+  // Upcoming section below calendar - include next_meeting_date as scheduled
+  var upcomingList = [];
+  meets.forEach(function(mt) {
+    if (mt.meeting_date >= todayStr) upcomingList.push(mt);
+    if (mt.next_meeting_date && mt.next_meeting_date >= todayStr) {
+      upcomingList.push(Object.assign({}, mt, { _isNextMeeting: true, _originalDate: mt.meeting_date, meeting_date: mt.next_meeting_date }));
+    }
+  });
+  upcomingList.sort(function(a, b) { return a.meeting_date.localeCompare(b.meeting_date); });
+  var upcoming = upcomingList.slice(0, 5);
   var recent = meets.filter(function(mt) { return mt.meeting_date < todayStr; }).sort(function(a, b) { return b.meeting_date.localeCompare(a.meeting_date); }).slice(0, 5);
 
   html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">';
   // Upcoming meetings
-  html += '<div class="card-flat p-4"><div class="flex items-center gap-2 mb-3"><div class="w-6 h-6 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-clock text-blue-500 text-[10px]"></i></div><span class="font-bold text-sm text-slate-800">예정된 미팅</span><span class="text-[10px] text-blue-500 font-medium">' + meets.filter(function(mt){return mt.meeting_date>=todayStr}).length + '건</span></div>';
+  html += '<div class="card-flat p-4"><div class="flex items-center gap-2 mb-3"><div class="w-6 h-6 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-clock text-blue-500 text-[10px]"></i></div><span class="font-bold text-sm text-slate-800">예정된 미팅</span><span class="text-[10px] text-blue-500 font-medium">' + upcomingList.length + '건</span></div>';
   if (upcoming.length) {
     html += '<div class="space-y-2">' + upcoming.map(function(mt) {
       var daysLeft = Math.ceil((new Date(mt.meeting_date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / 86400000);
       var urgency = daysLeft === 0 ? 'bg-red-50 border-red-200 text-red-600' : daysLeft <= 3 ? 'bg-amber-50 border-amber-200 text-amber-600' : 'bg-blue-50 border-blue-200 text-blue-600';
+      var isNext = mt._isNextMeeting;
+      if (isNext) urgency = 'bg-amber-50 border-amber-200 border-dashed text-amber-700';
       return '<div class="flex items-center gap-3 p-2.5 rounded-lg border ' + urgency + ' cursor-pointer hover:shadow-sm transition-all" onclick="showDayMeetsInline(\'' + mt.meeting_date + '\')">' +
         '<div class="text-center flex-shrink-0 w-10"><div class="text-[10px] font-bold">' + (daysLeft === 0 ? 'D-DAY' : 'D-' + daysLeft) + '</div><div class="text-[9px] opacity-70">' + fmtShort(mt.meeting_date) + '</div></div>' +
-        '<div class="flex-1 min-w-0"><div class="flex items-center gap-1.5">' + mtBadge(mt.meeting_type) + '<span class="font-semibold text-xs truncate">' + meetDoctorNames(mt) + '</span></div>' +
+        '<div class="flex-1 min-w-0"><div class="flex items-center gap-1.5">' + (isNext ? '<span class="text-[8px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full font-bold">다음 미팅</span>' : mtBadge(mt.meeting_type)) + '<span class="font-semibold text-xs truncate">' + meetDoctorNames(mt) + '</span></div>' +
         '<div class="text-[10px] opacity-70 truncate">' + (mt.hospital_name || '') + (mt.purpose ? ' · ' + mt.purpose : '') + '</div></div></div>';
     }).join('') + '</div>';
   } else {
@@ -1636,6 +1661,9 @@ function renderMeetCalendar() {
 // Inline day detail (replaces modal version for this page)
 window.showDayMeetsInline = function(dateStr) {
   var dayMeets = (window._meetList || []).filter(function(m) { return m.meeting_date === dateStr; });
+  // Also include meetings where next_meeting_date matches this date
+  var nextMeets = (window._meetList || []).filter(function(m) { return m.next_meeting_date === dateStr && m.meeting_date !== dateStr; });
+  nextMeets.forEach(function(m) { dayMeets.push(Object.assign({}, m, { _isNextMeeting: true, _originalDate: m.meeting_date, meeting_date: dateStr })); });
   var meetDay = new Date(dateStr + 'T00:00:00');
   var dayIdx = (meetDay.getDay() + 6) % 7;
   var dayKr = dayIdx < 6 ? DAYS_KR[dayIdx] : '일';
@@ -1666,7 +1694,9 @@ window.showDayMeetsInline = function(dateStr) {
         });
         if (hints.length) schedInfo = '<div class="flex flex-wrap gap-1 mt-1">' + hints.join('') + '</div>';
       }
-      return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md" onclick="closeModal();showMeetDetail(' + JSON.stringify(m).replace(/"/g, '&quot;') + ')">' +
+      var isNextMeet = m._isNextMeeting;
+      return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md ' + (isNextMeet ? 'border-amber-200 border-dashed bg-amber-50/30' : '') + '" onclick="' + (isNextMeet ? '' : 'closeModal();showMeetDetail(' + JSON.stringify(m).replace(/"/g, '&quot;') + ')') + '">' +
+        (isNextMeet ? '<div class="text-[9px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-bold inline-block mb-1"><i class="fas fa-clock mr-1"></i>다음 미팅 예정</div>' : '') +
         '<div class="flex items-center gap-2 mb-1">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
         '<div class="text-[11px] text-slate-400">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div>' +
         (m.result ? '<div class="text-[10px] text-emerald-600 mt-1"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
@@ -1684,7 +1714,14 @@ window.showDayMeetsInline = function(dateStr) {
 function renderMeetUpcoming() {
   var meets = window._meetList || [];
   var todayStr = new Date().toISOString().split('T')[0];
-  var upcoming = meets.filter(function(mt) { return mt.meeting_date >= todayStr; }).sort(function(a, b) { return a.meeting_date.localeCompare(b.meeting_date); });
+  // Include next_meeting_date entries in upcoming
+  var upcomingRaw = meets.filter(function(mt) { return mt.meeting_date >= todayStr; });
+  meets.forEach(function(mt) {
+    if (mt.next_meeting_date && mt.next_meeting_date >= todayStr) {
+      upcomingRaw.push(Object.assign({}, mt, { _isNextMeeting: true, _originalDate: mt.meeting_date, meeting_date: mt.next_meeting_date }));
+    }
+  });
+  var upcoming = upcomingRaw.sort(function(a, b) { return a.meeting_date.localeCompare(b.meeting_date); });
   var past = meets.filter(function(mt) { return mt.meeting_date < todayStr; }).sort(function(a, b) { return b.meeting_date.localeCompare(a.meeting_date); });
   var q = (document.getElementById('m-search')?.value || '').toLowerCase();
   var t = document.getElementById('m-type')?.value || '';
