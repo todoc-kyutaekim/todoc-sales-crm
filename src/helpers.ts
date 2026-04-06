@@ -23,3 +23,20 @@ export function safeLimit(v: string | undefined | null, max: number = 100): numb
 export function safeLike(v: string): string {
   return v.replace(/[%_]/g, '')
 }
+
+// Standardized API error response
+export function apiError(c: any, statusCode: number, message: string, code: string) {
+  return c.json({ error: message, code }, statusCode)
+}
+
+// Common error codes
+export const ErrorCodes = {
+  VALIDATION: 'VALIDATION_ERROR',
+  NOT_FOUND: 'NOT_FOUND',
+  UNAUTHORIZED: 'UNAUTHORIZED',
+  FORBIDDEN: 'FORBIDDEN',
+  CONFLICT: 'CONFLICT',
+  INTERNAL: 'INTERNAL_ERROR',
+  AI_ERROR: 'AI_ERROR',
+  EXTERNAL_API: 'EXTERNAL_API_ERROR',
+} as const

@@ -689,7 +689,7 @@ function renderDoctorsTab(h, docs) {
     '<div class="flex-1 min-w-0">' +
     '<div class="flex items-center gap-2 mb-1"><span class="font-bold text-[14px] text-slate-800">' + d.name + '</span><span class="text-xs text-slate-400">' + (d.position || '') + '</span>' + infBadge(d.influence_level) + '</div>' +
     '<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400 mb-2">' + (d.department ? '<span><i class="fas fa-stethoscope mr-1 text-slate-300"></i>' + d.department + '</span>' : '') + (d.specialty ? '<span class="hidden sm:inline"><i class="fas fa-microscope mr-1 text-slate-300"></i>' + d.specialty + '</span>' : '') + '</div>' +
-    '<div class="flex items-center gap-3 text-[11px]"><span class="text-slate-400"><i class="fas fa-handshake mr-1"></i>' + (d.meeting_count || 0) + '회</span>' + (d.last_meeting ? '<span class="' + daysClass(d.last_meeting) + '"><i class="fas fa-clock mr-1"></i>' + daysAgo(d.last_meeting) + '</span>' : '') + '</div></div>' +
+    '<div class="flex items-center gap-3 text-[11px]"><span class="text-slate-400"><i class="fas fa-handshake mr-1"></i>' + (d.meeting_count || 0) + '회</span>' + (d.last_meeting ? '<span class="' + daysClass(d.last_meeting) + '"><i class="fas fa-clock mr-1"></i>' + daysAgo(d.last_meeting) + '</span>' : '') + (d.clinic_hours ? '<span class="text-cyan-500"><i class="fas fa-calendar-days mr-1"></i>외래</span>' : '') + '</div></div>' +
     '<div class="flex flex-col gap-1 flex-shrink-0">' +
     '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="event.stopPropagation();showMeetForm(' + h.id + ',' + d.id + ')" title="미팅 추가"><i class="fas fa-calendar-plus text-emerald-500"></i></button>' +
     '<button class="btn btn-ghost text-xs px-2 py-1.5" onclick="event.stopPropagation();showDocForm(' + h.id + ',' + d.id + ')" title="수정"><i class="fas fa-pen text-slate-400"></i></button>' +
@@ -1108,6 +1108,7 @@ function renderProfileOverview(d) {
   if (d.education) { const eduLines = d.education.split('\n').filter(e => e.trim()); html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-amber-50 flex items-center justify-center"><i class="fas fa-graduation-cap text-amber-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">학력</span></div><div class="space-y-2.5">' + eduLines.map(e => '<div class="flex items-start gap-3"><div class="w-2 h-2 rounded-full bg-amber-300 mt-1.5 flex-shrink-0"></div><span class="text-sm text-slate-600">' + e + '</span></div>').join('') + '</div></div>'; }
   if (d.career) { const cl = d.career.split('\n').filter(c => c.trim()); html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-briefcase text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">경력</span></div><div class="relative pl-5"><div class="absolute left-[3px] top-1 bottom-1 w-0.5 bg-emerald-100"></div><div class="space-y-3">' + cl.map(c => '<div class="flex items-start gap-3 relative"><div class="w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-white shadow-sm flex-shrink-0 mt-1 -ml-[7px]"></div><span class="text-sm text-slate-600">' + c + '</span></div>').join('') + '</div></div></div>'; }
   if (d.notes) { html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-sticky-note text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">영업 메모</span></div><div class="bg-amber-50/70 rounded-xl p-4 text-[13px] text-amber-800 leading-relaxed"><i class="fas fa-lightbulb text-amber-400 mr-1.5"></i>' + d.notes + '</div></div>'; }
+  html += renderClinicHours(d.clinic_hours);
   html += '</div><div class="lg:col-span-2 space-y-5">';
   html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-id-card text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기본 정보</span></div><div class="space-y-3">' + infoRow('이름', d.name) + infoRow('직위', d.position) + infoRow('진료과', d.department) + infoRow('전문분야', d.specialty) + infoRow('소속 병원', d.hospital_name) + infoRow('지역', d.hospital_region) + '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">영향력</span><span>' + infBadge(d.influence_level) + '</span></div></div></div>';
   if (d.papers?.length) { html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-file-lines text-purple-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">최근 논문</span></div><span class="text-[11px] text-brand-500 font-semibold cursor-pointer" onclick="profileTab=\'papers\';renderDocProfile()">전체 &rarr;</span></div>' + d.papers.slice(0, 3).map(p => '<div class="py-2.5 border-b border-gray-50 last:border-0">' + (p.url ? '<a href="' + p.url + '" target="_blank" rel="noopener noreferrer" class="text-[13px] font-semibold text-brand-600 hover:text-brand-800 leading-snug mb-1 line-clamp-2 block transition-colors"><i class="fas fa-link text-[10px] mr-1 text-brand-400"></i>' + p.title + '</a>' : '<div class="text-[13px] font-semibold text-slate-700 leading-snug mb-1 line-clamp-2">' + p.title + '</div>') + '<div class="text-[11px] text-slate-400">' + p.journal + (p.year ? ' &middot; ' + p.year : '') + '</div></div>').join('') + '</div>'; }
@@ -1486,17 +1487,18 @@ async function showHospForm(id) {
   setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
 }
 async function showDocForm(hid, did) {
-  let d = { name: '', department: '이비인후과', position: '', phone: '', email: '', specialty: '', influence_level: 'medium', notes: '', hospital_id: hid, bio: '', education: '', career: '' };
+  let d = { name: '', department: '이비인후과', position: '', phone: '', email: '', specialty: '', influence_level: 'medium', notes: '', hospital_id: hid, bio: '', education: '', career: '', clinic_hours: '' };
   let hospName = '';
   if (did) { try { const dr = (await API.get('/doctors/' + did)).data.data; if (dr) { d = dr; hospName = dr.hospital_name || '' } } catch (e) { } }
   if (!hospName) { try { const hr = (await API.get('/hospitals/' + hid)).data.data; hospName = hr.name || '' } catch(e) {} }
   openModal(did ? '의료진 수정' : '새 의료진 추가',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' + field('이름 *', 'name', 'text', d.name) + field('진료과', 'department', 'text', d.department) + field('직위', 'position', 'text', d.position) + field('전화번호', 'phone', 'tel', d.phone) + field('이메일', 'email', 'email', d.email) + field('전문분야', 'specialty', 'text', d.specialty) + field('영향력', 'influence_level', 'select', d.influence_level, [{ v: 'high', l: '핵심' }, { v: 'medium', l: '주요' }, { v: 'low', l: '일반' }]) +
+    '<div class="col-span-full"><label class="input-label"><i class="fas fa-clock text-slate-300 mr-1"></i>외래 시간 <span class="text-[10px] text-slate-400 font-normal">(방문 일정 참고)</span></label>' + clinicHoursEditor(d.clinic_hours) + '</div>' +
     '<div class="col-span-full"><button type="button" id="btn-ai-profile" class="btn btn-outline btn-sm w-full !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIProfile(\'' + hid + '\')"><i class="fas fa-wand-magic-sparkles mr-1.5"></i>AI 프로필 자동 조회 (학력/경력/소개)</button><div id="ai-profile-status" class="text-xs text-center text-slate-400 mt-1 hidden"></div></div>' +
     field('소개', 'bio', 'textarea', d.bio || '') + field('학력', 'education', 'textarea', (d.education || '').replace(/\\n/g, '\n')) + field('경력', 'career', 'textarea', (d.career || '').replace(/\\n/g, '\n')) + field('영업 메모', 'notes', 'textarea', d.notes) +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (did ? '저장' : '추가') + '</button></div></form>', true);
   window._docFormHospName = hospName;
-  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.name) { toast('이름을 입력하세요', 'warn'); return } try { if (did) { await API.put('/doctors/' + did, f); toast('의료진 정보 수정됨') } else { await API.post('/doctors', f); toast('새 의료진 추가됨') } closeModal(); if (window._docProfile && window._docProfile.id === did) viewDocProfile(did); else viewHosp(hid) } catch (e) { toast('저장 실패', 'err') } };
+  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.name) { toast('이름을 입력하세요', 'warn'); return } f.clinic_hours = collectClinicHours(); try { if (did) { await API.put('/doctors/' + did, f); toast('의료진 정보 수정됨') } else { await API.post('/doctors', f); toast('새 의료진 추가됨') } closeModal(); if (window._docProfile && window._docProfile.id === did) viewDocProfile(did); else viewHosp(hid) } catch (e) { toast('저장 실패', 'err') } };
   setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
 }
 
@@ -2247,6 +2249,53 @@ function showSearchHistory() {
   });
   el.innerHTML = html;
   el.classList.remove('hidden');
+}
+
+// ===== Clinic Hours (외래 시간) =====
+var DAYS_KR = ['월', '화', '수', '목', '금', '토'];
+var DAYS_KEY = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+function parseClinicHours(str) {
+  try { if (str) return JSON.parse(str); } catch(e) {}
+  return {};
+}
+function clinicHoursEditor(val) {
+  var h = parseClinicHours(val);
+  var html = '<div class="grid grid-cols-3 sm:grid-cols-6 gap-2">';
+  DAYS_KEY.forEach(function(k, i) {
+    html += '<div><div class="text-[10px] font-semibold text-center text-slate-500 mb-1">' + DAYS_KR[i] + '</div>' +
+      '<input type="text" id="ch-' + k + '" value="' + (h[k] || '') + '" class="input !text-[11px] !py-1.5 text-center" placeholder="09-12" autocomplete="off"></div>';
+  });
+  html += '</div><div class="mt-1.5"><input type="text" id="ch-notes" value="' + ((h.notes || '').replace(/"/g, '&quot;')) + '" class="input !text-[11px] !py-1.5" placeholder="비고 (예: 격주 토요일 오전, 점심시간 12-13시 제외)"></div>';
+  return html;
+}
+function collectClinicHours() {
+  var obj = {};
+  var hasAny = false;
+  DAYS_KEY.forEach(function(k) {
+    var el = document.getElementById('ch-' + k);
+    if (el && el.value.trim()) { obj[k] = el.value.trim(); hasAny = true; }
+  });
+  var notesEl = document.getElementById('ch-notes');
+  if (notesEl && notesEl.value.trim()) { obj.notes = notesEl.value.trim(); hasAny = true; }
+  return hasAny ? JSON.stringify(obj) : '';
+}
+function renderClinicHours(str) {
+  var h = parseClinicHours(str);
+  if (!h || Object.keys(h).length === 0) return '';
+  var hasAnyDay = DAYS_KEY.some(function(k) { return h[k]; });
+  if (!hasAnyDay && !h.notes) return '';
+  var html = '<div class="card-flat p-4 lg:p-5"><div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-clock text-cyan-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">외래 시간</span></div>';
+  html += '<div class="grid grid-cols-6 gap-2 text-center">';
+  DAYS_KEY.forEach(function(k, i) {
+    var val = h[k] || '';
+    html += '<div class="rounded-lg p-2 ' + (val ? 'bg-cyan-50 border border-cyan-100' : 'bg-gray-50 border border-gray-100') + '">' +
+      '<div class="text-[10px] font-bold ' + (val ? 'text-cyan-700' : 'text-slate-400') + '">' + DAYS_KR[i] + '</div>' +
+      '<div class="text-[11px] font-semibold ' + (val ? 'text-cyan-600' : 'text-slate-300') + ' mt-0.5">' + (val || '-') + '</div></div>';
+  });
+  html += '</div>';
+  if (h.notes) html += '<div class="text-[11px] text-slate-400 mt-2 bg-gray-50 rounded-lg px-3 py-2"><i class="fas fa-info-circle text-slate-300 mr-1"></i>' + h.notes + '</div>';
+  html += '</div>';
+  return html;
 }
 
 // ===== Init =====

@@ -29,7 +29,7 @@ app.use('/api/*', async (c, next) => {
 
   const sessionId = c.req.header('X-Session-Id') || ''
   if (!sessionId) {
-    return c.json({ error: 'Unauthorized' }, 401)
+    return c.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
   }
 
   const session = await c.env.DB.prepare(
@@ -37,7 +37,7 @@ app.use('/api/*', async (c, next) => {
   ).bind(sessionId).first()
 
   if (!session) {
-    return c.json({ error: 'Unauthorized' }, 401)
+    return c.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
   }
 
   await next()

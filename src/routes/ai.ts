@@ -15,19 +15,27 @@ async function askAI(apiKey: string, baseUrl: string, prompt: string, systemProm
       model: 'gpt-5',
       messages,
       temperature: 0.1,
-      max_tokens: 8000
+      max_tokens: 16000
     })
   })
   if (!res.ok) {
     const errText = await res.text()
+    console.error(`[AI-API] Error ${res.status}: ${errText.substring(0, 500)}`)
     throw new Error(`AI API error ${res.status}: ${errText}`)
   }
   const data = await res.json() as any
-  return data.choices?.[0]?.message?.content || ''
+  const content = data.choices?.[0]?.message?.content || ''
+  if (!content && data.choices?.[0]?.finish_reason === 'length') {
+    console.warn('[AI-API] Response truncated (finish_reason=length). Usage:', JSON.stringify(data.usage || {}))
+  }
+  if (!content) {
+    console.warn('[AI-API] Empty content. Full response:', JSON.stringify(data).substring(0, 500))
+  }
+  return content
 }
 
 // ===== Fetch with timeout helper =====
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 5000): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
@@ -456,13 +464,37 @@ JSON 배열만 반환:
       ? '당신은 한국 이비인후과 의원/클리닉 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
       : '당신은 한국 병원 의료진 데이터를 정확히 추출하는 전문가입니다. 주어진 웹페이지 데이터에서만 정보를 추출하고, 데이터에 없는 정보는 절대 생성하지 않습니다.'
     const raw = await askAI(c.env.OPENAI_API_KEY, c.env.OPENAI_BASE_URL, combinedPrompt, systemPrompt)
+    console.log('[AI-DOCTORS] Response length:', raw.length, 'chars. First 200:', raw.substring(0, 200))
     const jsonMatch = raw.match(/\[[\s\S]*\]/)
     if (!jsonMatch) {
-      console.error('[AI-DOCTORS] No JSON array in AI response. Raw (first 500):', raw.substring(0, 500))
+      console.error('[AI-DOCTORS] No JSON array in AI response. Raw (first 1000):', raw.substring(0, 1000))
+      // Try to extract from markdown code block
+      const codeBlockMatch = raw.match(/```(?:json)?\s*(\[[\s\S]*?\])\s*```/)
+      if (codeBlockMatch) {
+        try {
+          const doctors = JSON.parse(codeBlockMatch[1])
+          const cleaned = doctors.map((d: any) => ({
+            name: (d.name || '').trim(),
+            department: d.department || '이비인후과',
+            position: (d.position || '').trim(),
+            specialty: (d.specialty || '').trim(),
+            influence_level: ['high', 'medium', 'low'].includes(d.influence_level) ? d.influence_level : 'medium',
+            notes: (d.notes || '').trim(),
+            source: d.source || sourceUrl || '웹 검색'
+          })).filter((d: any) => d.name.length > 0)
+          return c.json({ data: cleaned, source: sourceUrl || '웹 검색', crawled: !!crawledContent })
+        } catch (e2) { /* fall through */ }
+      }
       return c.json({ data: [], message: '해당 기관의 관련 의료진 정보를 찾을 수 없습니다.', source: sourceUrl })
     }
 
-    const doctors = JSON.parse(jsonMatch[0])
+    let doctors: any[]
+    try {
+      doctors = JSON.parse(jsonMatch[0])
+    } catch (parseErr: any) {
+      console.error('[AI-DOCTORS] JSON parse error:', parseErr.message, 'Match (first 500):', jsonMatch[0].substring(0, 500))
+      return c.json({ data: [], message: 'AI 응답 파싱 실패', source: sourceUrl })
+    }
     const cleaned = doctors.map((d: any) => ({
       name: (d.name || '').trim(),
       department: d.department || '이비인후과',
