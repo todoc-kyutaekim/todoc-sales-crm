@@ -564,6 +564,7 @@ async function showPipelineView() {
 }
 
 // ===== HOSPITALS =====
+var _hospViewMode = localStorage.getItem('todoc_hosp_view') || 'card';
 async function loadHosp(typeFilter) {
   document.getElementById('page-title').textContent = '기관 관리';
   document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadXLSX(\'hospitals\')"><i class="fas fa-file-excel text-xs"></i>Excel</button><button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'hospitals\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-primary" onclick="showHospForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">추가</span></button>';
@@ -578,15 +579,51 @@ async function loadHosp(typeFilter) {
       '<select id="h-region" onchange="filterH()" class="input filter-select"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
       '<select id="h-grade" onchange="filterH()" class="input filter-select"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
       '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="h-fav-only" onchange="filterH()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
+      // View mode switcher
+      '<div class="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5 flex-shrink-0">' +
+      '<button id="hv-card" class="hv-btn" onclick="setHospView(\'card\')" title="카드뷰"><i class="fas fa-th-large"></i></button>' +
+      '<button id="hv-list" class="hv-btn" onclick="setHospView(\'list\')" title="리스트뷰"><i class="fas fa-list"></i></button>' +
+      '<button id="hv-table" class="hv-btn" onclick="setHospView(\'table\')" title="테이블뷰"><i class="fas fa-table"></i></button>' +
+      '<button id="hv-map" class="hv-btn" onclick="setHospView(\'map\')" title="지도뷰"><i class="fas fa-map-location-dot"></i></button>' +
+      '</div>' +
       '<span id="h-count" class="text-xs text-slate-300 font-medium"></span></div>' +
-      '<div id="h-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5"></div></div>';
+      '<div id="h-grid"></div></div>';
     if (typeFilter) { document.getElementById('h-type').value = typeFilter; }
+    updateHospViewButtons();
     filterH();
   } catch (e) { toast('기관 목록을 불러올 수 없습니다', 'err') }
 }
+function setHospView(mode) {
+  _hospViewMode = mode;
+  localStorage.setItem('todoc_hosp_view', mode);
+  updateHospViewButtons();
+  filterH();
+}
+function updateHospViewButtons() {
+  ['card','list','table','map'].forEach(function(m) {
+    var btn = document.getElementById('hv-' + m);
+    if (btn) {
+      btn.className = 'hv-btn ' + (_hospViewMode === m ? 'hv-active' : '');
+    }
+  });
+}
 function renderH(list) {
   document.getElementById('h-count').textContent = list.length + '개 기관';
-  document.getElementById('h-grid').innerHTML = list.length ? list.map(h => {
+  var grid = document.getElementById('h-grid');
+  if (!list.length) {
+    grid.innerHTML = '<div class="empty"><div class="empty-icon"><i class="fas fa-hospital"></i></div><p class="font-medium text-slate-500 mb-1">등록된 기관이 없습니다</p><p class="text-sm text-slate-300">"추가" 버튼으로 시작하세요</p></div>';
+    return;
+  }
+  if (_hospViewMode === 'card') renderHCard(grid, list);
+  else if (_hospViewMode === 'list') renderHList(grid, list);
+  else if (_hospViewMode === 'table') renderHTable(grid, list);
+  else if (_hospViewMode === 'map') renderHMap(grid, list);
+  else renderHCard(grid, list);
+}
+// === Card View ===
+function renderHCard(el, list) {
+  el.className = 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5';
+  el.innerHTML = list.map(h => {
     const warn = h.last_meeting ? Math.floor((Date.now() - new Date(h.last_meeting + 'T00:00:00').getTime()) / 86400000) > 30 : '';
     return '<div class="card accent-' + h.grade + ' p-5 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
       '<div class="flex items-center gap-2 mb-3">' +
@@ -603,7 +640,180 @@ function renderH(list) {
       '<div class="flex gap-2 mt-3 pt-3 border-t border-gray-50">' + clinicMetric('fa-ear-listen', '난청환자', h.patient_count || 0) + clinicMetric('fa-headphones', '보청기', h.hearing_aid_sales || 0) + clinicMetric('fa-microchip', 'CI의뢰', h.ci_referrals || 0, h.ci_referrals > 0 ? 'text-violet-600' : '') + '</div>' +
       (h.notes ? '<p class="text-[11px] text-slate-400 mt-3 line-clamp-1 leading-relaxed border-t border-gray-50 pt-3"><i class="fas fa-quote-left text-slate-200 mr-1"></i>' + h.notes + '</p>' : '') +
       '</div>'
-  }).join('') : '<div class="col-span-full empty"><div class="empty-icon"><i class="fas fa-hospital"></i></div><p class="font-medium text-slate-500 mb-1">등록된 기관이 없습니다</p><p class="text-sm text-slate-300">"추가" 버튼으로 시작하세요</p></div>';
+  }).join('');
+}
+// === List View ===
+function renderHList(el, list) {
+  el.className = '';
+  el.innerHTML = '<div class="card-flat p-0 overflow-hidden">' + list.map(function(h) {
+    var warn = h.last_meeting ? Math.floor((Date.now() - new Date(h.last_meeting + 'T00:00:00').getTime()) / 86400000) > 30 : false;
+    return '<div class="flex items-center gap-3 px-4 lg:px-5 py-3.5 border-b border-gray-50 last:border-0 tr cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
+      '<div class="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-extrabold flex-shrink-0 ' +
+        (h.grade === 'S' ? 'bg-amber-100 text-amber-700' : h.grade === 'A' ? 'bg-blue-100 text-blue-700' : h.grade === 'B' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500') + '">' + (h.grade || '-') + '</div>' +
+      '<div class="flex-1 min-w-0">' +
+      '<div class="flex items-center gap-2"><span class="font-bold text-[13px] text-slate-800 truncate">' + h.name + '</span>' + statusDot(h.status) + (warn ? '<span class="text-[9px] text-red-400 bg-red-50 px-1.5 py-0.5 rounded-full font-bold">30일+</span>' : '') + '</div>' +
+      '<div class="flex items-center gap-3 mt-0.5 text-[11px] text-slate-400">' +
+      '<span><i class="fas fa-location-dot mr-0.5"></i>' + (h.region || '-') + '</span>' +
+      '<span><i class="fas fa-user-doctor mr-0.5"></i>' + (h.doctor_count || 0) + '명</span>' +
+      '<span><i class="fas fa-handshake mr-0.5"></i>' + (h.meeting_count || 0) + '건</span>' +
+      (h.ci_referrals > 0 ? '<span class="text-violet-500 font-bold"><i class="fas fa-microchip mr-0.5"></i>CI ' + h.ci_referrals + '</span>' : '') +
+      '</div></div>' +
+      '<div class="text-right flex-shrink-0">' +
+      '<div class="text-[11px] font-semibold ' + (h.last_meeting ? daysClass(h.last_meeting) : 'text-slate-300') + '">' + (h.last_meeting ? daysAgo(h.last_meeting) : '미방문') + '</div>' +
+      '</div>' +
+      '<span class="flex-shrink-0">' + favStar('hospital', h.id) + '</span>' +
+      '</div>';
+  }).join('') + '</div>';
+}
+// === Table View ===
+function renderHTable(el, list) {
+  el.className = '';
+  el.innerHTML = '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full text-left">' +
+    '<thead><tr class="bg-slate-50 border-b border-gray-200">' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">등급</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">기관명</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">지역</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500 text-center">인원</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500 text-center">미팅</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500 text-center">난청</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500 text-center">보청기</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500 text-center">CI</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">최근 미팅</th>' +
+    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">상태</th>' +
+    '</tr></thead><tbody>' +
+    list.map(function(h) {
+      return '<tr class="border-b border-gray-50 tr cursor-pointer hover:bg-slate-50/50" onclick="viewHosp(' + h.id + ')">' +
+        '<td class="px-3 py-2.5">' + gradeBadge(h.grade) + '</td>' +
+        '<td class="px-3 py-2.5"><span class="font-bold text-[12px] text-slate-800">' + h.name + '</span></td>' +
+        '<td class="px-3 py-2.5 text-[11px] text-slate-500">' + (h.region || '-') + '</td>' +
+        '<td class="px-3 py-2.5 text-center text-[12px] font-bold text-brand-600">' + (h.doctor_count || 0) + '</td>' +
+        '<td class="px-3 py-2.5 text-center text-[12px] font-bold">' + (h.meeting_count || 0) + '</td>' +
+        '<td class="px-3 py-2.5 text-center text-[12px]">' + (h.patient_count || 0) + '</td>' +
+        '<td class="px-3 py-2.5 text-center text-[12px]">' + (h.hearing_aid_sales || 0) + '</td>' +
+        '<td class="px-3 py-2.5 text-center text-[12px] ' + (h.ci_referrals > 0 ? 'font-bold text-violet-600' : '') + '">' + (h.ci_referrals || 0) + '</td>' +
+        '<td class="px-3 py-2.5 text-[11px] ' + (h.last_meeting ? daysClass(h.last_meeting) : 'text-slate-300') + '">' + (h.last_meeting ? daysAgo(h.last_meeting) : '-') + '</td>' +
+        '<td class="px-3 py-2.5">' + statusDot(h.status) + '</td>' +
+        '</tr>';
+    }).join('') +
+    '</tbody></table></div></div>';
+}
+// === Map View ===
+function renderHMap(el, list) {
+  el.className = '';
+  // Count hospitals per region
+  var regionCounts = {};
+  var regionGrades = {};
+  list.forEach(function(h) {
+    var r = h.region || '미지정';
+    regionCounts[r] = (regionCounts[r] || 0) + 1;
+    if (!regionGrades[r]) regionGrades[r] = { S: 0, A: 0, B: 0, C: 0, total: 0, ci: 0, meetings: 0, names: [] };
+    regionGrades[r][h.grade || 'C']++;
+    regionGrades[r].total++;
+    regionGrades[r].ci += (h.ci_referrals || 0);
+    regionGrades[r].meetings += (h.meeting_count || 0);
+    if (regionGrades[r].names.length < 3) regionGrades[r].names.push(h.name);
+  });
+  
+  var html = '<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">';
+  // Map column
+  html += '<div class="lg:col-span-2 card-flat p-4 lg:p-6">' +
+    '<div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기관 분포 지도</span><span class="text-xs text-slate-400">' + list.length + '개 기관</span></div>' +
+    '<div id="korea-map-container" class="relative" style="max-width:500px;margin:0 auto">' + renderKoreaMap(regionCounts, regionGrades) + '</div>' +
+    '<div class="flex flex-wrap gap-3 mt-4 justify-center text-[10px]">' +
+    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-500"></span>5개+</span>' +
+    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-300"></span>3-4개</span>' +
+    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-100"></span>1-2개</span>' +
+    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200"></span>없음</span></div>' +
+    '</div>';
+  // Region list column
+  html += '<div class="space-y-3">';
+  var sortedRegions = Object.keys(regionGrades).sort(function(a, b) { return regionGrades[b].total - regionGrades[a].total; });
+  sortedRegions.forEach(function(r) {
+    var rg = regionGrades[r];
+    html += '<div class="card-flat p-3 cursor-pointer hover:shadow-md transition" onclick="document.getElementById(\'h-region\').value=\'' + r + '\';setHospView(\'card\');filterH()">' +
+      '<div class="flex items-center justify-between mb-1"><span class="font-bold text-[13px] text-slate-800"><i class="fas fa-location-dot text-brand-400 mr-1.5"></i>' + r + '</span><span class="text-[12px] font-extrabold text-brand-600">' + rg.total + '개</span></div>' +
+      '<div class="flex gap-2 text-[10px] text-slate-400">' +
+      (rg.S ? '<span class="text-amber-600 font-bold">S:' + rg.S + '</span>' : '') +
+      (rg.A ? '<span class="text-blue-600 font-bold">A:' + rg.A + '</span>' : '') +
+      (rg.B ? '<span class="text-emerald-600">B:' + rg.B + '</span>' : '') +
+      (rg.C ? '<span class="text-gray-400">C:' + rg.C + '</span>' : '') +
+      '<span class="ml-auto"><i class="fas fa-handshake mr-0.5"></i>' + rg.meetings + '</span>' +
+      (rg.ci > 0 ? '<span class="text-violet-600 font-bold"><i class="fas fa-microchip mr-0.5"></i>' + rg.ci + '</span>' : '') +
+      '</div>' +
+      '<div class="text-[10px] text-slate-300 mt-1 truncate">' + rg.names.join(', ') + (rg.total > 3 ? ' 외 ' + (rg.total - 3) + '곳' : '') + '</div>' +
+      '</div>';
+  });
+  html += '</div></div>';
+  el.innerHTML = html;
+}
+
+// Korea SVG Map
+function renderKoreaMap(counts, grades) {
+  // SVG path-based Korea map with realistic province boundaries
+  var regions = {
+    '서울': { path: 'M186,148 L192,143 L200,144 L204,149 L201,155 L194,157 L188,154 Z', cx: 194, cy: 150 },
+    '인천': { path: 'M165,138 L175,133 L183,137 L186,148 L188,154 L180,160 L170,158 L162,152 L158,145 Z', cx: 172, cy: 148 },
+    '경기': { path: 'M155,100 L175,92 L200,88 L225,95 L235,110 L238,130 L232,150 L225,165 L210,175 L204,149 L200,144 L192,143 L186,148 L188,154 L194,157 L201,155 L210,175 L195,180 L175,178 L160,170 L155,158 L162,152 L158,145 L165,138 L175,133 L175,92 L155,100 Z M186,148 L192,143 L200,144 L204,149 L201,155 L194,157 L188,154 Z', cx: 195, cy: 132, labelY: 118 },
+    '강원': { path: 'M225,95 L250,80 L285,72 L310,85 L318,105 L312,130 L298,155 L280,170 L265,178 L248,180 L238,175 L232,165 L232,150 L238,130 L235,110 Z', cx: 272, cy: 125 },
+    '충북': { path: 'M210,175 L225,165 L232,165 L238,175 L248,180 L250,195 L245,210 L232,220 L218,222 L205,215 L200,200 L205,185 Z', cx: 225, cy: 198 },
+    '충남': { path: 'M130,200 L145,190 L160,185 L175,178 L195,180 L205,185 L200,200 L205,215 L195,228 L180,235 L165,238 L148,235 L132,225 L125,215 Z', cx: 165, cy: 212 },
+    '세종': { path: 'M192,195 L200,190 L205,195 L203,203 L196,205 L190,200 Z', cx: 198, cy: 198 },
+    '대전': { path: 'M195,228 L205,222 L212,228 L210,238 L200,242 L193,236 Z', cx: 203, cy: 233 },
+    '전북': { path: 'M132,225 L148,235 L165,238 L180,235 L195,238 L198,255 L192,272 L178,280 L160,282 L142,278 L128,268 L122,252 L125,238 Z', cx: 160, cy: 258 },
+    '광주': { path: 'M148,305 L158,298 L165,302 L163,312 L155,316 L147,312 Z', cx: 156, cy: 308 },
+    '전남': { path: 'M108,275 L122,268 L128,268 L142,278 L160,282 L178,280 L185,290 L182,310 L175,325 L162,340 L145,348 L125,345 L110,335 L100,318 L98,300 L102,285 Z M148,305 L158,298 L165,302 L163,312 L155,316 L147,312 Z', cx: 142, cy: 315, labelY: 330 },
+    '경북': { path: 'M248,180 L265,178 L280,170 L298,155 L312,165 L320,185 L322,208 L318,228 L308,245 L295,255 L278,258 L265,252 L255,240 L245,225 L245,210 L250,195 Z', cx: 282, cy: 215 },
+    '대구': { path: 'M268,248 L278,242 L288,246 L290,256 L282,262 L272,258 Z', cx: 280, cy: 253 },
+    '울산': { path: 'M310,258 L322,252 L330,260 L328,272 L318,278 L308,272 Z', cx: 320, cy: 265 },
+    '경남': { path: 'M178,280 L192,272 L198,275 L215,268 L232,265 L255,258 L265,264 L278,272 L290,280 L298,295 L292,312 L278,325 L260,330 L240,328 L222,320 L205,312 L192,300 L185,290 Z', cx: 240, cy: 298 },
+    '부산': { path: 'M290,300 L302,295 L312,302 L315,315 L308,322 L295,320 L288,312 Z', cx: 302, cy: 310 },
+    '제주': { path: 'M140,415 L158,408 L185,410 L198,418 L195,430 L180,438 L158,440 L142,435 L135,425 Z', cx: 168, cy: 425 }
+  };
+  var fillColor = function(count) {
+    if (!count || count === 0) return '#f1f5f9';
+    if (count >= 5) return '#3366ff';
+    if (count >= 3) return '#6690ff';
+    if (count >= 2) return '#99b3ff';
+    return '#c2d4ff';
+  };
+  var strokeColor = function(count) {
+    if (!count || count === 0) return '#cbd5e1';
+    if (count >= 3) return '#1a4dcc';
+    return '#4d80ff';
+  };
+  var textColor = function(count) {
+    if (!count || count === 0) return '#94a3b8';
+    if (count >= 3) return '#ffffff';
+    return '#1e40af';
+  };
+  var svg = '<svg viewBox="80 60 270 400" xmlns="http://www.w3.org/2000/svg" class="w-full" style="max-height:420px">';
+  // Water background
+  svg += '<defs><filter id="shadow" x="-5%" y="-5%" width="110%" height="110%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.08"/></filter>' +
+    '<linearGradient id="seaGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#eef4ff;stop-opacity:1"/><stop offset="100%" style="stop-color:#e0ecff;stop-opacity:1"/></linearGradient></defs>';
+  svg += '<rect x="80" y="60" width="270" height="400" rx="16" fill="url(#seaGrad)"/>';
+  // Draw coastline outline (combined shape)
+  svg += '<path d="M155,100 L175,92 L200,88 L225,95 L250,80 L285,72 L310,85 L318,105 L312,130 L298,155 L312,165 L320,185 L322,208 L318,228 L322,252 L330,260 L328,272 L318,278 L308,272 L298,295 L302,295 L312,302 L315,315 L308,322 L295,320 L290,312 L292,312 L278,325 L260,330 L240,328 L222,320 L205,312 L192,300 L185,290 L182,310 L175,325 L162,340 L145,348 L125,345 L110,335 L100,318 L98,300 L102,285 L108,275 L122,252 L125,238 L132,225 L125,215 L130,200 L145,190 L155,100 Z" fill="#fff" stroke="#94a3b8" stroke-width="0.5" opacity="0.4"/>';
+  // Draw regions with paths
+  Object.keys(regions).forEach(function(name) {
+    var r = regions[name];
+    var count = counts[name] || 0;
+    var fill = fillColor(count);
+    var sc = strokeColor(count);
+    var tc = textColor(count);
+    var isActive = count > 0;
+    var ly = r.labelY || r.cy;
+    svg += '<g class="cursor-pointer" style="transition:opacity 0.2s" onclick="document.getElementById(\'h-region\').value=\'' + name + '\';setHospView(\'card\');filterH()" onmouseenter="this.style.opacity=\'0.8\'" onmouseleave="this.style.opacity=\'1\'">' +
+      '<path d="' + r.path + '" fill="' + fill + '" stroke="' + sc + '" stroke-width="' + (isActive ? '1.5' : '0.8') + '" ' +
+      (isActive ? 'filter="url(#shadow)"' : '') + '/>' +
+      '<text x="' + r.cx + '" y="' + (ly - (count > 0 ? 3 : 0)) + '" text-anchor="middle" dominant-baseline="central" fill="' + tc + '" font-size="' + (name.length > 1 ? '9' : '8') + '" font-weight="700" style="pointer-events:none">' + name + '</text>' +
+      (count > 0 ? '<text x="' + r.cx + '" y="' + (ly + 10) + '" text-anchor="middle" dominant-baseline="central" fill="' + tc + '" font-size="10" font-weight="800" style="pointer-events:none">' + count + '</text>' : '') +
+      '</g>';
+  });
+  // Jeju separation line (sea)
+  svg += '<line x1="120" y1="390" x2="210" y2="390" stroke="#94a3b8" stroke-width="0.3" stroke-dasharray="4 3" opacity="0.5"/>';
+  svg += '<text x="330" y="75" text-anchor="end" fill="#c8d6e5" font-size="8" font-weight="600" letter-spacing="2">SOUTH KOREA</text>';
+  svg += '</svg>';
+  return svg;
 }
 function filterH() {
   const s = (document.getElementById('h-search')?.value || '').toLowerCase(), r = document.getElementById('h-region')?.value || '', g = document.getElementById('h-grade')?.value || '', t = document.getElementById('h-type')?.value || '';
@@ -720,20 +930,89 @@ function meetDoctorBadges(m) {
 }
 function renderMeetingsTab(h, meets) {
   if (!meets.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-calendar-plus"></i></div><p class="font-medium text-slate-500 mb-1">미팅 기록이 없습니다</p></div></div>';
-  return '<div class="card-flat p-4 lg:p-6">' + meets.map((m, i) =>
-    '<div class="flex gap-3 lg:gap-4 ' + (i < meets.length - 1 ? 'mb-6' : '') + '">' +
-    '<div class="flex flex-col items-center pt-1"><div class="tl-dot"></div>' + (i < meets.length - 1 ? '<div class="tl-line flex-1 mt-1"></div>' : '') + '</div>' +
-    '<div class="flex-1">' +
-    '<div class="flex items-center justify-between mb-2 flex-wrap gap-2">' +
-    '<div class="flex items-center gap-2">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800">' + meetDoctorNames(m) + '</span>' + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
-    '<div class="flex items-center gap-2"><span class="text-xs text-slate-400">' + fmtDate(m.meeting_date) + '</span><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="showMeetForm(' + h.id + ',null,' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="delMeet(' + m.id + ',' + h.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>' +
-    (m.purpose ? '<div class="text-[13px] font-medium text-slate-700 mb-1.5">' + m.purpose + '</div>' : '') +
-    (m.content ? '<div class="text-xs text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + m.content + '</div>' : '') +
-    '<div class="flex flex-wrap gap-2">' +
-    (m.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + m.result + '</div>' : '') +
-    (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + (m.next_meeting_date ? ' <span class="font-bold">(' + fmtShort(m.next_meeting_date) + ')</span>' : '') + '</div>' : '') +
-    '</div></div></div>'
-  ).join('') + '</div>';
+  // Collect all doctors' clinic hours for this hospital
+  var docs = window._hospDetail?.docs || [];
+  var docsWithHours = docs.filter(function(d) { return d.clinic_hours; });
+  // Clinic hours reference panel
+  var clinicHoursPanel = '';
+  if (docsWithHours.length > 0) {
+    clinicHoursPanel = '<div class="card-flat p-4 lg:p-5 mb-4 border-l-4 border-cyan-400">' +
+      '<div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-calendar-days text-cyan-500 text-xs"></i></div>' +
+      '<span class="font-bold text-sm text-slate-800">의료진 외래 스케줄</span>' +
+      '<span class="text-[10px] text-slate-400 ml-1">— 방문 시간 참고</span></div>' +
+      '<div class="space-y-3">' + docsWithHours.map(function(d) {
+        var ch = parseClinicHours(d.clinic_hours);
+        var isOld = ch.mon && !ch.mon_am && typeof ch.mon === 'string';
+        if (isOld) { var m2 = {}; DAYS_KEY.forEach(function(k){ if(ch[k]) m2[k+'_am']=ch[k]; }); m2.notes=ch.notes||''; ch=m2; }
+        var slotBg = function(v) {
+          if (!v) return '';
+          if (v === '진료') return 'bg-cyan-500 text-white';
+          if (v === '수술') return 'bg-rose-500 text-white';
+          if (v === '휴진') return 'bg-gray-200 text-gray-400 line-through';
+          if (v === '순환진료') return 'bg-amber-400 text-white';
+          return 'bg-blue-400 text-white';
+        };
+        return '<div class="bg-gray-50 rounded-xl p-3">' +
+          '<div class="flex items-center gap-2 mb-2"><span class="text-[12px] font-bold text-slate-700">' + d.name + '</span>' +
+          '<span class="text-[10px] text-slate-400">' + (d.position || '') + '</span>' +
+          (d.specialty ? '<span class="text-[9px] text-cyan-500">' + d.specialty.split(',')[0] + '</span>' : '') + '</div>' +
+          '<div class="grid grid-cols-7 gap-1">' +
+          '<div></div>' + DAYS_KR.map(function(dk, i) { return '<div class="text-[9px] font-bold text-center ' + (i===5?'text-blue-500':'text-slate-500') + '">' + dk + '</div>'; }).join('') +
+          '<div class="text-[8px] text-amber-500 font-bold text-center flex items-center justify-center">AM</div>' +
+          DAYS_KEY.map(function(k) { var v = ch[k+'_am']||''; return '<div class="text-center"><div class="rounded text-[9px] font-bold py-0.5 px-0.5 ' + (v ? slotBg(v) : 'text-slate-200') + '">' + (v||'-') + '</div></div>'; }).join('') +
+          '<div class="text-[8px] text-indigo-500 font-bold text-center flex items-center justify-center">PM</div>' +
+          DAYS_KEY.map(function(k) { var v = ch[k+'_pm']||''; return '<div class="text-center"><div class="rounded text-[9px] font-bold py-0.5 px-0.5 ' + (v ? slotBg(v) : 'text-slate-200') + '">' + (v||'-') + '</div></div>'; }).join('') +
+          '</div>' +
+          (ch.notes ? '<div class="text-[10px] text-amber-600 mt-1.5"><i class="fas fa-exclamation-circle mr-0.5"></i>' + ch.notes + '</div>' : '') +
+          '</div>';
+      }).join('') + '</div></div>';
+  }
+  // Meeting timeline
+  return clinicHoursPanel + '<div class="card-flat p-4 lg:p-6">' + meets.map(function(m, i) {
+    // Get clinic hours for meeting's doctors
+    var meetDocs = (m.doctors || []).map(function(md) { return docs.find(function(d) { return d.id === (md.doctor_id || md.id); }); }).filter(Boolean);
+    var meetDay = m.meeting_date ? new Date(m.meeting_date + 'T00:00:00') : null;
+    var dayIdx = meetDay ? (meetDay.getDay() + 6) % 7 : -1; // 0=Mon...5=Sat
+    var dayKey = dayIdx >= 0 && dayIdx < 6 ? DAYS_KEY[dayIdx] : '';
+    // Build per-doctor schedule hint for this meeting day
+    var schedHints = [];
+    if (dayKey) {
+      meetDocs.forEach(function(doc) {
+        if (!doc.clinic_hours) return;
+        var ch = parseClinicHours(doc.clinic_hours);
+        if (ch.mon && !ch.mon_am && typeof ch.mon === 'string') { var m2={}; DAYS_KEY.forEach(function(k){if(ch[k])m2[k+'_am']=ch[k];}); m2.notes=ch.notes||''; ch=m2; }
+        var am = ch[dayKey + '_am'] || '', pm = ch[dayKey + '_pm'] || '';
+        if (am || pm) {
+          var hint = doc.name + ': ';
+          if (am && am !== '휴진') hint += '오전(' + am + ')';
+          if (am && am !== '휴진' && pm && pm !== '휴진') hint += ' / ';
+          if (pm && pm !== '휴진') hint += '오후(' + pm + ')';
+          if (am === '휴진' && pm === '휴진') hint += '휴진';
+          else if (am === '휴진') hint += '오후만';
+          else if (pm === '휴진') hint += '오전만';
+          schedHints.push({ name: doc.name, hint: hint, isOff: am === '휴진' && pm === '휴진' });
+        }
+      });
+    }
+    var schedHtml = schedHints.length ? '<div class="flex flex-wrap gap-1.5 mt-1.5">' + schedHints.map(function(sh) {
+      return '<span class="text-[10px] px-2 py-0.5 rounded-full font-medium ' + (sh.isOff ? 'bg-red-50 text-red-400 border border-red-100' : 'bg-cyan-50 text-cyan-600 border border-cyan-100') + '">' +
+        (sh.isOff ? '<i class="fas fa-ban mr-0.5"></i>' : '<i class="fas fa-clock mr-0.5"></i>') + sh.hint + '</span>';
+    }).join('') + '</div>' : '';
+
+    return '<div class="flex gap-3 lg:gap-4 ' + (i < meets.length - 1 ? 'mb-6' : '') + '">' +
+      '<div class="flex flex-col items-center pt-1"><div class="tl-dot"></div>' + (i < meets.length - 1 ? '<div class="tl-line flex-1 mt-1"></div>' : '') + '</div>' +
+      '<div class="flex-1">' +
+      '<div class="flex items-center justify-between mb-2 flex-wrap gap-2">' +
+      '<div class="flex items-center gap-2">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800">' + meetDoctorNames(m) + '</span>' + (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
+      '<div class="flex items-center gap-2"><span class="text-xs text-slate-400">' + fmtDate(m.meeting_date) + ' <span class="text-[10px] text-slate-300">(' + DAYS_KR[dayIdx >= 0 && dayIdx < 6 ? dayIdx : 0] + ')</span></span><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="showMeetForm(' + h.id + ',null,' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button><button class="btn btn-ghost text-xs px-1.5 py-1" onclick="delMeet(' + m.id + ',' + h.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>' +
+      schedHtml +
+      (m.purpose ? '<div class="text-[13px] font-medium text-slate-700 mb-1.5 mt-1">' + m.purpose + '</div>' : '') +
+      (m.content ? '<div class="text-xs text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + m.content + '</div>' : '') +
+      '<div class="flex flex-wrap gap-2">' +
+      (m.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + m.result + '</div>' : '') +
+      (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + (m.next_meeting_date ? ' <span class="font-bold">(' + fmtShort(m.next_meeting_date) + ')</span>' : '') + '</div>' : '') +
+      '</div></div></div>';
+  }).join('') + '</div>';
 }
 
 // ===== AI Doctors Auto-Fetch =====
@@ -1541,17 +1820,20 @@ async function showMeetForm(hid, did, mid) {
   let m = { meeting_date: new Date().toISOString().split('T')[0], meeting_type: 'visit', purpose: '', content: '', result: '', next_action: '', next_meeting_date: '', doctor_ids: did ? [did] : [], hospital_id: hid };
   if (mid) { try { const ms = (await API.get('/meetings?hospital_id=' + hid)).data; const found = ms.data.find(x => x.id === mid); if (found) { m = found; m.doctor_ids = (found.doctors || []).map(function(d) { return d.id || d.doctor_id }) || [found.doctor_id]; } } catch (e) { } }
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
+  window._meetFormDocs = docs; // Store for schedule preview
   
-  // Build multi-select checkbox list
+  // Build multi-select checkbox list with clinic hours info
   var doctorCheckboxes = docs.length ? 
     '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
-    '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
+    '<div class="border border-gray-200 rounded-xl max-h-[200px] overflow-y-auto p-2 space-y-1">' +
     docs.map(function(d) {
       var checked = (m.doctor_ids || []).map(Number).includes(d.id) ? ' checked' : '';
+      var hasHours = d.clinic_hours ? ' data-hours="' + d.clinic_hours.replace(/"/g, '&quot;') + '"' : '';
       return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition">' +
-        '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer"' + checked + '>' +
+        '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer meet-doc-cb"' + checked + hasHours + ' onchange="updateMeetSchedulePreview()">' +
         '<div class="flex-1 min-w-0"><span class="text-[13px] font-medium text-slate-700">' + d.name + '</span>' +
         (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
+        (d.clinic_hours ? '<span class="text-[9px] text-cyan-500 ml-1"><i class="fas fa-calendar-days"></i></span>' : '') +
         '</div></label>';
     }).join('') + '</div></div>' :
     '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다. 먼저 의료진을 추가하세요.</div></div>';
@@ -1559,15 +1841,19 @@ async function showMeetForm(hid, did, mid) {
   openModal(mid ? '미팅 수정' : '새 미팅 기록',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
     doctorCheckboxes +
+    // Schedule preview panel
+    '<div class="col-span-full" id="meet-sched-preview"></div>' +
     field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
     field('유형', 'meeting_type', 'select', m.meeting_type, [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) + field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (mid ? '저장' : '추가') + '</button></div></form>');
+  // Bind date change to update schedule preview
+  var dateInput = document.querySelector('#fm input[name="meeting_date"]');
+  if (dateInput) dateInput.addEventListener('change', updateMeetSchedulePreview);
   document.getElementById('fm').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
-    // Get all checked doctor_ids
     const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
     if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
@@ -1576,21 +1862,95 @@ async function showMeetForm(hid, did, mid) {
   };
   // Insert template selector for new meetings
   if (!mid) { setTimeout(function() { var fm = document.getElementById('fm'); if (fm) insertTemplateSelector(fm); }, 100); }
+  // Initial schedule preview
+  setTimeout(updateMeetSchedulePreview, 50);
+}
+// Real-time schedule preview for meeting form
+function updateMeetSchedulePreview() {
+  var previewEl = document.getElementById('meet-sched-preview');
+  if (!previewEl) return;
+  var dateInput = document.querySelector('#fm input[name="meeting_date"]');
+  var dateVal = dateInput ? dateInput.value : '';
+  var checkedBoxes = document.querySelectorAll('#fm input.meet-doc-cb:checked');
+  var docs = window._meetFormDocs || [];
+  if (!dateVal || !checkedBoxes.length) { previewEl.innerHTML = ''; return; }
+  var meetDay = new Date(dateVal + 'T00:00:00');
+  var dayIdx = (meetDay.getDay() + 6) % 7; // 0=Mon...5=Sat
+  var dayKr = DAYS_KR[dayIdx] || '';
+  var dayKey = dayIdx >= 0 && dayIdx < 6 ? DAYS_KEY[dayIdx] : '';
+  if (!dayKey) { previewEl.innerHTML = ''; return; }
+  var items = [];
+  checkedBoxes.forEach(function(cb) {
+    var doc = docs.find(function(d) { return d.id === Number(cb.value); });
+    if (!doc || !doc.clinic_hours) return;
+    var ch = parseClinicHours(doc.clinic_hours);
+    if (ch.mon && !ch.mon_am && typeof ch.mon === 'string') {
+      var mig = {}; DAYS_KEY.forEach(function(k) { if (ch[k]) mig[k + '_am'] = ch[k]; }); mig.notes = ch.notes || ''; ch = mig;
+    }
+    var am = ch[dayKey + '_am'] || '', pm = ch[dayKey + '_pm'] || '';
+    if (!am && !pm) return;
+    var isAllOff = (am === '휴진' && pm === '휴진') || (am === '휴진' && !pm) || (!am && pm === '휴진');
+    items.push({ name: doc.name, position: doc.position || '', am: am, pm: pm, isOff: isAllOff, notes: ch.notes || '' });
+  });
+  if (!items.length) { previewEl.innerHTML = ''; return; }
+  var slotStyle = function(v) {
+    if (!v) return 'bg-gray-50 text-gray-300';
+    if (v === '진료') return 'bg-cyan-500 text-white';
+    if (v === '수술') return 'bg-rose-500 text-white';
+    if (v === '휴진') return 'bg-gray-200 text-gray-400 line-through';
+    if (v === '순환진료') return 'bg-amber-400 text-white';
+    return 'bg-blue-400 text-white';
+  };
+  var hasWarning = items.some(function(it) { return it.isOff; });
+  var html = '<div class="border rounded-xl overflow-hidden ' + (hasWarning ? 'border-amber-300 bg-amber-50/30' : 'border-cyan-200 bg-cyan-50/30') + '">' +
+    '<div class="flex items-center gap-2 px-3 py-2 ' + (hasWarning ? 'bg-amber-50' : 'bg-cyan-50') + ' border-b ' + (hasWarning ? 'border-amber-200' : 'border-cyan-100') + '">' +
+    '<i class="fas fa-calendar-clock text-xs ' + (hasWarning ? 'text-amber-500' : 'text-cyan-500') + '"></i>' +
+    '<span class="text-[11px] font-bold ' + (hasWarning ? 'text-amber-700' : 'text-cyan-700') + '">' + fmtDate(dateVal) + ' (' + dayKr + ') 의료진 외래 스케줄</span>' +
+    (hasWarning ? '<span class="text-[10px] text-amber-600 font-medium ml-auto"><i class="fas fa-exclamation-triangle mr-0.5"></i>휴진 의료진 있음</span>' : '<span class="text-[10px] text-cyan-500 ml-auto">방문 시간 참고</span>') +
+    '</div>' +
+    '<div class="p-2 space-y-1">' +
+    items.map(function(it) {
+      return '<div class="flex items-center gap-2 px-2 py-1.5 rounded-lg ' + (it.isOff ? 'bg-red-50/70' : 'bg-white') + '">' +
+        '<span class="text-[12px] font-bold ' + (it.isOff ? 'text-red-400' : 'text-slate-700') + ' w-16 flex-shrink-0 truncate">' + it.name + '</span>' +
+        '<span class="text-[10px] text-slate-400 w-10 flex-shrink-0 truncate">' + it.position + '</span>' +
+        '<div class="flex gap-1 flex-1">' +
+        '<div class="flex-1 text-center rounded py-1 text-[10px] font-bold ' + slotStyle(it.am) + '">' + (it.am ? (it.am === '진료' ? '<i class="fas fa-stethoscope text-[8px] mr-0.5"></i>' : '') + '오전 ' + it.am : '<span class="opacity-40">오전 -</span>') + '</div>' +
+        '<div class="flex-1 text-center rounded py-1 text-[10px] font-bold ' + slotStyle(it.pm) + '">' + (it.pm ? (it.pm === '수술' ? '<i class="fas fa-scissors text-[8px] mr-0.5"></i>' : '') + '오후 ' + it.pm : '<span class="opacity-40">오후 -</span>') + '</div>' +
+        '</div>' +
+        (it.isOff ? '<i class="fas fa-ban text-red-400 text-xs flex-shrink-0"></i>' : it.am === '진료' || it.pm === '진료' ? '<i class="fas fa-check-circle text-emerald-500 text-xs flex-shrink-0"></i>' : '<i class="fas fa-circle text-[8px] text-slate-300 flex-shrink-0"></i>') +
+        '</div>';
+    }).join('') +
+    '</div>' +
+    // Best time recommendation
+    (function() {
+      var amDocs = items.filter(function(it) { return it.am === '진료' && !it.isOff; });
+      var pmDocs = items.filter(function(it) { return it.pm === '진료' && !it.isOff; });
+      if (!amDocs.length && !pmDocs.length) return '';
+      var rec = '';
+      if (amDocs.length >= pmDocs.length && amDocs.length > 0) rec = '<i class="fas fa-lightbulb text-amber-400 mr-1"></i><strong>추천:</strong> 오전 방문 — ' + amDocs.map(function(d){return d.name;}).join(', ') + ' 진료 중';
+      else if (pmDocs.length > 0) rec = '<i class="fas fa-lightbulb text-amber-400 mr-1"></i><strong>추천:</strong> 오후 방문 — ' + pmDocs.map(function(d){return d.name;}).join(', ') + ' 진료 중';
+      return rec ? '<div class="px-3 py-2 text-[11px] text-slate-600 bg-gradient-to-r from-amber-50 to-transparent border-t ' + (hasWarning ? 'border-amber-200' : 'border-cyan-100') + '">' + rec + '</div>' : '';
+    })() +
+    '</div>';
+  previewEl.innerHTML = html;
 }
 async function showMeetFormFromProfile(hid, did, mid) {
   let m = { meeting_date: new Date().toISOString().split('T')[0], meeting_type: 'visit', purpose: '', content: '', result: '', next_action: '', next_meeting_date: '', doctor_ids: [did], hospital_id: hid };
   if (mid) { try { const ms = (await API.get('/meetings?doctor_id=' + did)).data; const found = ms.data.find(x => x.id === mid); if (found) { m = found; m.doctor_ids = (found.doctors || []).map(function(d) { return d.id || d.doctor_id }) || [found.doctor_id]; } } catch (e) { } }
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
+  window._meetFormDocs = docs;
   
   var doctorCheckboxes = docs.length ?
     '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
-    '<div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
+    '<div class="border border-gray-200 rounded-xl max-h-[200px] overflow-y-auto p-2 space-y-1">' +
     docs.map(function(d) {
       var checked = (m.doctor_ids || []).map(Number).includes(d.id) ? ' checked' : '';
+      var hasHours = d.clinic_hours ? ' data-hours="' + d.clinic_hours.replace(/"/g, '&quot;') + '"' : '';
       return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition">' +
-        '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer"' + checked + '>' +
+        '<input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer meet-doc-cb"' + checked + hasHours + ' onchange="updateMeetSchedulePreview()">' +
         '<div class="flex-1 min-w-0"><span class="text-[13px] font-medium text-slate-700">' + d.name + '</span>' +
         (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') +
+        (d.clinic_hours ? '<span class="text-[9px] text-cyan-500 ml-1"><i class="fas fa-calendar-days"></i></span>' : '') +
         '</div></label>';
     }).join('') + '</div></div>' :
     '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다.</div></div>';
@@ -1598,11 +1958,14 @@ async function showMeetFormFromProfile(hid, did, mid) {
   openModal(mid ? '미팅 수정' : '새 미팅 기록',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
     doctorCheckboxes +
+    '<div class="col-span-full" id="meet-sched-preview"></div>' +
     field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
     field('유형', 'meeting_type', 'select', m.meeting_type, [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) + field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (mid ? '저장' : '추가') + '</button></div></form>');
+  var dateInput = document.querySelector('#fm input[name="meeting_date"]');
+  if (dateInput) dateInput.addEventListener('change', updateMeetSchedulePreview);
   document.getElementById('fm').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
@@ -1611,6 +1974,7 @@ async function showMeetFormFromProfile(hid, did, mid) {
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
     try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') }
   };
+  setTimeout(updateMeetSchedulePreview, 50);
 }
 async function showMeetFormGlobal(hid, doctorIds, mid) {
   // doctorIds can be an array or single value
@@ -2031,6 +2395,7 @@ function showCalendarView() {
     var firstDay = new Date(y, m, 1).getDay();
     var daysInMonth = new Date(y, m + 1, 0).getDate();
     var monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+    var dayLabels = ['일', '월', '화', '수', '목', '금', '토'];
     
     // Group meetings by date
     var meetMap = {};
@@ -2045,23 +2410,37 @@ function showCalendarView() {
       '<button class="btn btn-ghost btn-sm" onclick="navigateCal(' + y + ',' + (m-1) + ')"><i class="fas fa-chevron-left"></i></button>' +
       '<span class="font-bold text-slate-800">' + y + '년 ' + monthNames[m] + '</span>' +
       '<button class="btn btn-ghost btn-sm" onclick="navigateCal(' + y + ',' + (m+1) + ')"><i class="fas fa-chevron-right"></i></button></div>';
-    html += '<div class="grid grid-cols-7 gap-0.5 text-center text-[10px] font-semibold text-slate-400 mb-2"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>';
+    html += '<div class="grid grid-cols-7 gap-0.5 text-center text-[10px] font-semibold mb-2">' +
+      dayLabels.map(function(dl, i) { return '<div class="' + (i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-slate-400') + '">' + dl + '</div>'; }).join('') + '</div>';
     html += '<div class="grid grid-cols-7 gap-0.5">';
-    for (var i = 0; i < firstDay; i++) html += '<div class="h-16 lg:h-20"></div>';
+    for (var i = 0; i < firstDay; i++) html += '<div class="h-16 lg:h-24"></div>';
     for (var d = 1; d <= daysInMonth; d++) {
       var dateStr = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
       var dayMeets = meetMap[dateStr] || [];
       var isToday = dateStr === new Date().toISOString().split('T')[0];
-      html += '<div class="h-16 lg:h-20 border border-gray-50 rounded-lg p-1 ' + (isToday ? 'bg-brand-50 border-brand-200' : 'hover:bg-gray-50') + ' overflow-hidden cursor-pointer" onclick="showDayMeets(\'' + dateStr + '\')">' +
-        '<div class="text-[11px] font-semibold ' + (isToday ? 'text-brand-600' : 'text-slate-600') + '">' + d + '</div>';
-      dayMeets.slice(0, 2).forEach(function(mt) {
+      var dow = new Date(y, m, d).getDay();
+      var isSun = dow === 0, isSat = dow === 6;
+      html += '<div class="h-16 lg:h-24 border border-gray-50 rounded-lg p-1 ' + 
+        (isToday ? 'bg-brand-50 border-brand-200' : isSun ? 'bg-red-50/30' : isSat ? 'bg-blue-50/30' : 'hover:bg-gray-50') + 
+        ' overflow-hidden cursor-pointer" onclick="showDayMeets(\'' + dateStr + '\')">' +
+        '<div class="text-[11px] font-semibold ' + (isToday ? 'text-brand-600' : isSun ? 'text-red-400' : isSat ? 'text-blue-400' : 'text-slate-600') + '">' + d + '</div>';
+      dayMeets.slice(0, 3).forEach(function(mt) {
         var tc = { visit: 'blue', phone: 'emerald', conference: 'violet', email: 'amber', online: 'indigo' };
         html += '<div class="text-[8px] lg:text-[9px] truncate rounded px-1 py-0.5 bg-' + (tc[mt.meeting_type] || 'slate') + '-50 text-' + (tc[mt.meeting_type] || 'slate') + '-600 font-medium mt-0.5">' + meetDoctorNames(mt) + '</div>';
       });
-      if (dayMeets.length > 2) html += '<div class="text-[8px] text-slate-400 mt-0.5">+' + (dayMeets.length - 2) + '건</div>';
+      if (dayMeets.length > 3) html += '<div class="text-[8px] text-slate-400 mt-0.5">+' + (dayMeets.length - 3) + '건</div>';
       html += '</div>';
     }
     html += '</div>';
+    // Stats summary
+    var totalThisMonth = Object.values(meetMap).reduce(function(s, arr) { return s + arr.length; }, 0);
+    html += '<div class="flex items-center justify-between mt-4 text-[11px] text-slate-400">' +
+      '<span><i class="fas fa-calendar-check mr-1"></i>이번 달 미팅: <strong class="text-slate-700">' + totalThisMonth + '건</strong></span>' +
+      '<span class="flex items-center gap-3">' +
+      '<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-blue-400"></span>방문</span>' +
+      '<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-emerald-400"></span>전화</span>' +
+      '<span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-violet-400"></span>학회</span>' +
+      '</span></div>';
     document.getElementById('cal-body').innerHTML = html;
   }
   
@@ -2074,13 +2453,41 @@ function showCalendarView() {
   
   window.showDayMeets = function(dateStr) {
     var dayMeets = (window._meetList || []).filter(function(m) { return m.meeting_date === dateStr; });
-    if (!dayMeets.length) return;
-    var html = '<div class="space-y-2">' + dayMeets.map(function(m) {
-      return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md" onclick="closeModal();viewMeetDoctors(' + m.id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ')">' +
-        '<div class="flex items-center gap-2 mb-1">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
-        '<div class="text-[11px] text-slate-400">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div></div>';
-    }).join('') + '</div>';
-    openModal(fmtDate(dateStr) + ' 미팅', html);
+    var meetDay = new Date(dateStr + 'T00:00:00');
+    var dayIdx = (meetDay.getDay() + 6) % 7; // 0=Mon...5=Sat
+    var dayKr = dayIdx < 6 ? DAYS_KR[dayIdx] : '일';
+    var dayKey = dayIdx >= 0 && dayIdx < 6 ? DAYS_KEY[dayIdx] : '';
+    
+    var html = '';
+    // Show meetings
+    if (dayMeets.length) {
+      html += '<div class="space-y-2 mb-4">' + dayMeets.map(function(m) {
+        // Get doctor schedule for this day
+        var schedInfo = '';
+        if (dayKey && m.doctors && m.doctors.length) {
+          var hints = [];
+          m.doctors.forEach(function(md) {
+            if (!md.clinic_hours) return;
+            var ch = parseClinicHours(md.clinic_hours);
+            if (ch.mon && !ch.mon_am && typeof ch.mon === 'string') { var m2={}; DAYS_KEY.forEach(function(k){if(ch[k])m2[k+'_am']=ch[k];}); m2.notes=ch.notes||''; ch=m2; }
+            var am = ch[dayKey + '_am'] || '', pm = ch[dayKey + '_pm'] || '';
+            if (am || pm) {
+              var isOff = am === '휴진' && (!pm || pm === '휴진');
+              hints.push('<span class="text-[9px] px-1.5 py-0.5 rounded-full ' + (isOff ? 'bg-red-50 text-red-400' : 'bg-cyan-50 text-cyan-600') + '">' +
+                md.name + ': ' + (am ? '오전 ' + am : '') + (am && pm ? ' / ' : '') + (pm ? '오후 ' + pm : '') + '</span>');
+            }
+          });
+          if (hints.length) schedInfo = '<div class="flex flex-wrap gap-1 mt-1">' + hints.join('') + '</div>';
+        }
+        return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md" onclick="closeModal();showMeetDetail(' + JSON.stringify(m).replace(/"/g, '&quot;') + ')">' +
+          '<div class="flex items-center gap-2 mb-1">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
+          '<div class="text-[11px] text-slate-400">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div>' +
+          schedInfo + '</div>';
+      }).join('') + '</div>';
+    } else {
+      html += '<div class="text-center py-4 text-sm text-slate-400"><i class="fas fa-calendar-xmark text-xl text-slate-200 mb-2 block"></i>이 날 미팅이 없습니다</div>';
+    }
+    openModal(fmtDate(dateStr) + ' (' + dayKr + ') 일정', html);
   };
   
   openModal('미팅 캘린더', '<div id="cal-body"></div>', 'wide');
@@ -2251,29 +2658,126 @@ function showSearchHistory() {
   el.classList.remove('hidden');
 }
 
-// ===== Clinic Hours (외래 시간) =====
+// ===== Clinic Hours (외래 시간) - Enhanced AM/PM Structure =====
 var DAYS_KR = ['월', '화', '수', '목', '금', '토'];
 var DAYS_KEY = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+var SLOT_OPTIONS = [
+  { v: '', l: '-' },
+  { v: '진료', l: '진료' },
+  { v: '수술', l: '수술' },
+  { v: '순환진료', l: '순환진료' },
+  { v: '오전진료', l: '오전진료' },
+  { v: '오후진료', l: '오후진료' },
+  { v: '휴진', l: '휴진' },
+  { v: '검사', l: '검사' },
+  { v: '학회', l: '학회' },
+  { v: 'custom', l: '직접입력' }
+];
 function parseClinicHours(str) {
   try { if (str) return JSON.parse(str); } catch(e) {}
   return {};
 }
 function clinicHoursEditor(val) {
   var h = parseClinicHours(val);
-  var html = '<div class="grid grid-cols-3 sm:grid-cols-6 gap-2">';
-  DAYS_KEY.forEach(function(k, i) {
-    html += '<div><div class="text-[10px] font-semibold text-center text-slate-500 mb-1">' + DAYS_KR[i] + '</div>' +
-      '<input type="text" id="ch-' + k + '" value="' + (h[k] || '') + '" class="input !text-[11px] !py-1.5 text-center" placeholder="09-12" autocomplete="off"></div>';
+  // New structure: { mon_am: "진료", mon_pm: "수술", tue_am: "", ... , notes: "4월7일(화)휴진", specials: "" }
+  // Backward compat: if old format (mon: "09-12"), migrate
+  var isOldFormat = h.mon && !h.mon_am && typeof h.mon === 'string' && h.mon.includes('-');
+  if (isOldFormat) {
+    var migrated = {};
+    DAYS_KEY.forEach(function(k) {
+      if (h[k]) { migrated[k + '_am'] = '진료'; migrated[k + '_pm'] = ''; }
+    });
+    migrated.notes = h.notes || '';
+    h = migrated;
+  }
+  var html = '<div class="border border-gray-200 rounded-xl overflow-hidden">';
+  // Header
+  html += '<div class="grid grid-cols-7 bg-slate-50 border-b border-gray-200">';
+  html += '<div class="p-2 text-[10px] font-bold text-slate-400 text-center"></div>';
+  DAYS_KR.forEach(function(d, i) {
+    var isSat = i === 5;
+    html += '<div class="p-2 text-[10px] font-bold text-center ' + (isSat ? 'text-blue-500' : 'text-slate-600') + '">' + d + '</div>';
   });
-  html += '</div><div class="mt-1.5"><input type="text" id="ch-notes" value="' + ((h.notes || '').replace(/"/g, '&quot;')) + '" class="input !text-[11px] !py-1.5" placeholder="비고 (예: 격주 토요일 오전, 점심시간 12-13시 제외)"></div>';
+  html += '</div>';
+  // AM row
+  html += '<div class="grid grid-cols-7 border-b border-gray-100">';
+  html += '<div class="p-2 text-[10px] font-bold text-amber-600 text-center bg-amber-50/50 flex items-center justify-center">오전</div>';
+  DAYS_KEY.forEach(function(k) {
+    var v = h[k + '_am'] || '';
+    html += '<div class="p-1"><select id="ch-' + k + '-am" class="w-full text-[11px] py-1.5 px-1 border border-gray-100 rounded-lg text-center focus:border-cyan-400 focus:outline-none bg-white cursor-pointer" onchange="onChSelect(this,\'' + k + '_am\')">';
+    SLOT_OPTIONS.forEach(function(o) { html += '<option value="' + o.v + '"' + (v === o.v ? ' selected' : '') + '>' + o.l + '</option>'; });
+    if (v && !SLOT_OPTIONS.find(function(o) { return o.v === v; })) {
+      html += '<option value="' + v + '" selected>' + v + '</option>';
+    }
+    html += '</select>';
+    html += '<input type="text" id="chi-' + k + '-am" class="w-full text-[10px] py-1 px-1 border border-cyan-200 rounded mt-0.5 text-center hidden" placeholder="입력" value="' + (v && !SLOT_OPTIONS.find(function(o){ return o.v === v && o.v !== 'custom'; }) ? v : '') + '" onblur="onChCustom(this,\'' + k + '_am\')">';
+    html += '</div>';
+  });
+  html += '</div>';
+  // PM row
+  html += '<div class="grid grid-cols-7 border-b border-gray-100">';
+  html += '<div class="p-2 text-[10px] font-bold text-indigo-600 text-center bg-indigo-50/50 flex items-center justify-center">오후</div>';
+  DAYS_KEY.forEach(function(k) {
+    var v = h[k + '_pm'] || '';
+    html += '<div class="p-1"><select id="ch-' + k + '-pm" class="w-full text-[11px] py-1.5 px-1 border border-gray-100 rounded-lg text-center focus:border-cyan-400 focus:outline-none bg-white cursor-pointer" onchange="onChSelect(this,\'' + k + '_pm\')">';
+    SLOT_OPTIONS.forEach(function(o) { html += '<option value="' + o.v + '"' + (v === o.v ? ' selected' : '') + '>' + o.l + '</option>'; });
+    if (v && !SLOT_OPTIONS.find(function(o) { return o.v === v; })) {
+      html += '<option value="' + v + '" selected>' + v + '</option>';
+    }
+    html += '</select>';
+    html += '<input type="text" id="chi-' + k + '-pm" class="w-full text-[10px] py-1 px-1 border border-cyan-200 rounded mt-0.5 text-center hidden" placeholder="입력" value="' + (v && !SLOT_OPTIONS.find(function(o){ return o.v === v && o.v !== 'custom'; }) ? v : '') + '" onblur="onChCustom(this,\'' + k + '_pm\')">';
+    html += '</div>';
+  });
+  html += '</div>';
+  // Notes row (special dates like 휴진 etc)
+  html += '<div class="p-2 bg-gray-50"><input type="text" id="ch-notes" value="' + ((h.notes || '').replace(/"/g, '&quot;')) + '" class="input !text-[11px] !py-1.5 !bg-white" placeholder="특이사항 (예: 4월7일(화)휴진, 격주 토요일 오전만)"></div>';
+  html += '</div>';
   return html;
+}
+function onChSelect(sel, key) {
+  var customInput = document.getElementById('chi-' + key.replace('_', '-'));
+  if (sel.value === 'custom') {
+    if (customInput) { customInput.classList.remove('hidden'); customInput.focus(); }
+  } else {
+    if (customInput) customInput.classList.add('hidden');
+  }
+}
+function onChCustom(inp, key) {
+  var sel = document.getElementById('ch-' + key.replace('_', '-'));
+  if (inp.value.trim()) {
+    // Add as custom option and select it
+    var exists = false;
+    for (var i = 0; i < sel.options.length; i++) { if (sel.options[i].value === inp.value.trim()) { exists = true; sel.selectedIndex = i; break; } }
+    if (!exists) {
+      var opt = document.createElement('option');
+      opt.value = inp.value.trim();
+      opt.text = inp.value.trim();
+      sel.add(opt);
+      sel.value = inp.value.trim();
+    }
+    inp.classList.add('hidden');
+  } else {
+    sel.value = '';
+    inp.classList.add('hidden');
+  }
 }
 function collectClinicHours() {
   var obj = {};
   var hasAny = false;
   DAYS_KEY.forEach(function(k) {
-    var el = document.getElementById('ch-' + k);
-    if (el && el.value.trim()) { obj[k] = el.value.trim(); hasAny = true; }
+    ['am', 'pm'].forEach(function(period) {
+      var sel = document.getElementById('ch-' + k + '-' + period);
+      var customInp = document.getElementById('chi-' + k + '-' + period);
+      var val = '';
+      if (sel) {
+        if (sel.value === 'custom' && customInp && customInp.value.trim()) {
+          val = customInp.value.trim();
+        } else if (sel.value && sel.value !== 'custom') {
+          val = sel.value;
+        }
+      }
+      if (val) { obj[k + '_' + period] = val; hasAny = true; }
+    });
   });
   var notesEl = document.getElementById('ch-notes');
   if (notesEl && notesEl.value.trim()) { obj.notes = notesEl.value.trim(); hasAny = true; }
@@ -2282,20 +2786,90 @@ function collectClinicHours() {
 function renderClinicHours(str) {
   var h = parseClinicHours(str);
   if (!h || Object.keys(h).length === 0) return '';
-  var hasAnyDay = DAYS_KEY.some(function(k) { return h[k]; });
+  // Backward compat for old format
+  var isOldFormat = h.mon && !h.mon_am && typeof h.mon === 'string';
+  if (isOldFormat) {
+    var migrated = {};
+    DAYS_KEY.forEach(function(k) {
+      if (h[k]) { migrated[k + '_am'] = h[k]; migrated[k + '_pm'] = ''; }
+    });
+    migrated.notes = h.notes || '';
+    h = migrated;
+  }
+  var hasAnyDay = DAYS_KEY.some(function(k) { return h[k + '_am'] || h[k + '_pm']; });
   if (!hasAnyDay && !h.notes) return '';
-  var html = '<div class="card-flat p-4 lg:p-5"><div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-clock text-cyan-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">외래 시간</span></div>';
-  html += '<div class="grid grid-cols-6 gap-2 text-center">';
-  DAYS_KEY.forEach(function(k, i) {
-    var val = h[k] || '';
-    html += '<div class="rounded-lg p-2 ' + (val ? 'bg-cyan-50 border border-cyan-100' : 'bg-gray-50 border border-gray-100') + '">' +
-      '<div class="text-[10px] font-bold ' + (val ? 'text-cyan-700' : 'text-slate-400') + '">' + DAYS_KR[i] + '</div>' +
-      '<div class="text-[11px] font-semibold ' + (val ? 'text-cyan-600' : 'text-slate-300') + ' mt-0.5">' + (val || '-') + '</div></div>';
+  
+  var slotColor = function(v) {
+    if (!v) return { bg: 'bg-gray-50', text: 'text-slate-300', border: 'border-gray-100', icon: '' };
+    if (v === '진료') return { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: '<i class="fas fa-stethoscope text-[8px] mr-0.5"></i>' };
+    if (v === '수술') return { bg: 'bg-rose-50', text: 'text-rose-600', border: 'border-rose-100', icon: '<i class="fas fa-scissors text-[8px] mr-0.5"></i>' };
+    if (v === '휴진') return { bg: 'bg-gray-100', text: 'text-gray-400', border: 'border-gray-200', icon: '<i class="fas fa-ban text-[8px] mr-0.5"></i>' };
+    if (v === '순환진료') return { bg: 'bg-amber-50', text: 'text-amber-600', border: 'border-amber-100', icon: '<i class="fas fa-rotate text-[8px] mr-0.5"></i>' };
+    if (v.includes('검사')) return { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-100', icon: '<i class="fas fa-microscope text-[8px] mr-0.5"></i>' };
+    return { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: '' };
+  };
+  
+  var html = '<div class="card-flat p-4 lg:p-5"><div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-calendar-days text-cyan-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">외래 시간</span></div>';
+  // Table layout
+  html += '<div class="border border-gray-100 rounded-xl overflow-hidden">';
+  // Header
+  html += '<div class="grid grid-cols-7 bg-slate-50 border-b border-gray-100">';
+  html += '<div class="p-1.5 text-[9px] font-bold text-slate-400 text-center"></div>';
+  DAYS_KR.forEach(function(d, i) {
+    html += '<div class="p-1.5 text-[10px] font-bold text-center ' + (i === 5 ? 'text-blue-500' : 'text-slate-600') + '">' + d + '</div>';
   });
   html += '</div>';
-  if (h.notes) html += '<div class="text-[11px] text-slate-400 mt-2 bg-gray-50 rounded-lg px-3 py-2"><i class="fas fa-info-circle text-slate-300 mr-1"></i>' + h.notes + '</div>';
+  // AM row
+  html += '<div class="grid grid-cols-7 border-b border-gray-50">';
+  html += '<div class="p-1.5 text-[9px] font-bold text-amber-500 text-center bg-amber-50/40 flex items-center justify-center">오전</div>';
+  DAYS_KEY.forEach(function(k) {
+    var v = h[k + '_am'] || '';
+    var c = slotColor(v);
+    html += '<div class="p-1"><div class="' + c.bg + ' ' + c.text + ' border ' + c.border + ' rounded-lg text-center py-1.5 text-[10px] font-semibold leading-none">' + (v ? c.icon + v : '-') + '</div></div>';
+  });
+  html += '</div>';
+  // PM row
+  html += '<div class="grid grid-cols-7">';
+  html += '<div class="p-1.5 text-[9px] font-bold text-indigo-500 text-center bg-indigo-50/40 flex items-center justify-center">오후</div>';
+  DAYS_KEY.forEach(function(k) {
+    var v = h[k + '_pm'] || '';
+    var c = slotColor(v);
+    html += '<div class="p-1"><div class="' + c.bg + ' ' + c.text + ' border ' + c.border + ' rounded-lg text-center py-1.5 text-[10px] font-semibold leading-none">' + (v ? c.icon + v : '-') + '</div></div>';
+  });
+  html += '</div></div>';
+  if (h.notes) html += '<div class="text-[11px] text-amber-700 mt-2.5 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100"><i class="fas fa-exclamation-circle text-amber-400 mr-1"></i>' + h.notes + '</div>';
   html += '</div>';
   return html;
+}
+// Compact inline version for meeting timeline
+function renderClinicHoursCompact(str) {
+  var h = parseClinicHours(str);
+  if (!h || Object.keys(h).length === 0) return '';
+  var isOldFormat = h.mon && !h.mon_am && typeof h.mon === 'string';
+  if (isOldFormat) {
+    var migrated = {};
+    DAYS_KEY.forEach(function(k) { if (h[k]) { migrated[k + '_am'] = h[k]; } });
+    migrated.notes = h.notes || '';
+    h = migrated;
+  }
+  var parts = [];
+  DAYS_KEY.forEach(function(k, i) {
+    var am = h[k + '_am'] || '', pm = h[k + '_pm'] || '';
+    if (am || pm) {
+      var label = DAYS_KR[i];
+      var detail = [];
+      if (am && am !== '휴진') detail.push('오전' + (am !== '진료' ? '(' + am + ')' : ''));
+      if (pm && pm !== '휴진') detail.push('오후' + (pm !== '진료' ? '(' + pm + ')' : ''));
+      if (am === '휴진' && pm === '휴진') detail.push('휴진');
+      else if (am === '휴진') detail.push('오후만');
+      else if (pm === '휴진') detail.push('오전만');
+      parts.push(label + ':' + detail.join('/'));
+    }
+  });
+  if (!parts.length) return '';
+  return '<div class="text-[10px] text-cyan-600 bg-cyan-50 rounded-lg px-2.5 py-1.5 border border-cyan-100 mt-1.5">' +
+    '<i class="fas fa-calendar-days text-cyan-400 mr-1"></i>' + parts.join(' · ') +
+    (h.notes ? ' <span class="text-amber-600">(' + h.notes + ')</span>' : '') + '</div>';
 }
 
 // ===== Init =====

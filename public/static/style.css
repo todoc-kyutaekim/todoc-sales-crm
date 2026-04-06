@@ -347,6 +347,17 @@ textarea.input{resize:vertical;min-height:76px}
 .tag-btn:hover{opacity:.85;transform:scale(1.02)}
 .tag-btn:active{transform:scale(.98)}
 
+/* Hospital View Toggle Buttons */
+.hv-btn{padding:6px 8px;border-radius:6px;font-size:11px;color:#64748b;cursor:pointer;border:none;background:transparent;transition:all .15s}
+.hv-btn:hover{color:#334155;background:#e2e8f0}
+.hv-active{background:#fff !important;color:#3366ff !important;box-shadow:0 1px 3px rgba(0,0,0,.1);font-weight:600}
+
+/* Schedule Preview in Meeting Form */
+.meet-sched-fade{animation:fadeIn .2s ease}
+
+/* Korea Map Hover */
+#korea-map-container svg g:hover path{opacity:.75;transition:opacity .15s}
+
 @media(max-width:640px){
   .filter-search{min-width:0;flex:1 1 100%}
   .filter-select{max-width:none;flex:1 1 calc(33% - 4px)}
