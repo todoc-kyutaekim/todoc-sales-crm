@@ -10,6 +10,10 @@ import activity from './routes/activity'
 import exports from './routes/exports'
 import auth from './routes/auth'
 import ai from './routes/ai'
+import tags from './routes/tags'
+import favorites from './routes/favorites'
+import templates from './routes/templates'
+import pipeline from './routes/pipeline'
 
 type Bindings = { DB: D1Database; OPENAI_API_KEY: string; OPENAI_BASE_URL: string }
 const app = new Hono<{ Bindings: Bindings }>()
@@ -49,6 +53,10 @@ app.route('/api/search', search)
 app.route('/api/activity', activity)
 app.route('/api/export', exports)
 app.route('/api/ai', ai)
+app.route('/api/tags', tags)
+app.route('/api/favorites', favorites)
+app.route('/api/templates', templates)
+app.route('/api/pipeline', pipeline)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
@@ -93,11 +101,16 @@ app.get('/sw.js', (c) => {
 // SPA - serves HTML shell, all JS/CSS from CDN or inline
 app.get('*', (c) => c.html(HTML))
 
-const SW_JS = `const CACHE_NAME='todoc-crm-v4';
+const SW_JS = `const CACHE_NAME='todoc-crm-v6';
+const API_CACHE='todoc-api-v1';
 const STATIC_ASSETS=['/','/static/style.css','/static/app.js','/static/icons/icon-192x192.png'];
+const API_CACHE_PATHS=['/api/dashboard','/api/hospitals','/api/doctors','/api/meetings','/api/regions'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE_NAME).then(c=>c.addAll(STATIC_ASSETS).catch(()=>{})));self.skipWaiting()});
-self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE_NAME).map(k=>caches.delete(k)))));self.clients.claim()});
-self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET')return;if(u.pathname.startsWith('/api/'))return;if(u.origin!==self.location.origin){e.respondWith(caches.match(e.request).then(c=>{if(c)return c;return fetch(e.request).then(r=>{if(r.ok){const cl=r.clone();caches.open(CACHE_NAME).then(ca=>ca.put(e.request,cl))}return r}).catch(()=>c)}));return}e.respondWith(caches.match(e.request).then(c=>{const f=fetch(e.request).then(r=>{if(r.ok){const cl=r.clone();caches.open(CACHE_NAME).then(ca=>ca.put(e.request,cl))}return r}).catch(()=>c);return c||f}))});`
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE_NAME&&k!==API_CACHE).map(k=>caches.delete(k)))));self.clients.claim()});
+self.addEventListener('fetch',e=>{const u=new URL(e.request.url);if(e.request.method!=='GET')return;
+if(u.pathname.startsWith('/api/')&&u.origin===self.location.origin){const shouldCache=API_CACHE_PATHS.some(p=>u.pathname===p||u.pathname.startsWith(p+'?'));if(shouldCache){e.respondWith(fetch(e.request).then(r=>{if(r.ok){const cl=r.clone();caches.open(API_CACHE).then(ca=>ca.put(e.request,cl))}return r}).catch(()=>caches.match(e.request).then(c=>c||new Response(JSON.stringify({data:null,offline:true}),{headers:{'Content-Type':'application/json'}}))));return}return}
+if(u.origin!==self.location.origin){e.respondWith(caches.match(e.request).then(c=>{if(c)return c;return fetch(e.request).then(r=>{if(r.ok){const cl=r.clone();caches.open(CACHE_NAME).then(ca=>ca.put(e.request,cl))}return r}).catch(()=>c)}));return}
+e.respondWith(caches.match(e.request).then(c=>{const f=fetch(e.request).then(r=>{if(r.ok){const cl=r.clone();caches.open(CACHE_NAME).then(ca=>ca.put(e.request,cl))}return r}).catch(()=>c);return c||f}))});`
 
 const HTML = `<!DOCTYPE html>
 <html lang="ko"><head>
@@ -131,6 +144,11 @@ const HTML = `<!DOCTYPE html>
     <div id="auth-box" class="bg-white rounded-2xl shadow-xl border border-gray-100 p-8"></div>
     <div class="text-center mt-6 text-[11px] text-slate-300">&copy; 2026 TODOC Inc. &middot; Cochlear Implant Solutions</div>
   </div>
+</div>
+
+<!-- Pull-to-Refresh indicator -->
+<div id="ptr-indicator" class="fixed top-0 left-0 right-0 z-[80] flex items-center justify-center py-3 bg-brand-500 text-white text-sm font-semibold transform -translate-y-full transition-transform duration-200" style="display:none">
+  <i class="fas fa-sync-alt mr-2 ptr-spin"></i>새로고침 중...
 </div>
 
 <!-- App Main -->
@@ -199,7 +217,7 @@ const HTML = `<!DOCTYPE html>
 <!-- Mobile Bottom Navigation -->
 <nav id="bottom-nav" class="btm-nav">
   <div onclick="nav('dashboard')" id="bn-dashboard" class="btm-nav-item">
-    <i class="fas fa-chart-pie"></i><span>대시보드</span>
+    <div class="relative"><i class="fas fa-chart-pie"></i><span id="bn-reminder-badge" class="btm-badge hidden">0</span></div><span>대시보드</span>
   </div>
   <div onclick="nav('hospitals')" id="bn-hospitals" class="btm-nav-item">
     <i class="fas fa-hospital"></i><span>기관</span>

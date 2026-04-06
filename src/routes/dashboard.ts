@@ -3,13 +3,28 @@ import { Hono } from 'hono'
 type Bindings = { DB: D1Database }
 const dashboard = new Hono<{ Bindings: Bindings }>()
 
+// Period-aware dashboard (supports ?period=month|quarter|year)
 dashboard.get('/', async (c) => {
+  const period = c.req.query('period') || 'month'
+  let dateFilter = "date('now','start of month')"
+  let prevDateFilter = "date('now','start of month','-1 month')"
+  let prevEndFilter = "date('now','start of month')"
+  if (period === 'quarter') {
+    dateFilter = "date('now','start of month','-2 months','start of month')"
+    prevDateFilter = "date('now','start of month','-5 months','start of month')"
+    prevEndFilter = "date('now','start of month','-2 months','start of month')"
+  } else if (period === 'year') {
+    dateFilter = "date('now','start of year')"
+    prevDateFilter = "date('now','start of year','-1 year')"
+    prevEndFilter = "date('now','start of year')"
+  }
+
   const [hospitals, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw] = await Promise.all([
     c.env.DB.prepare('SELECT COUNT(*) as c FROM hospitals WHERE status="active"').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM doctors').first(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings').first(),
-    c.env.DB.prepare("SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= date('now','start of month')").first(),
-    c.env.DB.prepare("SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= date('now','start of month','-1 month') AND meeting_date < date('now','start of month')").first(),
+    c.env.DB.prepare(`SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ${dateFilter}`).first(),
+    c.env.DB.prepare(`SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ${prevDateFilter} AND meeting_date < ${prevEndFilter}`).first(),
     c.env.DB.prepare('SELECT m.*, h.name as hospital_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id ORDER BY m.meeting_date DESC LIMIT 8').all(),
     c.env.DB.prepare("SELECT m.*, h.name as hospital_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id WHERE m.next_action!='' AND m.next_action IS NOT NULL ORDER BY m.next_meeting_date ASC LIMIT 10").all(),
     c.env.DB.prepare('SELECT region, COUNT(*) as count FROM hospitals WHERE status="active" AND region!="" GROUP BY region ORDER BY count DESC').all(),
@@ -81,6 +96,15 @@ dashboard.get('/', async (c) => {
     }
   }
 
+  // KPI targets for current month
+  const now = new Date()
+  const kpiTarget = await c.env.DB.prepare(
+    'SELECT * FROM kpi_targets WHERE year=? AND month=?'
+  ).bind(now.getFullYear(), now.getMonth() + 1).first().catch(() => null) as any
+
+  // Reminder count (for notification badge)
+  const reminderCount = reminders.length
+
   return c.json({ data: {
     stats: {
       hospitals: (hospitals as any)?.c || 0,
@@ -89,6 +113,9 @@ dashboard.get('/', async (c) => {
       monthMeetings: (monthMeetings as any)?.c || 0,
       lastMonthMeetings: (lastMonthMeetings as any)?.c || 0,
     },
+    period,
+    kpiTarget: kpiTarget || null,
+    reminderCount,
     recentMeetings,
     upcomingActions,
     regionStats: regionStats.results,

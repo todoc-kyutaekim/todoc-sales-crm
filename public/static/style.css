@@ -301,3 +301,55 @@ textarea.input{resize:vertical;min-height:76px}
 @media(prefers-color-scheme:dark){
   /* future dark mode support */
 }
+
+/* ===== New Feature Styles ===== */
+
+/* Filter classes (replacing inline styles) */
+.filter-search{min-width:120px}
+.filter-select{width:auto;max-width:130px;flex:0 1 auto}
+.filter-select-lg{width:auto;max-width:170px;flex:0 1 auto}
+.filter-date{width:auto;max-width:150px;flex:0 1 auto}
+
+/* Bottom nav notification badge */
+.btm-badge{
+  position:absolute;top:-4px;right:-6px;
+  min-width:16px;height:16px;
+  border-radius:99px;
+  background:#ef4444;color:#fff;
+  font-size:9px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;
+  padding:0 4px;
+  border:2px solid #fff;
+  line-height:1;
+  animation:fadeIn .3s ease;
+}
+
+/* Pull-to-refresh */
+.ptr-spin{animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+
+/* Pipeline stage buttons */
+.pipeline-btn{transition:all .15s}
+.pipeline-btn:hover{transform:translateY(-1px)}
+
+/* Calendar day hover */
+.cal-day:hover{background:#f8fafc}
+
+/* Offline indicator */
+.offline-banner{
+  position:fixed;top:0;left:0;right:0;z-index:90;
+  background:#f59e0b;color:#fff;
+  text-align:center;font-size:12px;font-weight:600;
+  padding:4px 8px;
+}
+
+/* Tag buttons */
+.tag-btn:hover{opacity:.85;transform:scale(1.02)}
+.tag-btn:active{transform:scale(.98)}
+
+@media(max-width:640px){
+  .filter-search{min-width:0;flex:1 1 100%}
+  .filter-select{max-width:none;flex:1 1 calc(33% - 4px)}
+  .filter-select-lg{max-width:none;flex:1 1 calc(50% - 3px)}
+  .filter-date{max-width:none;flex:1 1 calc(50% - 3px)}
+}

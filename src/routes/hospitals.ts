@@ -33,14 +33,15 @@ hospitals.post('/', async (c) => {
   const b = await c.req.json()
   if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
   const r = await c.env.DB.prepare(
-    'INSERT INTO hospitals (name,region,address,phone,grade,notes,status,type,priority,todoc_contact,patient_count,hearing_aid_sales,ci_referrals) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)'
+    'INSERT INTO hospitals (name,region,address,phone,grade,notes,status,type,priority,todoc_contact,patient_count,hearing_aid_sales,ci_referrals,pipeline_stage) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).bind(
     b.name.trim(), b.region || '', b.address || '', b.phone || '',
     b.grade || 'A',
     b.notes || '', b.status || 'active',
     b.type || 'hospital',
     b.priority || '3', b.todoc_contact || '', 
-    safeInt(b.patient_count + ''), safeInt(b.hearing_aid_sales + ''), safeInt(b.ci_referrals + '')
+    safeInt(b.patient_count + ''), safeInt(b.hearing_aid_sales + ''), safeInt(b.ci_referrals + ''),
+    b.pipeline_stage || 'contact'
   ).run()
   await logActivity(c.env.DB, 'create', 'hospital', r.meta.last_row_id as number, b.name.trim())
   return c.json({ data: { id: r.meta.last_row_id, ...b } }, 201)
@@ -50,13 +51,14 @@ hospitals.put('/:id', async (c) => {
   const b = await c.req.json(); const id = c.req.param('id')
   if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
   await c.env.DB.prepare(
-    'UPDATE hospitals SET name=?,region=?,address=?,phone=?,grade=?,notes=?,status=?,type=?,priority=?,todoc_contact=?,patient_count=?,hearing_aid_sales=?,ci_referrals=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'
+    'UPDATE hospitals SET name=?,region=?,address=?,phone=?,grade=?,notes=?,status=?,type=?,priority=?,todoc_contact=?,patient_count=?,hearing_aid_sales=?,ci_referrals=?,pipeline_stage=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'
   ).bind(
     b.name.trim(), b.region || '', b.address || '', b.phone || '',
     b.grade || 'A', b.notes || '', b.status || 'active',
     b.type || 'hospital',
     b.priority || '3', b.todoc_contact || '',
     safeInt(b.patient_count + ''), safeInt(b.hearing_aid_sales + ''), safeInt(b.ci_referrals + ''),
+    b.pipeline_stage || 'contact',
     id
   ).run()
   await logActivity(c.env.DB, 'update', 'hospital', Number(id), b.name.trim())

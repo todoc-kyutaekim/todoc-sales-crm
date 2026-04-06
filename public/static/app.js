@@ -2,6 +2,11 @@
 const API = axios.create({ baseURL: '/api' });
 let curPage = '', hospList = [], docList = [], confirmCb = null, searchTimer = null;
 let currentUser = null;
+let _reminderCount = 0;
+let _dashPeriod = 'month';
+let _searchHistory = JSON.parse(localStorage.getItem('todoc_search_history') || '[]');
+let _favorites = new Set();
+let _offlineMode = !navigator.onLine;
 
 // ===== Auth: Session Management =====
 function getSession() { return localStorage.getItem('todoc_session') || '' }
@@ -52,6 +57,7 @@ function showAppScreen() {
   var bn = document.getElementById('bottom-nav');
   if (bn) bn.classList.add('show');
   updateUserUI();
+  loadFavorites();
   nav('dashboard');
 }
 function updateUserUI() {
@@ -325,6 +331,7 @@ function onGlobalSearch(q) {
   if (!q || q.trim().length < 1) { hideSearchResults(); return; }
   searchTimer = setTimeout(async () => {
     try {
+      addSearchHistory(q.trim());
       const { data } = await API.get('/search?q=' + encodeURIComponent(q.trim()));
       renderSearchResults(data.data);
     } catch (e) { }
@@ -356,7 +363,7 @@ function renderSearchResults(d) {
   el.innerHTML = html;
   el.classList.remove('hidden');
 }
-function showSearchResults() { if (document.getElementById('global-search')?.value) onGlobalSearch(document.getElementById('global-search').value); }
+function showSearchResults() { if (document.getElementById('global-search')?.value) onGlobalSearch(document.getElementById('global-search').value); else showSearchHistory(); }
 function hideSearchResults() { document.getElementById('search-results')?.classList.add('hidden'); }
 document.addEventListener('click', e => { if (!document.getElementById('search-wrap')?.contains(e.target) && !document.getElementById('mobile-search-btn')?.contains(e.target)) { hideSearchResults(); } });
 
@@ -389,8 +396,9 @@ function fmtAmount(v) {
 function fmtNum(n) { return n.toLocaleString('ko-KR') }
 function infoRow(label, val) { return '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">' + label + '</span><span class="text-[13px] font-medium text-slate-700">' + (val || '-') + '</span></div>' }
 
-// ===== CSV Download =====
+// ===== CSV/XLSX Download =====
 function downloadCSV(type) { window.open('/api/export/' + type, '_blank'); }
+function downloadXLSX(type) { window.open('/api/export/xlsx/' + type, '_blank'); }
 
 // ===== DASHBOARD =====
 let dashCharts = [];
@@ -400,10 +408,15 @@ async function loadDash() {
   destroyDashCharts();
   document.getElementById('page-title').textContent = '대시보드';
   document.getElementById('page-subtitle').textContent = '';
-  document.getElementById('header-actions').innerHTML = '<button class="btn btn-success btn-sm" onclick="showNewMeetGlobal()"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">빠른 미팅 추가</span></button>';
+  document.getElementById('header-actions').innerHTML = 
+    '<select id="dash-period" class="input !py-1.5 !text-xs !w-auto !pr-7 !rounded-lg" onchange="_dashPeriod=this.value;loadDash()" style="max-width:110px"><option value="month"' + (_dashPeriod==='month'?' selected':'') + '>이번 달</option><option value="quarter"' + (_dashPeriod==='quarter'?' selected':'') + '>이번 분기</option><option value="year"' + (_dashPeriod==='year'?' selected':'') + '>올해</option></select>' +
+    '<button class="btn btn-outline btn-sm" onclick="showPipelineView()"><i class="fas fa-columns text-xs"></i><span class="hidden sm:inline">파이프라인</span></button>' +
+    '<button class="btn btn-success btn-sm" onclick="showNewMeetGlobal()"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">빠른 미팅</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 space-y-6"><div class="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-5">' + Array(4).fill('<div class="sc"><div class="flex gap-4"><div class="skeleton rounded-xl" style="width:44px;height:44px"></div><div class="flex-1 space-y-2"><div class="skeleton rounded h-3 w-16"></div><div class="skeleton rounded h-6 w-20"></div></div></div></div>').join('') + '</div></div>';
   try {
-    const { data: d } = await API.get('/dashboard'); const s = d.data;
+    const { data: d } = await API.get('/dashboard?period=' + _dashPeriod); const s = d.data;
+    // Update reminder badge
+    updateReminderBadge(s.reminderCount || s.reminders?.length || 0);
     const C = document.getElementById('content');
     // Month comparison
     const monthDiff = s.stats.lastMonthMeetings > 0 ? ((s.stats.monthMeetings - s.stats.lastMonthMeetings) / s.stats.lastMonthMeetings * 100).toFixed(0) : (s.stats.monthMeetings > 0 ? '+100' : '0');
@@ -424,8 +437,11 @@ async function loadDash() {
       sc('관리 기관', s.stats.hospitals, '개', 'fa-hospital', '#3366ff', '#eef4ff', 'hospitals') +
       sc('등록 의료진', s.stats.doctors, '명', 'fa-user-doctor', '#7c3aed', '#f5f3ff', 'doctors') +
       sc('총 미팅', s.stats.meetings, '건', 'fa-handshake', '#059669', '#ecfdf5', 'meetings') +
-      '<div class="sc cursor-pointer" onclick="nav(\'meetings\')"><div class="flex items-center gap-4"><div class="sc-icon" style="background:#fffbeb"><i class="fas fa-calendar-day" style="color:#d97706"></i></div><div><p class="text-[11px] text-slate-400 font-medium mb-0.5">이번 달</p><div class="flex items-baseline gap-1"><span class="text-[22px] font-extrabold text-slate-800 tracking-tight">' + s.stats.monthMeetings + '</span><span class="text-xs text-slate-300 font-medium">건</span></div><div class="mt-0.5">' + monthDiffText + ' <span class="text-[10px] text-slate-300">vs 지난달</span></div></div></div></div>' +
+      sc('이번 달', s.stats.monthMeetings, '건', 'fa-calendar-day', '#d97706', '#fffbeb', 'meetings') +
       '</div>' +
+      // KPI gauge (if target set)
+      (s.kpiTarget && s.kpiTarget.target_meetings > 0 ? '<div class="card-flat p-4 lg:p-5"><div class="flex items-center justify-between mb-3"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-bullseye text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">KPI 달성률</span></div><button class="btn btn-ghost btn-sm text-xs" onclick="showKPISettings()"><i class="fas fa-cog text-xs"></i> 설정</button></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-4">' + kpiGaugeCard('미팅', s.stats.monthMeetings, s.kpiTarget.target_meetings, 'fa-handshake', '#3366ff') + '</div></div>' :
+        '<div class="card-flat p-4 flex items-center justify-between"><div class="flex items-center gap-2 text-sm text-slate-400"><i class="fas fa-bullseye text-slate-300"></i>KPI 목표가 설정되지 않았습니다</div><button class="btn btn-outline btn-sm" onclick="showKPISettings()"><i class="fas fa-plus text-xs mr-1"></i>설정</button></div>') +
       // CI KPI banner
       (s.ciKpi ? '<div class="card-flat p-5 flex flex-wrap items-center gap-4 lg:gap-8"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-line text-indigo-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">인공와우 시장 현황 (' + s.ciKpi.year + '년)</div><div class="text-sm font-bold text-slate-800">환자 ' + fmtNum(s.ciKpi.patients) + '명</div></div></div><div class="flex gap-6 text-center"><div><div class="text-[10px] text-slate-400">시술건수</div><div class="text-sm font-bold text-brand-600">' + fmtNum(s.ciKpi.usage) + '</div></div><div><div class="text-[10px] text-slate-400">진료금액</div><div class="text-sm font-bold text-emerald-600">' + fmtAmount(s.ciKpi.amount) + '</div></div><div><div class="text-[10px] text-slate-400">환자 증가율</div><div class="text-sm font-bold ' + (parseFloat(s.ciKpi.growth_patients) > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (parseFloat(s.ciKpi.growth_patients) > 0 ? '+' : '') + s.ciKpi.growth_patients + '%</div></div></div><button class="btn btn-outline btn-sm ml-auto" onclick="nav(\'cistats\')">통계 상세 <i class="fas fa-arrow-right text-[10px]"></i></button></div>' : '') +
       // Monthly trend chart + right column
@@ -488,20 +504,80 @@ function sc(label, val, unit, icon, color, bg, link) {
   return '<div class="sc cursor-pointer" onclick="' + (link ? "nav('" + link + "')" : '') + '"><div class="flex items-center gap-4"><div class="sc-icon" style="background:' + bg + '"><i class="fas ' + icon + '" style="color:' + color + '"></i></div><div><p class="text-[11px] text-slate-400 font-medium mb-0.5">' + label + '</p><div class="flex items-baseline gap-1"><span class="text-[22px] font-extrabold text-slate-800 tracking-tight">' + val + '</span><span class="text-xs text-slate-300 font-medium">' + unit + '</span></div></div></div></div>';
 }
 
+// ===== KPI Gauge =====
+function kpiGaugeCard(label, actual, target, icon, color) {
+  var pct = target > 0 ? Math.min(Math.round(actual / target * 100), 100) : 0;
+  var barColor = pct >= 100 ? '#059669' : pct >= 70 ? '#3366ff' : pct >= 40 ? '#d97706' : '#ef4444';
+  return '<div class="flex items-center gap-3"><div class="flex-1"><div class="flex items-center justify-between mb-1"><span class="text-xs font-semibold text-slate-600"><i class="fas ' + icon + ' mr-1" style="color:' + color + '"></i>' + label + '</span><span class="text-xs font-bold" style="color:' + barColor + '">' + pct + '%</span></div><div class="w-full bg-gray-100 rounded-full h-2.5"><div class="h-2.5 rounded-full transition-all duration-500" style="width:' + pct + '%;background:' + barColor + '"></div></div><div class="text-[10px] text-slate-400 mt-0.5">' + actual + ' / ' + target + ' ' + (label === '미팅' ? '건' : '개') + '</div></div></div>';
+}
+
+// ===== KPI Settings Modal =====
+async function showKPISettings() {
+  var now = new Date();
+  var y = now.getFullYear(), m = now.getMonth() + 1;
+  openModal('KPI 목표 설정',
+    '<form id="fm" class="space-y-4">' +
+    '<div class="grid grid-cols-2 gap-4"><div><label class="input-label">연도</label><input type="number" name="year" value="' + y + '" class="input"></div><div><label class="input-label">월</label><input type="number" name="month" value="' + m + '" class="input" min="1" max="12"></div></div>' +
+    '<div><label class="input-label">월간 미팅 목표 (건)</label><input type="number" name="target_meetings" value="0" class="input" min="0"></div>' +
+    '<div class="flex justify-end gap-2 pt-3 border-t border-gray-50"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">저장</button></div></form>');
+  // Load existing target
+  try {
+    var r = await API.get('/pipeline/kpi-targets?year=' + y + '&month=' + m);
+    var t = r.data.data.target;
+    if (t) { document.querySelector('#fm input[name="target_meetings"]').value = t.target_meetings || 0; }
+  } catch(e) {}
+  document.getElementById('fm').onsubmit = async function(e) {
+    e.preventDefault();
+    var f = Object.fromEntries(new FormData(e.target));
+    try {
+      await API.post('/pipeline/kpi-targets', f);
+      toast('KPI 목표가 저장되었습니다'); closeModal(); loadDash();
+    } catch(e) { toast('저장 실패', 'err'); }
+  };
+}
+
+// ===== Pipeline View =====
+async function showPipelineView() {
+  openModal('영업 파이프라인', '<div class="text-center py-6"><i class="fas fa-spinner fa-spin text-xl text-slate-300"></i></div>', 'wide');
+  try {
+    var r = await API.get('/pipeline');
+    var stages = r.data.data.stages;
+    var stageColors = { contact: 'slate', meeting: 'blue', demo: 'violet', proposal: 'amber', contract: 'emerald', active_customer: 'brand' };
+    var stageIcons = { contact: 'fa-handshake-angle', meeting: 'fa-calendar-check', demo: 'fa-laptop', proposal: 'fa-file-contract', contract: 'fa-file-signature', active_customer: 'fa-building-circle-check' };
+    var html = '<div class="overflow-x-auto -mx-4 lg:-mx-6 px-4 lg:px-6 pb-4"><div class="flex gap-3" style="min-width:' + (stages.length * 200) + 'px">';
+    stages.forEach(function(s) {
+      var color = stageColors[s.key] || 'slate';
+      html += '<div class="flex-1 min-w-[180px]"><div class="text-center mb-3"><span class="text-xs font-bold text-' + color + '-600 bg-' + color + '-50 px-3 py-1 rounded-full"><i class="fas ' + (stageIcons[s.key]||'fa-circle') + ' mr-1"></i>' + s.label + '</span><div class="text-[10px] text-slate-400 mt-1">' + s.hospitals.length + '개</div></div>';
+      html += '<div class="space-y-2">';
+      s.hospitals.forEach(function(h) {
+        html += '<div class="card-flat !p-3 cursor-pointer hover:shadow-md transition" onclick="closeModal();viewHosp(' + h.id + ')" draggable="true" data-hosp-id="' + h.id + '">' +
+          '<div class="flex items-center gap-2 mb-1">' + gradeBadge(h.grade) + '<span class="text-[12px] font-bold text-slate-700 truncate">' + h.name + '</span></div>' +
+          '<div class="flex items-center justify-between text-[10px] text-slate-400"><span>' + (h.region || '') + '</span><span>' + (h.meeting_count || 0) + '회</span></div></div>';
+      });
+      if (!s.hospitals.length) html += '<div class="text-center py-6 text-[11px] text-slate-300 border border-dashed border-gray-200 rounded-xl">비어 있음</div>';
+      html += '</div></div>';
+    });
+    html += '</div></div>';
+    html += '<div class="text-[10px] text-slate-400 mt-2"><i class="fas fa-info-circle mr-1"></i>기관 상세에서 파이프라인 단계를 변경할 수 있습니다</div>';
+    document.getElementById('modal-body').innerHTML = html;
+  } catch(e) { document.getElementById('modal-body').innerHTML = '<div class="text-center text-red-400 py-4">파이프라인 데이터를 불러올 수 없습니다</div>'; }
+}
+
 // ===== HOSPITALS =====
 async function loadHosp(typeFilter) {
   document.getElementById('page-title').textContent = '기관 관리';
-  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'hospitals\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-primary" onclick="showHospForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">추가</span></button>';
+  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadXLSX(\'hospitals\')"><i class="fas fa-file-excel text-xs"></i>Excel</button><button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'hospitals\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-primary" onclick="showHospForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">추가</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">' + Array(6).fill('<div class="card p-5"><div class="space-y-3"><div class="skeleton rounded h-5 w-32"></div><div class="skeleton rounded h-3 w-48"></div></div></div>').join('') + '</div></div>';
   try {
     const [hR, rR] = await Promise.all([API.get('/hospitals'), API.get('/regions')]);
     hospList = hR.data.data; const regions = rR.data.data;
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="filter-row">' +
-      '<div class="relative flex-1" style="min-width:140px"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="기관명 검색" class="input pl-10"></div>' +
-      '<select id="h-type" onchange="filterH()" class="input" style="max-width:110px"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option></select>' +
-      '<select id="h-region" onchange="filterH()" class="input" style="max-width:120px"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
-      '<select id="h-grade" onchange="filterH()" class="input" style="max-width:110px"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
+      '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="기관명 검색" class="input pl-10"></div>' +
+      '<select id="h-type" onchange="filterH()" class="input filter-select"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option></select>' +
+      '<select id="h-region" onchange="filterH()" class="input filter-select"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
+      '<select id="h-grade" onchange="filterH()" class="input filter-select"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
+      '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="h-fav-only" onchange="filterH()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
       '<span id="h-count" class="text-xs text-slate-300 font-medium"></span></div>' +
       '<div id="h-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5"></div></div>';
     if (typeFilter) { document.getElementById('h-type').value = typeFilter; }
@@ -515,7 +591,8 @@ function renderH(list) {
     return '<div class="card accent-' + h.grade + ' p-5 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
       '<div class="flex items-center gap-2 mb-3">' +
       gradeBadge(h.grade) + priorityStars(h.priority) + todocBadge(h.todoc_contact) +
-      statusDot(h.status) + (warn ? '<span class="ml-auto text-[10px] text-red-400 bg-red-50 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-exclamation-triangle mr-0.5"></i>30일+</span>' : '') + '</div>' +
+      statusDot(h.status) + (warn ? '<span class="ml-auto text-[10px] text-red-400 bg-red-50 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-exclamation-triangle mr-0.5"></i>30일+</span>' : '') +
+      '<span class="ml-auto">' + favStar('hospital', h.id) + '</span></div>' +
       '<h3 class="font-bold text-slate-800 text-[15px] mb-1 truncate">' + h.name + '</h3>' +
       '<p class="text-xs text-slate-400"><i class="fas fa-location-dot mr-1"></i>' + (h.region || '미지정') + '</p>' +
       '<div class="flex gap-2 mt-4">' +
@@ -530,7 +607,8 @@ function renderH(list) {
 }
 function filterH() {
   const s = (document.getElementById('h-search')?.value || '').toLowerCase(), r = document.getElementById('h-region')?.value || '', g = document.getElementById('h-grade')?.value || '', t = document.getElementById('h-type')?.value || '';
-  renderH(hospList.filter(h => (!s || h.name.toLowerCase().includes(s)) && (!r || h.region === r) && (!g || h.grade === g) && (!t || h.type === t)));
+  const favOnly = document.getElementById('h-fav-only')?.checked || false;
+  renderH(hospList.filter(h => (!s || h.name.toLowerCase().includes(s)) && (!r || h.region === r) && (!g || h.grade === g) && (!t || h.type === t) && (!favOnly || isFavorited('hospital', h.id))));
 }
 
 // ===== HOSPITAL DETAIL =====
@@ -543,6 +621,8 @@ async function viewHosp(id) {
     document.getElementById('page-title').textContent = h.name;
     document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'hospitals\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>기관 목록</span>';
     document.getElementById('header-actions').innerHTML =
+      '<button class="btn btn-outline btn-sm" onclick="showTagManager(\'hospital\',' + h.id + ')"><i class="fas fa-tags text-xs"></i></button>' +
+      '<button class="btn btn-outline btn-sm" onclick="showMeetingStats(\'hospital\',' + h.id + ')"><i class="fas fa-chart-bar text-xs"></i></button>' +
       '<button class="btn btn-primary btn-sm" onclick="showDocForm(' + h.id + ')"><i class="fas fa-user-plus text-xs"></i><span class="hidden sm:inline">인원</span></button>' +
       '<button class="btn btn-success btn-sm" onclick="showMeetForm(' + h.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>' +
       '<button class="btn btn-outline btn-sm" onclick="showHospForm(' + h.id + ')"><i class="fas fa-pen text-xs"></i></button>' +
@@ -558,6 +638,11 @@ function renderDetail() {
   const topDoc = docs.reduce((best, d) => (!best || (d.meeting_count || 0) > (best.meeting_count || 0)) ? d : best, null);
   
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-5">' +
+    // Pipeline stage selector
+    '<div class="card-flat p-3 flex items-center gap-3 overflow-x-auto">' +
+    '<span class="text-[10px] text-slate-400 font-bold flex-shrink-0">파이프라인:</span>' +
+    pipelineStageButtons(h) +
+    '</div>' +
     // Summary stats — unified layout
     '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">' +
     '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">소속 인원</div><div class="text-lg font-extrabold text-brand-600">' + docs.length + '<span class="text-xs text-slate-400 ml-0.5">명</span></div></div>' +
@@ -896,7 +981,7 @@ async function refreshDocProfile(docId) {
 // ===== DOCTORS PAGE =====
 async function loadDoc() {
   document.getElementById('page-title').textContent = '의료진 관리';
-  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'doctors\')"><i class="fas fa-download text-xs"></i>CSV</button>';
+  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadXLSX(\'doctors\')"><i class="fas fa-file-excel text-xs"></i>Excel</button><button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'doctors\')"><i class="fas fa-download text-xs"></i>CSV</button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat overflow-hidden">' + skeleton(6) + '</div></div>';
   try {
     const [dr, deptR] = await Promise.all([API.get('/doctors'), API.get('/doctors/departments')]);
@@ -904,10 +989,11 @@ async function loadDoc() {
     const depts = deptR.data.data || [];
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="filter-row">' +
-      '<div class="relative flex-1" style="min-width:140px"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="의료진명/병원명" class="input pl-10"></div>' +
-      '<select id="d-inf" onchange="filterD()" class="input" style="max-width:100px"><option value="">전체</option><option value="high">핵심</option><option value="medium">주요</option><option value="low">일반</option></select>' +
-      '<select id="d-dept" onchange="filterD()" class="input" style="max-width:130px"><option value="">전체 진료과</option>' + depts.map(dp => '<option>' + dp + '</option>').join('') + '</select>' +
-      '<select id="d-visit" onchange="filterD()" class="input" style="max-width:140px"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
+      '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="의료진명/병원명" class="input pl-10"></div>' +
+      '<select id="d-inf" onchange="filterD()" class="input filter-select"><option value="">전체</option><option value="high">핵심</option><option value="medium">주요</option><option value="low">일반</option></select>' +
+      '<select id="d-dept" onchange="filterD()" class="input filter-select"><option value="">전체 진료과</option>' + depts.map(dp => '<option>' + dp + '</option>').join('') + '</select>' +
+      '<select id="d-visit" onchange="filterD()" class="input filter-select"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
+      '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="d-fav-only" onchange="filterD()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
       '<span id="d-count" class="text-xs text-slate-300 font-medium"></span></div>' +
       '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
       '<th class="px-4 lg:px-6 py-3.5 text-left">의료진</th><th class="px-4 py-3.5 text-left">소속 병원</th><th class="px-4 py-3.5 text-left hide-mobile">진료과</th><th class="px-4 py-3.5 text-left hide-mobile">전문분야</th><th class="px-4 py-3.5 text-center">영향력</th><th class="px-4 py-3.5 text-center">미팅</th><th class="px-4 py-3.5 text-left">최근</th></tr></thead>' +
@@ -933,10 +1019,12 @@ function filterD() {
   const inf = document.getElementById('d-inf')?.value || '';
   const dept = document.getElementById('d-dept')?.value || '';
   const vis = document.getElementById('d-visit')?.value || '';
+  const favOnly = document.getElementById('d-fav-only')?.checked || false;
   renderDR(docList.filter(d => {
     if (q && !d.name.toLowerCase().includes(q) && !(d.hospital_name || '').toLowerCase().includes(q)) return false;
     if (inf && d.influence_level !== inf) return false;
     if (dept && d.department !== dept) return false;
+    if (favOnly && !isFavorited('doctor', d.id)) return false;
     if (vis) {
       const days = parseInt(vis);
       if (d.last_meeting) { const diff = Math.floor((Date.now() - new Date(d.last_meeting + 'T00:00:00').getTime()) / 86400000); if (diff < days) return false; }
@@ -959,6 +1047,9 @@ async function viewDocProfile(id) {
     document.getElementById('page-subtitle').innerHTML = '<span class="cursor-pointer hover:text-brand-500 transition" onclick="nav(\'doctors\')"><i class="fas fa-chevron-left mr-1 text-[10px]"></i>의료진 목록</span>';
     document.getElementById('header-actions').innerHTML =
       ((!d.bio && !d.education && !d.career) ? '<button class="btn btn-sm !bg-violet-600 !text-white hover:!bg-violet-700" onclick="refreshDocProfile(' + d.id + ')"><i class="fas fa-wand-magic-sparkles text-xs mr-1"></i><span class="hidden sm:inline">AI 프로필</span></button>' : '') +
+      '<button class="btn btn-outline btn-sm" onclick="showTagManager(\'doctor\',' + d.id + ')"><i class="fas fa-tags text-xs"></i></button>' +
+      '<button class="btn btn-outline btn-sm" onclick="showMeetingStats(\'doctor\',' + d.id + ')"><i class="fas fa-chart-bar text-xs"></i></button>' +
+      '<button class="btn btn-outline btn-sm" onclick="showTransferForm(' + d.id + ')"><i class="fas fa-right-left text-xs"></i></button>' +
       '<button class="btn btn-success btn-sm" onclick="showMeetForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>' +
       '<button class="btn btn-primary btn-sm" onclick="showPaperForm(' + d.id + ')"><i class="fas fa-file-medical text-xs"></i><span class="hidden sm:inline">논문</span></button>' +
       '<button class="btn btn-outline btn-sm" onclick="showDocForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-pen text-xs"></i></button>';
@@ -1099,11 +1190,12 @@ async function loadMeet() {
     const hospOpts = '<option value="">전체 병원</option>' + (hospR.data.data || []).map(h => '<option value="' + h.id + '">' + h.name + '</option>').join('');
     C.innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="filter-row">' +
-      '<div class="relative flex-1" style="min-width:140px"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10"></div>' +
-      '<select id="m-hospital" onchange="filterM()" class="input" style="max-width:160px">' + hospOpts + '</select>' +
-      '<select id="m-type" onchange="filterM()" class="input" style="max-width:110px"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
-      '<input id="m-from" type="date" onchange="filterM()" class="input hide-mobile" style="max-width:150px" placeholder="시작일">' +
-      '<input id="m-to" type="date" onchange="filterM()" class="input hide-mobile" style="max-width:150px" placeholder="종료일">' +
+      '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10"></div>' +
+      '<select id="m-hospital" onchange="filterM()" class="input filter-select-lg">' + hospOpts + '</select>' +
+      '<select id="m-type" onchange="filterM()" class="input filter-select"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
+      '<input id="m-from" type="date" onchange="filterM()" class="input hide-mobile filter-date" placeholder="시작일">' +
+      '<input id="m-to" type="date" onchange="filterM()" class="input hide-mobile filter-date" placeholder="종료일">' +
+      '<button class="btn btn-outline btn-sm" onclick="showCalendarView()"><i class="fas fa-calendar text-xs"></i><span class="hidden sm:inline">캘린더</span></button>' +
       '<span id="m-count" class="text-xs text-slate-300 font-medium"></span>' +
       '</div>' +
       '<div id="m-list" class="card-flat p-0 overflow-hidden"></div></div>';
@@ -1272,9 +1364,34 @@ function todocBadge(t) {
 function clinicMetric(icon, label, val, color) {
   return '<div class="flex-1 bg-slate-50 rounded-xl p-2.5 text-center"><p class="text-[10px] text-slate-400 mb-0.5"><i class="fas ' + icon + ' mr-0.5"></i>' + label + '</p><p class="text-sm font-bold ' + (color || 'text-slate-600') + '">' + (val || 0) + '</p></div>';
 }
+function pipelineStageButtons(h) {
+  var stages = [
+    { key: 'contact', label: '접촉', icon: 'fa-handshake-angle', color: 'slate' },
+    { key: 'meeting', label: '미팅', icon: 'fa-calendar-check', color: 'blue' },
+    { key: 'demo', label: '데모', icon: 'fa-laptop', color: 'violet' },
+    { key: 'proposal', label: '제안', icon: 'fa-file-contract', color: 'amber' },
+    { key: 'contract', label: '계약', icon: 'fa-file-signature', color: 'emerald' },
+    { key: 'active_customer', label: '거래처', icon: 'fa-building-circle-check', color: 'brand' }
+  ];
+  var current = h.pipeline_stage || 'contact';
+  return stages.map(function(s) {
+    var isActive = s.key === current;
+    return '<button class="flex-shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold transition ' +
+      (isActive ? 'bg-' + s.color + '-100 text-' + s.color + '-700 ring-1 ring-' + s.color + '-300' : 'text-slate-400 hover:bg-gray-100') + '" ' +
+      'onclick="event.stopPropagation();updatePipelineStage(' + h.id + ',\'' + s.key + '\')">' +
+      '<i class="fas ' + s.icon + '"></i>' + s.label + '</button>';
+  }).join('<i class="fas fa-chevron-right text-[8px] text-slate-200 flex-shrink-0"></i>');
+}
+async function updatePipelineStage(hid, stage) {
+  try {
+    await API.put('/pipeline/' + hid, { pipeline_stage: stage });
+    toast('파이프라인 단계 변경됨');
+    viewHosp(hid);
+  } catch(e) { toast('변경 실패', 'err'); }
+}
 
 async function showHospForm(id) {
-  let h = { name: '', region: '', address: '', phone: '', grade: 'A', notes: '', status: 'active', type: 'hospital', priority: '3', todoc_contact: 'X', patient_count: 0, hearing_aid_sales: 0, ci_referrals: 0 };
+  let h = { name: '', region: '', address: '', phone: '', grade: 'A', notes: '', status: 'active', type: 'hospital', priority: '3', todoc_contact: 'X', patient_count: 0, hearing_aid_sales: 0, ci_referrals: 0, pipeline_stage: 'contact' };
   if (id) { try { h = (await API.get('/hospitals/' + id)).data.data } catch (e) { } }
   openModal(id ? '기관 정보 수정' : '새 기관 추가',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
@@ -1285,6 +1402,7 @@ async function showHospForm(id) {
     field('상태', 'status', 'select', h.status, [{ v: 'active', l: '활성' }, { v: 'inactive', l: '비활성' }]) +
     field('우선순위', 'priority', 'select', h.priority, [{ v: '5', l: '★★★★★' }, { v: '4', l: '★★★★' }, { v: '3', l: '★★★' }, { v: '2', l: '★★' }, { v: '1', l: '★' }]) +
     field('토닥접점', 'todoc_contact', 'select', h.todoc_contact || 'X', [{ v: 'O', l: 'O (접점)' }, { v: '△', l: '△ (일부)' }, { v: 'X', l: 'X (미접점)' }]) +
+    field('파이프라인', 'pipeline_stage', 'select', h.pipeline_stage || 'contact', [{ v: 'contact', l: '첫 접촉' }, { v: 'meeting', l: '미팅 진행' }, { v: 'demo', l: '데모/시연' }, { v: 'proposal', l: '제안/협의' }, { v: 'contract', l: '계약' }, { v: 'active_customer', l: '활성 거래처' }]) +
     '<div><label class="input-label">난청 환자수</label><input type="number" name="patient_count" value="' + (h.patient_count || 0) + '" class="input" min="0"></div>' +
     '<div><label class="input-label">보청기 판매량</label><input type="number" name="hearing_aid_sales" value="' + (h.hearing_aid_sales || 0) + '" class="input" min="0"></div>' +
     '<div><label class="input-label">CI 의뢰 실적</label><input type="number" name="ci_referrals" value="' + (h.ci_referrals || 0) + '" class="input" min="0"></div>' +
@@ -1454,6 +1572,8 @@ async function showMeetForm(hid, did, mid) {
     delete payload.doctor_ids_single;
     try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 기록됨') } closeModal(); viewHosp(hid) } catch (e) { toast('저장 실패', 'err') }
   };
+  // Insert template selector for new meetings
+  if (!mid) { setTimeout(function() { var fm = document.getElementById('fm'); if (fm) insertTemplateSelector(fm); }, 100); }
 }
 async function showMeetFormFromProfile(hid, did, mid) {
   let m = { meeting_date: new Date().toISOString().split('T')[0], meeting_type: 'visit', purpose: '', content: '', result: '', next_action: '', next_meeting_date: '', doctor_ids: [did], hospital_id: hid };
@@ -1899,5 +2019,321 @@ async function showCrossAnalysis() {
 // Known clinics merged into KNOWN_HOSPITALS (type: 'clinic')
 // See KNOWN_HOSPITALS array above — clinic entries have type: 'clinic'
 
+// ===== Calendar View =====
+function showCalendarView() {
+  var meets = window._meetList || [];
+  var now = new Date();
+  var year = now.getFullYear(), month = now.getMonth();
+  
+  function renderCal(y, m) {
+    var firstDay = new Date(y, m, 1).getDay();
+    var daysInMonth = new Date(y, m + 1, 0).getDate();
+    var monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
+    
+    // Group meetings by date
+    var meetMap = {};
+    meets.forEach(function(mt) {
+      if (!mt.meeting_date) return;
+      var d = mt.meeting_date.substring(0, 10);
+      if (!meetMap[d]) meetMap[d] = [];
+      meetMap[d].push(mt);
+    });
+    
+    var html = '<div class="flex items-center justify-between mb-4">' +
+      '<button class="btn btn-ghost btn-sm" onclick="navigateCal(' + y + ',' + (m-1) + ')"><i class="fas fa-chevron-left"></i></button>' +
+      '<span class="font-bold text-slate-800">' + y + '년 ' + monthNames[m] + '</span>' +
+      '<button class="btn btn-ghost btn-sm" onclick="navigateCal(' + y + ',' + (m+1) + ')"><i class="fas fa-chevron-right"></i></button></div>';
+    html += '<div class="grid grid-cols-7 gap-0.5 text-center text-[10px] font-semibold text-slate-400 mb-2"><div>일</div><div>월</div><div>화</div><div>수</div><div>목</div><div>금</div><div>토</div></div>';
+    html += '<div class="grid grid-cols-7 gap-0.5">';
+    for (var i = 0; i < firstDay; i++) html += '<div class="h-16 lg:h-20"></div>';
+    for (var d = 1; d <= daysInMonth; d++) {
+      var dateStr = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(d).padStart(2, '0');
+      var dayMeets = meetMap[dateStr] || [];
+      var isToday = dateStr === new Date().toISOString().split('T')[0];
+      html += '<div class="h-16 lg:h-20 border border-gray-50 rounded-lg p-1 ' + (isToday ? 'bg-brand-50 border-brand-200' : 'hover:bg-gray-50') + ' overflow-hidden cursor-pointer" onclick="showDayMeets(\'' + dateStr + '\')">' +
+        '<div class="text-[11px] font-semibold ' + (isToday ? 'text-brand-600' : 'text-slate-600') + '">' + d + '</div>';
+      dayMeets.slice(0, 2).forEach(function(mt) {
+        var tc = { visit: 'blue', phone: 'emerald', conference: 'violet', email: 'amber', online: 'indigo' };
+        html += '<div class="text-[8px] lg:text-[9px] truncate rounded px-1 py-0.5 bg-' + (tc[mt.meeting_type] || 'slate') + '-50 text-' + (tc[mt.meeting_type] || 'slate') + '-600 font-medium mt-0.5">' + meetDoctorNames(mt) + '</div>';
+      });
+      if (dayMeets.length > 2) html += '<div class="text-[8px] text-slate-400 mt-0.5">+' + (dayMeets.length - 2) + '건</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    document.getElementById('cal-body').innerHTML = html;
+  }
+  
+  window.navigateCal = function(y, m) {
+    if (m < 0) { y--; m = 11; }
+    if (m > 11) { y++; m = 0; }
+    year = y; month = m;
+    renderCal(y, m);
+  };
+  
+  window.showDayMeets = function(dateStr) {
+    var dayMeets = (window._meetList || []).filter(function(m) { return m.meeting_date === dateStr; });
+    if (!dayMeets.length) return;
+    var html = '<div class="space-y-2">' + dayMeets.map(function(m) {
+      return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md" onclick="closeModal();viewMeetDoctors(' + m.id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ')">' +
+        '<div class="flex items-center gap-2 mb-1">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
+        '<div class="text-[11px] text-slate-400">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div></div>';
+    }).join('') + '</div>';
+    openModal(fmtDate(dateStr) + ' 미팅', html);
+  };
+  
+  openModal('미팅 캘린더', '<div id="cal-body"></div>', 'wide');
+  renderCal(year, month);
+}
+
+// ===== Meeting Templates =====
+async function loadMeetTemplates(selectCallback) {
+  try {
+    var r = await API.get('/templates');
+    return r.data.data || [];
+  } catch(e) { return []; }
+}
+
+function insertTemplateSelector(formEl) {
+  loadMeetTemplates().then(function(templates) {
+    if (!templates.length) return;
+    var templateHtml = '<div class="col-span-full"><label class="input-label">미팅 템플릿</label><select id="meet-template" class="input" onchange="applyMeetTemplate(this.value)"><option value="">-- 템플릿 선택 --</option>' +
+      templates.map(function(t) { return '<option value="' + t.id + '" data-type="' + t.meeting_type + '" data-purpose="' + (t.purpose || '').replace(/"/g, '&quot;') + '" data-content="' + (t.content || '').replace(/"/g, '&quot;') + '">' + t.name + '</option>'; }).join('') +
+      '</select></div>';
+    var firstChild = formEl.querySelector('.col-span-full') || formEl.firstChild;
+    var div = document.createElement('div');
+    div.innerHTML = templateHtml;
+    formEl.insertBefore(div.firstElementChild, firstChild);
+    window._meetTemplates = templates;
+  });
+}
+function applyMeetTemplate(tid) {
+  var templates = window._meetTemplates || [];
+  var t = templates.find(function(x) { return String(x.id) === String(tid); });
+  if (!t) return;
+  var typeEl = document.querySelector('#fm select[name="meeting_type"]');
+  var purposeEl = document.querySelector('#fm input[name="purpose"]');
+  var contentEl = document.querySelector('#fm textarea[name="content"]');
+  if (typeEl && t.meeting_type) typeEl.value = t.meeting_type;
+  if (purposeEl && t.purpose) purposeEl.value = t.purpose;
+  if (contentEl && t.content) contentEl.value = t.content;
+  toast('템플릿이 적용되었습니다');
+}
+
+// ===== Meeting Statistics Card =====
+async function showMeetingStats(type, id) {
+  openModal('미팅 통계', '<div class="text-center py-6"><i class="fas fa-spinner fa-spin text-xl text-slate-300"></i></div>');
+  try {
+    var params = type === 'doctor' ? 'doctor_id=' + id : 'hospital_id=' + id;
+    var r = await API.get('/pipeline/meeting-stats?' + params);
+    var d = r.data.data;
+    var typeLabels = { visit: '방문', phone: '전화', conference: '학회', email: '이메일', online: '온라인' };
+    var html = '<div class="space-y-5">';
+    html += '<div class="grid grid-cols-2 gap-3"><div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">총 미팅</div><div class="text-xl font-extrabold text-slate-800">' + d.total + '<span class="text-xs text-slate-400 ml-0.5">건</span></div></div>';
+    if (d.avgIntervalDays) html += '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">평균 주기</div><div class="text-xl font-extrabold text-brand-600">' + d.avgIntervalDays + '<span class="text-xs text-slate-400 ml-0.5">일</span></div></div>';
+    else html += '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">유형별</div><div class="text-xl font-extrabold text-slate-800">' + (d.byType || []).length + '<span class="text-xs text-slate-400 ml-0.5">종</span></div></div>';
+    html += '</div>';
+    // Type breakdown
+    if (d.byType && d.byType.length) {
+      html += '<div><div class="text-xs font-bold text-slate-600 mb-2">유형별 분포</div><div class="space-y-2">';
+      var maxCount = Math.max(...d.byType.map(function(t) { return t.count; }));
+      d.byType.forEach(function(t) {
+        var pct = maxCount > 0 ? (t.count / maxCount * 100) : 0;
+        html += '<div class="flex items-center gap-3"><span class="text-xs text-slate-500 w-12 text-right">' + (typeLabels[t.meeting_type] || t.meeting_type) + '</span><div class="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden"><div class="bg-brand-400 h-full rounded-full flex items-center px-2 transition-all" style="width:' + Math.max(pct, 15) + '%"><span class="text-[10px] font-bold text-white">' + t.count + '</span></div></div></div>';
+      });
+      html += '</div></div>';
+    }
+    // Monthly heatmap
+    if (d.byMonth && d.byMonth.length) {
+      html += '<div><div class="text-xs font-bold text-slate-600 mb-2">월별 미팅 빈도 (최근 12개월)</div><div class="flex flex-wrap gap-1">';
+      d.byMonth.forEach(function(m) {
+        var intensity = Math.min(m.count / 5, 1);
+        var bgColor = m.count === 0 ? '#f1f5f9' : 'rgba(51,102,255,' + (0.2 + intensity * 0.8) + ')';
+        var textColor = m.count > 2 ? '#fff' : '#64748b';
+        html += '<div class="w-12 h-12 rounded-lg flex flex-col items-center justify-center text-[10px] font-semibold" style="background:' + bgColor + ';color:' + textColor + '"><span>' + m.month.split('-')[1] + '월</span><span class="text-[9px]">' + m.count + '건</span></div>';
+      });
+      html += '</div></div>';
+    }
+    html += '</div>';
+    document.getElementById('modal-body').innerHTML = html;
+  } catch(e) { document.getElementById('modal-body').innerHTML = '<div class="text-center text-red-400 py-4">통계를 불러올 수 없습니다</div>'; }
+}
+
+// ===== Tags System =====
+async function showTagManager(entityType, entityId) {
+  try {
+    var [allTags, entityTags] = await Promise.all([API.get('/tags'), API.get('/tags/' + entityType + '/' + entityId)]);
+    var all = allTags.data.data || [];
+    var current = new Set((entityTags.data.data || []).map(function(t) { return t.id; }));
+    var html = '<div class="space-y-3"><div class="text-xs font-semibold text-slate-600 mb-2">태그 관리</div><div class="flex flex-wrap gap-2">';
+    all.forEach(function(tag) {
+      var isActive = current.has(tag.id);
+      html += '<button class="tag-btn inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold cursor-pointer transition ' + 
+        (isActive ? 'text-white shadow-sm' : 'bg-gray-100 text-slate-500 hover:bg-gray-200') + '" ' +
+        'style="' + (isActive ? 'background:' + tag.color : '') + '" ' +
+        'onclick="toggleTag(\'' + entityType + '\',' + entityId + ',' + tag.id + ',this,\'' + tag.color + '\')">' +
+        '<i class="fas ' + (isActive ? 'fa-check' : 'fa-tag') + ' text-[9px]"></i>' + tag.name + '</button>';
+    });
+    html += '</div><div class="mt-3 pt-3 border-t border-gray-50"><button class="btn btn-ghost btn-sm text-xs w-full" onclick="showNewTagForm(\'' + entityType + '\',' + entityId + ')"><i class="fas fa-plus mr-1"></i>새 태그 만들기</button></div></div>';
+    openModal('태그', html, 'narrow');
+  } catch(e) { toast('태그 불러오기 실패', 'err'); }
+}
+async function toggleTag(entityType, entityId, tagId, btn, color) {
+  try {
+    var isActive = btn.style.background && btn.style.background !== '';
+    if (isActive) {
+      await API.delete('/tags/' + entityType + '/' + entityId + '/' + tagId);
+      btn.style.background = '';
+      btn.className = btn.className.replace('text-white shadow-sm', 'bg-gray-100 text-slate-500 hover:bg-gray-200');
+      btn.querySelector('i').className = 'fas fa-tag text-[9px]';
+    } else {
+      await API.post('/tags/' + entityType + '/' + entityId, { tag_id: tagId });
+      btn.style.background = color;
+      btn.className = btn.className.replace('bg-gray-100 text-slate-500 hover:bg-gray-200', 'text-white shadow-sm');
+      btn.querySelector('i').className = 'fas fa-check text-[9px]';
+    }
+  } catch(e) { toast('태그 처리 실패', 'err'); }
+}
+function showNewTagForm(entityType, entityId) {
+  var colors = ['#7c3aed','#059669','#dc2626','#3b82f6','#d97706','#0891b2','#8b5cf6','#ec4899','#14b8a6','#64748b'];
+  var html = '<form id="tag-fm" class="space-y-3"><div><label class="input-label">태그 이름</label><input name="name" class="input" placeholder="예: CI 관심" required></div>' +
+    '<div><label class="input-label">색상</label><div class="flex flex-wrap gap-2">' + colors.map(function(c, i) {
+      return '<label class="cursor-pointer"><input type="radio" name="color" value="' + c + '"' + (i === 0 ? ' checked' : '') + ' class="hidden peer"><div class="w-7 h-7 rounded-full border-2 border-transparent peer-checked:border-slate-800 peer-checked:ring-2 peer-checked:ring-offset-1 transition" style="background:' + c + '"></div></label>';
+    }).join('') + '</div></div>' +
+    '<div class="flex justify-end gap-2"><button type="button" onclick="showTagManager(\'' + entityType + '\',' + entityId + ')" class="btn btn-outline btn-sm">뒤로</button><button type="submit" class="btn btn-primary btn-sm">생성</button></div></form>';
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('tag-fm').onsubmit = async function(e) {
+    e.preventDefault();
+    var f = Object.fromEntries(new FormData(e.target));
+    try {
+      await API.post('/tags', f);
+      toast('태그 생성됨');
+      showTagManager(entityType, entityId);
+    } catch(e) { toast('태그 생성 실패', 'err'); }
+  };
+}
+
+// ===== Doctor Transfer =====
+async function showTransferForm(doctorId) {
+  var doc = window._docProfile;
+  if (!doc) return;
+  try {
+    var hosps = (await API.get('/hospitals')).data.data || [];
+    var hospOpts = hosps.filter(function(h) { return h.id !== doc.hospital_id && h.status === 'active'; })
+      .map(function(h) { return '<option value="' + h.id + '">' + h.name + ' (' + (h.region || '') + ')</option>'; }).join('');
+    openModal('의료진 이적', '<form id="fm" class="space-y-4">' +
+      '<div class="bg-blue-50 rounded-xl p-3 text-sm text-blue-700"><i class="fas fa-info-circle mr-1"></i><strong>' + doc.name + '</strong>을(를) ' + (doc.hospital_name || '') + '에서 다른 기관으로 이적합니다.</div>' +
+      '<div><label class="input-label">이적 대상 기관</label><select name="to_hospital_id" class="input" required><option value="">-- 기관 선택 --</option>' + hospOpts + '</select></div>' +
+      '<div><label class="input-label">이적 메모</label><textarea name="notes" class="input" placeholder="이적 사유"></textarea></div>' +
+      '<div class="flex justify-end gap-2 pt-3 border-t"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">이적 처리</button></div></form>');
+    document.getElementById('fm').onsubmit = async function(e) {
+      e.preventDefault();
+      var f = Object.fromEntries(new FormData(e.target));
+      if (!f.to_hospital_id) { toast('대상 기관을 선택하세요', 'warn'); return; }
+      try {
+        await API.post('/pipeline/transfer-doctor', { doctor_id: doctorId, to_hospital_id: f.to_hospital_id, notes: f.notes });
+        toast('이적 처리 완료'); closeModal(); viewDocProfile(doctorId);
+      } catch(e) { toast('이적 처리 실패', 'err'); }
+    };
+  } catch(e) { toast('데이터 불러오기 실패', 'err'); }
+}
+
+// ===== Search History in Search Box =====
+function showSearchHistory() {
+  if (!_searchHistory.length) return;
+  var el = document.getElementById('search-results');
+  var html = '<div class="search-cat"><i class="fas fa-clock mr-1"></i>최근 검색</div>';
+  _searchHistory.forEach(function(q) {
+    html += '<div class="search-item" onclick="document.getElementById(\'global-search\').value=\'' + q.replace(/'/g, "\\'") + '\';onGlobalSearch(\'' + q.replace(/'/g, "\\'") + '\')"><div class="si-icon bg-gray-50 text-gray-400"><i class="fas fa-clock"></i></div><div class="text-sm text-slate-500">' + q + '</div></div>';
+  });
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+}
+
 // ===== Init =====
 initAuth();
+
+// ===== Online/Offline Detection =====
+window.addEventListener('online', () => { _offlineMode = false; toast('온라인 상태 복구', 'ok'); if (curPage) nav(curPage); });
+window.addEventListener('offline', () => { _offlineMode = true; toast('오프라인 모드 — 캐시된 데이터로 표시', 'warn'); });
+
+// ===== Pull-to-Refresh =====
+(function initPTR() {
+  var content = document.getElementById('content');
+  if (!content) return;
+  var startY = 0, pulling = false, threshold = 80;
+  content.addEventListener('touchstart', function(e) {
+    if (content.scrollTop <= 0) { startY = e.touches[0].clientY; pulling = true; }
+  }, { passive: true });
+  content.addEventListener('touchmove', function(e) {
+    if (!pulling) return;
+    var diff = e.touches[0].clientY - startY;
+    if (diff > 20 && content.scrollTop <= 0) {
+      var ptr = document.getElementById('ptr-indicator');
+      if (ptr) { ptr.style.display = 'flex'; ptr.style.transform = 'translateY(' + Math.min(diff * 0.4, threshold) + 'px)'; }
+    }
+  }, { passive: true });
+  content.addEventListener('touchend', function(e) {
+    if (!pulling) return;
+    pulling = false;
+    var ptr = document.getElementById('ptr-indicator');
+    if (ptr && ptr.style.display === 'flex') {
+      var transformVal = ptr.style.transform;
+      var match = transformVal.match(/translateY\(([0-9.]+)px\)/);
+      if (match && parseFloat(match[1]) >= threshold * 0.6) {
+        ptr.style.transform = 'translateY(48px)';
+        // Refresh current page
+        var refreshFn = { dashboard: loadDash, hospitals: loadHosp, doctors: loadDoc, meetings: loadMeet }[curPage];
+        if (refreshFn) refreshFn().finally(function() {
+          setTimeout(function() { ptr.style.transform = 'translateY(-100%)'; setTimeout(function() { ptr.style.display = 'none'; }, 200); }, 500);
+        });
+        else { ptr.style.transform = 'translateY(-100%)'; setTimeout(function() { ptr.style.display = 'none'; }, 200); }
+      } else {
+        ptr.style.transform = 'translateY(-100%)';
+        setTimeout(function() { ptr.style.display = 'none'; }, 200);
+      }
+    }
+  }, { passive: true });
+})();
+
+// ===== Reminder Badge =====
+function updateReminderBadge(count) {
+  _reminderCount = count || 0;
+  var badge = document.getElementById('bn-reminder-badge');
+  if (badge) {
+    if (_reminderCount > 0) { badge.textContent = _reminderCount; badge.classList.remove('hidden'); }
+    else { badge.classList.add('hidden'); }
+  }
+}
+
+// ===== Recent Search History =====
+function addSearchHistory(q) {
+  if (!q || q.length < 2) return;
+  _searchHistory = _searchHistory.filter(function(s) { return s !== q; });
+  _searchHistory.unshift(q);
+  _searchHistory = _searchHistory.slice(0, 5);
+  localStorage.setItem('todoc_search_history', JSON.stringify(_searchHistory));
+}
+
+// ===== Favorites =====
+async function loadFavorites() {
+  try { var r = await API.get('/favorites'); _favorites = new Set((r.data.data || []).map(function(f) { return f.entity_type + ':' + f.entity_id; })); } catch(e) {}
+}
+function isFavorited(type, id) { return _favorites.has(type + ':' + id); }
+async function toggleFavorite(type, id) {
+  try {
+    var r = await API.post('/favorites/toggle', { entity_type: type, entity_id: id });
+    var key = type + ':' + id;
+    if (r.data.data.favorited) { _favorites.add(key); toast('즐겨찾기 추가'); } 
+    else { _favorites.delete(key); toast('즐겨찾기 해제'); }
+  } catch(e) { toast('즐겨찾기 처리 실패', 'err'); }
+}
+function favStar(type, id) {
+  var isFav = isFavorited(type, id);
+  return '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();toggleFavAndRefresh(\'' + type + '\',' + id + ')" title="' + (isFav ? '즐겨찾기 해제' : '즐겨찾기') + '">' +
+    '<i class="fas fa-star ' + (isFav ? 'text-amber-400' : 'text-gray-200 hover:text-amber-300') + '"></i></button>';
+}
+async function toggleFavAndRefresh(type, id) {
+  await toggleFavorite(type, id);
+  if (curPage === 'hospitals') filterH();
+  else if (curPage === 'doctors') filterD();
+}
