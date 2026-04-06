@@ -43,7 +43,9 @@ cistats.get('/', async (c) => {
     const total = totalM + totalF
     if (total > 0) insights.push({ icon: 'fa-venus-mars', title: '성비 (남:여)', value: (totalM / total * 100).toFixed(1) + ':' + (totalF / total * 100).toFixed(1), desc: '전체 기간 누적 성비' })
     const totalAmount = yearlyData.reduce((a, b) => a + b.amount, 0)
-    insights.push({ icon: 'fa-won-sign', title: '6년간 총 진료금액', value: (totalAmount / 1000).toFixed(0) + '억원', desc: '2019-2024 누적 (단위: 천원 기준)' })
+    const totalAmountWon = totalAmount * 1000 // convert from 천원 to 원
+    const amountBillions = (totalAmountWon / 100000000).toFixed(1) // 억원
+    insights.push({ icon: 'fa-won-sign', title: '6년간 총 진료금액', value: amountBillions + '억원', desc: '2019-2024 누적' })
   }
 
   const latestYear = years[years.length - 1] as number
