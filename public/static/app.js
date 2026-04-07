@@ -1915,7 +1915,7 @@ function renderMeetCard(m, isFuture) {
     '<div class="flex-1 min-w-0">' +
     '<div class="flex items-center gap-1.5 mb-0.5">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800 truncate">' + meetDoctorNames(m) + '</span>' +
     (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
-    '<div class="text-[11px] text-slate-400 truncate">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + (m.user_name ? ' · <i class="fas fa-user-tie text-[9px]"></i> ' + m.user_name : '') + '</div>' +
+    '<div class="text-[11px] text-slate-400 truncate">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + ' · <i class="fas fa-user-tie text-[9px]"></i> ' + (m.user_name || (currentUser ? currentUser.name : '')) + '</div>' +
     (m.result ? '<div class="text-[10px] text-emerald-600 mt-0.5"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
     (m.next_action ? '<div class="text-[10px] text-amber-600 mt-0.5"><i class="fas fa-arrow-right mr-0.5"></i>' + m.next_action + '</div>' : '') +
     '</div>' +
@@ -2656,7 +2656,7 @@ function showMeetDetail(m) {
       '<div class="w-10 h-10 rounded-xl bg-' + tc + '-50 flex items-center justify-center"><i class="fas fa-calendar-check text-' + tc + '-500"></i></div>' +
       '<div class="flex-1"><div class="flex items-center gap-2"><span class="font-bold text-slate-800">' + (m.hospital_name || '') + '</span>' +
         '<span class="text-[10px] px-2 py-0.5 rounded-full bg-' + tc + '-50 text-' + tc + '-600 font-semibold">' + (typeLabels[m.meeting_type] || m.meeting_type || '') + '</span></div>' +
-        '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-clock mr-1"></i>' + fmtShort(m.meeting_date) + ' · ' + daysAgo(m.meeting_date) + (m.user_name ? ' · <i class="fas fa-user-tie mr-0.5"></i>' + m.user_name : '') + '</div></div></div>' +
+        '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-clock mr-1"></i>' + fmtShort(m.meeting_date) + ' · ' + daysAgo(m.meeting_date) + ' · <i class="fas fa-user-tie mr-0.5"></i>' + (m.user_name || (currentUser ? currentUser.name : '')) + '</div></div></div>' +
     doctorCards + sections +
     '<div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">' +
       '<button class="btn btn-outline btn-sm" onclick="closeModal();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen mr-1.5 text-xs"></i>수정</button>' +

@@ -2,7 +2,8 @@ import { Hono } from 'hono'
 import { logActivity, safeInt, safeLimit, safeLike } from '../helpers'
 
 type Bindings = { DB: D1Database }
-const meetings = new Hono<{ Bindings: Bindings }>()
+type Variables = { userId: number }
+const meetings = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 // Helper: get doctors for a list of meeting IDs
 async function getMeetingDoctors(db: D1Database, meetingIds: number[]): Promise<Map<number, any[]>> {
@@ -107,10 +108,13 @@ meetings.post('/', async (c) => {
   if (!b.hospital_id) return c.json({ error: 'hospital_id is required' }, 400)
   if (!b.meeting_date) return c.json({ error: 'meeting_date is required' }, 400)
   
+  // Use session user if user_id not provided
+  const userId = b.user_id || c.get('userId') || null
+  
   // Insert meeting (keep doctor_id as first doctor for backward compat)
   const primaryDoctorId = doctorIds[0]
   const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, b.user_id || null).run()
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, userId).run()
   
   const meetingId = r.meta.last_row_id as number
   
@@ -135,8 +139,9 @@ meetings.put('/:id', async (c) => {
   if (!b.hospital_id || !b.meeting_date) return c.json({ error: 'Required fields missing' }, 400)
   
   const primaryDoctorId = doctorIds[0]
+  const userId = b.user_id || c.get('userId') || null
   await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, b.user_id || null, id).run()
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, userId, id).run()
   
   // Sync meeting_doctors
   await syncMeetingDoctors(c.env.DB, Number(id), doctorIds)

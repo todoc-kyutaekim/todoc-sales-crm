@@ -17,7 +17,8 @@ import pipeline from './routes/pipeline'
 import schedule from './routes/schedule'
 
 type Bindings = { DB: D1Database; OPENAI_API_KEY: string; OPENAI_BASE_URL: string }
-const app = new Hono<{ Bindings: Bindings }>()
+type Variables = { userId: number }
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 app.use('/api/*', cors())
 
 // Auth routes (no auth required)
@@ -35,12 +36,14 @@ app.use('/api/*', async (c, next) => {
 
   const session = await c.env.DB.prepare(
     'SELECT user_id FROM sessions WHERE id=? AND expires_at > datetime("now")'
-  ).bind(sessionId).first()
+  ).bind(sessionId).first() as any
 
   if (!session) {
     return c.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
   }
 
+  // Store user_id in header for downstream routes
+  c.set('userId', session.user_id)
   await next()
 })
 

@@ -1,7 +1,8 @@
 import { Hono } from 'hono'
 
 type Bindings = { DB: D1Database }
-const schedule = new Hono<{ Bindings: Bindings }>()
+type Variables = { userId: number }
+const schedule = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 // 요일 키 매핑 (JS getUTCDay: 0=일, 1=월, ... 6=토)
 const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
@@ -320,6 +321,8 @@ schedule.get('/regions', async (c) => {
 schedule.post('/plan', async (c) => {
   const body = await c.req.json()
   const { date, visits, user_id } = body
+  // Use session user if user_id not provided
+  const resolvedUserId = user_id || c.get('userId') || null
   
   if (!date || !Array.isArray(visits) || visits.length === 0) {
     return c.json({ error: '날짜와 방문 목록이 필요합니다.' }, 400)
@@ -344,7 +347,7 @@ schedule.post('/plan', async (c) => {
     const primaryDoctorId = docIds[0]
     const r = await c.env.DB.prepare(
       'INSERT INTO meetings (doctor_id, hospital_id, meeting_date, meeting_type, purpose, content, result, next_action, next_meeting_date, user_id) VALUES (?,?,?,?,?,?,?,?,?,?)'
-    ).bind(primaryDoctorId, hospital_id, date, meeting_type || 'visit', purpose || '일정 플래너 자동 생성', '', '', '', null, user_id || null).run()
+    ).bind(primaryDoctorId, hospital_id, date, meeting_type || 'visit', purpose || '일정 플래너 자동 생성', '', '', '', null, resolvedUserId).run()
 
     const meetingId = r.meta.last_row_id as number
     for (const did of docIds) {
