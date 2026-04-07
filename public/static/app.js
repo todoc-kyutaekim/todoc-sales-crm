@@ -3394,6 +3394,7 @@ var _scheduleTimeOrdered = [];
 var _scheduleSelected = new Set();
 var _schViewMode = 'time'; // 'time' or 'score'
 var _schDayLabel = '';
+var _schSelectedRegions = new Set();
 
 async function loadSchedule() {
   var c = document.getElementById('content');
@@ -3417,10 +3418,12 @@ async function loadSchedule() {
       '</div>' +
       '<div class="flex flex-col sm:flex-row gap-3 mb-4">' +
         '<div class="flex-1">' +
-          '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">방문 지역</label>' +
-          '<select id="sch-region" class="input w-full" onchange="onSchRegionChange()">' +
-            '<option value="">지역을 선택하세요</option>' +
-          '</select>' +
+          '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">방문 지역 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+          '<div id="sch-region-chips" class="flex flex-wrap gap-2 min-h-[42px] items-center border border-gray-200 rounded-xl px-3 py-2 bg-white cursor-pointer" onclick="toggleSchRegionDropdown()">' +
+            '<span class="text-xs text-slate-300" id="sch-region-placeholder">지역을 선택하세요</span>' +
+          '</div>' +
+          '<div id="sch-region-dropdown" class="hidden mt-1 border border-gray-200 rounded-xl bg-white shadow-lg max-h-[200px] overflow-y-auto z-20 relative">' +
+          '</div>' +
         '</div>' +
         '<div class="flex-1">' +
           '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">방문 날짜</label>' +
@@ -3443,14 +3446,62 @@ async function loadSchedule() {
   try {
     var res = await API.get('/schedule/regions');
     _scheduleRegions = res.data.data || [];
-    var sel = document.getElementById('sch-region');
-    _scheduleRegions.forEach(function(r) {
-      var opt = document.createElement('option');
-      opt.value = r.region;
-      opt.textContent = r.region + ' (' + r.total + '개 기관' + (r.needs_visit > 0 ? ', ' + r.needs_visit + '곳 방문필요' : '') + ')';
-      sel.appendChild(opt);
-    });
+    _schSelectedRegions = new Set();
+    renderSchRegionDropdown();
   } catch(e) { console.error('Failed to load schedule regions', e); }
+}
+
+function renderSchRegionDropdown() {
+  var dd = document.getElementById('sch-region-dropdown');
+  if (!dd) return;
+  var html = '';
+  _scheduleRegions.forEach(function(r) {
+    var checked = _schSelectedRegions.has(r.region);
+    html += '<label class="flex items-center gap-2.5 px-3 py-2.5 hover:bg-slate-50 cursor-pointer transition border-b border-gray-50 last:border-0" onclick="event.stopPropagation()">' +
+      '<input type="checkbox" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" ' + (checked ? 'checked' : '') + ' onchange="toggleSchRegion(\'' + r.region + '\')">' +
+      '<div class="flex-1">' +
+        '<span class="text-sm font-medium text-slate-700">' + r.region + '</span>' +
+        '<span class="text-[10px] text-slate-400 ml-1.5">' + r.total + '개 기관</span>' +
+      '</div>' +
+      (r.needs_visit > 0 ? '<span class="text-[9px] px-1.5 py-0.5 rounded-full bg-red-50 text-red-500 font-medium">' + r.needs_visit + '곳 필요</span>' : '') +
+    '</label>';
+  });
+  dd.innerHTML = html;
+}
+
+function toggleSchRegionDropdown() {
+  var dd = document.getElementById('sch-region-dropdown');
+  if (!dd) return;
+  dd.classList.toggle('hidden');
+}
+
+function toggleSchRegion(region) {
+  if (_schSelectedRegions.has(region)) _schSelectedRegions.delete(region);
+  else _schSelectedRegions.add(region);
+  updateSchRegionChips();
+}
+
+function updateSchRegionChips() {
+  var chips = document.getElementById('sch-region-chips');
+  var placeholder = document.getElementById('sch-region-placeholder');
+  if (!chips) return;
+  // 기존 칩 제거 (placeholder 제외)
+  var existingChips = chips.querySelectorAll('.sch-chip');
+  existingChips.forEach(function(c) { c.remove(); });
+  
+  if (_schSelectedRegions.size === 0) {
+    if (placeholder) placeholder.style.display = '';
+  } else {
+    if (placeholder) placeholder.style.display = 'none';
+    _schSelectedRegions.forEach(function(region) {
+      var chip = document.createElement('span');
+      chip.className = 'sch-chip inline-flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-lg bg-blue-50 text-blue-700 border border-blue-100';
+      chip.innerHTML = '<i class="fas fa-map-marker-alt text-[9px] text-blue-400"></i>' + region +
+        '<button class="ml-0.5 text-blue-300 hover:text-blue-600" onclick="event.stopPropagation();toggleSchRegion(\'' + region + '\');updateSchRegionChips();renderSchRegionDropdown()"><i class="fas fa-xmark text-[9px]"></i></button>';
+      chips.insertBefore(chip, placeholder);
+    });
+  }
+  onSchRegionChange();
 }
 
 function updateSchDayPreview() {
@@ -3463,17 +3514,21 @@ function updateSchDayPreview() {
 }
 
 function onSchRegionChange() {
-  var region = document.getElementById('sch-region').value;
   var statsDiv = document.getElementById('sch-region-stats');
-  if (!region) { statsDiv.classList.add('hidden'); return; }
-  var info = _scheduleRegions.find(function(r) { return r.region === region; });
-  if (!info) { statsDiv.classList.add('hidden'); return; }
+  if (_schSelectedRegions.size === 0) { statsDiv.classList.add('hidden'); return; }
+  
+  var total = 0, active = 0, neverVisited = 0, needsVisit = 0;
+  _schSelectedRegions.forEach(function(region) {
+    var info = _scheduleRegions.find(function(r) { return r.region === region; });
+    if (info) { total += info.total; active += info.active_count; neverVisited += info.never_visited; needsVisit += info.needs_visit; }
+  });
+  
   statsDiv.classList.remove('hidden');
   statsDiv.innerHTML = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">' +
-    schStatCard('전체 기관', info.total, 'fas fa-hospital', '#2563eb') +
-    schStatCard('활성 기관', info.active_count, 'fas fa-check-circle', '#059669') +
-    schStatCard('미방문', info.never_visited, 'fas fa-exclamation-triangle', '#f59e0b') +
-    schStatCard('방문 필요', info.needs_visit, 'fas fa-clock', '#ef4444') +
+    schStatCard('전체 기관', total, 'fas fa-hospital', '#2563eb') +
+    schStatCard('활성 기관', active, 'fas fa-check-circle', '#059669') +
+    schStatCard('미방문', neverVisited, 'fas fa-exclamation-triangle', '#f59e0b') +
+    schStatCard('방문 필요', needsVisit, 'fas fa-clock', '#ef4444') +
   '</div>';
 }
 
@@ -3485,16 +3540,21 @@ function schStatCard(label, value, icon, color) {
 }
 
 async function fetchScheduleSuggestions() {
-  var region = document.getElementById('sch-region').value;
+  var regions = Array.from(_schSelectedRegions);
   var date = document.getElementById('sch-date').value;
-  if (!region) { toast('지역을 선택해주세요', 'warn'); return; }
+  if (regions.length === 0) { toast('지역을 선택해주세요', 'warn'); return; }
   if (!date) { toast('날짜를 선택해주세요', 'warn'); return; }
+  
+  // 드롭다운 닫기
+  var dd = document.getElementById('sch-region-dropdown');
+  if (dd) dd.classList.add('hidden');
   
   var resultsDiv = document.getElementById('sch-results');
   resultsDiv.innerHTML = '<div class="flex items-center justify-center py-12"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div><span class="ml-3 text-sm text-slate-400">외래 일정 분석 중...</span></div>';
   
   try {
-    var res = await API.get('/schedule/suggest?region=' + encodeURIComponent(region) + '&date=' + date + '&max=15');
+    var regionParam = regions.map(function(r) { return encodeURIComponent(r); }).join(',');
+    var res = await API.get('/schedule/suggest?region=' + regionParam + '&date=' + date + '&max=20');
     _scheduleSuggestions = res.data.data || [];
     _scheduleTimeOrdered = res.data.time_ordered || [];
     _scheduleSelected = new Set();
@@ -3506,7 +3566,7 @@ async function fetchScheduleSuggestions() {
       return;
     }
     
-    renderScheduleResults(region, date, stats);
+    renderScheduleResults(regions.join(', '), date, stats);
     
   } catch(e) {
     console.error('Schedule suggestion error', e);
@@ -3526,7 +3586,7 @@ function renderScheduleResults(region, date, stats) {
   // 헤더
   html += '<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">' +
     '<div>' +
-      '<h3 class="font-bold text-slate-800 text-[15px]"><i class="fas fa-map-pin text-blue-500 mr-1.5"></i>' + region + ' 방문 추천</h3>' +
+      '<h3 class="font-bold text-slate-800 text-[15px]"><i class="fas fa-map-pin text-blue-500 mr-1.5"></i>' + region.split(', ').map(function(r) { return '<span class="inline-flex items-center mr-1">' + r + '</span>'; }).join('<i class="fas fa-arrow-right text-[10px] text-slate-300 mx-1"></i>') + ' 방문 추천</h3>' +
       '<p class="text-xs text-slate-400 mt-0.5">' + dateStr + ' · 추천 ' + list.length + '곳' +
         (stats.clinic_today_count > 0 ? ' · <span class="text-cyan-600 font-medium">' + dayNames[dateObj.getDay()] + '요일 외래 ' + stats.clinic_today_count + '곳</span>' : '') +
       '</p>' +
@@ -3564,32 +3624,69 @@ function renderTimelineView(list, dateObj) {
   var dayName = dayNames[dateObj.getDay()];
   var html = '';
   
-  // 시간대별 그룹핑
-  var amEndGroup = list.filter(function(s) { return s.visit_slot === 'am_end'; });
-  var pmEndGroup = list.filter(function(s) { return s.visit_slot === 'pm_end'; });
-  var noTimeGroup = list.filter(function(s) { return !s.visit_time; });
+  // 지역 목록 추출
+  var regionSet = {};
+  list.forEach(function(s) { regionSet[s.region] = true; });
+  var uniqueRegions = Object.keys(regionSet);
+  var isMultiRegion = uniqueRegions.length > 1;
   
-  // 타임라인
   html += '<div class="relative">';
-  // 세로선
   html += '<div class="absolute left-[23px] top-0 bottom-0 w-0.5 bg-gradient-to-b from-cyan-200 via-blue-200 to-indigo-200 hidden sm:block"></div>';
   
-  // 오전 외래 후 (11:30~)
-  if (amEndGroup.length > 0) {
-    html += schTimeSlotHeader('11:30~', '오전 외래 후', 'fas fa-sun', '#f59e0b', 'bg-amber-50', dayName);
-    amEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
-  }
-  
-  // 오후 외래 후 (16:30~)
-  if (pmEndGroup.length > 0) {
-    html += schTimeSlotHeader('16:30~', '오후 외래 후', 'fas fa-cloud-sun', '#6366f1', 'bg-indigo-50', dayName);
-    pmEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
-  }
-  
-  // 외래 정보 없음
-  if (noTimeGroup.length > 0) {
-    html += schTimeSlotHeader('', '외래 시간 미등록', 'fas fa-question-circle', '#94a3b8', 'bg-slate-50', dayName);
-    noTimeGroup.forEach(function(s) { html += schTimeCard(s, list); });
+  if (isMultiRegion) {
+    // 복수 지역: 지역별 → 시간순 그룹핑
+    var regionColors = ['#2563eb','#7c3aed','#059669','#f59e0b','#ef4444','#ec4899','#06b6d4','#84cc16'];
+    uniqueRegions.forEach(function(region, rIdx) {
+      var regionItems = list.filter(function(s) { return s.region === region; });
+      var rColor = regionColors[rIdx % regionColors.length];
+      
+      // 지역 헤더
+      html += '<div class="flex items-center gap-3 mb-3 mt-6 first:mt-0 sm:pl-[14px]">' +
+        '<div class="w-[18px] h-[18px] rounded-full flex items-center justify-center z-10 hidden sm:flex" style="background:' + rColor + ';box-shadow:0 0 0 4px white">' +
+          '<i class="fas fa-map-marker-alt text-[9px] text-white"></i>' +
+        '</div>' +
+        '<div class="flex items-center gap-2">' +
+          '<span class="text-[14px] font-bold" style="color:' + rColor + '"><i class="fas fa-location-dot mr-1"></i>' + region + '</span>' +
+          '<span class="text-[10px] px-2 py-0.5 rounded-full font-medium" style="background:' + rColor + '12;color:' + rColor + '">' + regionItems.length + '곳</span>' +
+        '</div>' +
+      '</div>';
+      
+      // 지역 내 시간대별 그룹핑
+      var amEndGroup = regionItems.filter(function(s) { return s.visit_slot === 'am_end'; });
+      var pmEndGroup = regionItems.filter(function(s) { return s.visit_slot === 'pm_end'; });
+      var noTimeGroup = regionItems.filter(function(s) { return !s.visit_time; });
+      
+      if (amEndGroup.length > 0) {
+        html += schTimeSlotHeader('11:30~', '오전 외래 후', 'fas fa-sun', '#f59e0b', 'bg-amber-50', dayName);
+        amEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
+      }
+      if (pmEndGroup.length > 0) {
+        html += schTimeSlotHeader('16:30~', '오후 외래 후', 'fas fa-cloud-sun', '#6366f1', 'bg-indigo-50', dayName);
+        pmEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
+      }
+      if (noTimeGroup.length > 0) {
+        html += schTimeSlotHeader('', '외래 시간 미등록', 'fas fa-question-circle', '#94a3b8', 'bg-slate-50', dayName);
+        noTimeGroup.forEach(function(s) { html += schTimeCard(s, list); });
+      }
+    });
+  } else {
+    // 단일 지역: 기존 시간순 그룹핑
+    var amEndGroup = list.filter(function(s) { return s.visit_slot === 'am_end'; });
+    var pmEndGroup = list.filter(function(s) { return s.visit_slot === 'pm_end'; });
+    var noTimeGroup = list.filter(function(s) { return !s.visit_time; });
+    
+    if (amEndGroup.length > 0) {
+      html += schTimeSlotHeader('11:30~', '오전 외래 후', 'fas fa-sun', '#f59e0b', 'bg-amber-50', dayName);
+      amEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
+    }
+    if (pmEndGroup.length > 0) {
+      html += schTimeSlotHeader('16:30~', '오후 외래 후', 'fas fa-cloud-sun', '#6366f1', 'bg-indigo-50', dayName);
+      pmEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
+    }
+    if (noTimeGroup.length > 0) {
+      html += schTimeSlotHeader('', '외래 시간 미등록', 'fas fa-question-circle', '#94a3b8', 'bg-slate-50', dayName);
+      noTimeGroup.forEach(function(s) { html += schTimeCard(s, list); });
+    }
   }
   
   html += '</div>';
@@ -3628,6 +3725,7 @@ function schTimeCard(s, list) {
         '<div class="flex-1 min-w-0">' +
           '<div class="flex items-center gap-2 flex-wrap">' +
             '<h4 class="font-bold text-slate-800 text-sm">' + s.name + '</h4>' +
+            '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500"><i class="fas fa-map-marker-alt text-[8px] mr-0.5"></i>' + s.region + '</span>' +
             '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style="background:' + (gradeColors[s.grade] || '#94a3b8') + '15;color:' + (gradeColors[s.grade] || '#94a3b8') + '">' + s.grade + '</span>' +
             '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md" style="background:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '12;color:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '">' + (stageLabels[s.pipeline_stage] || s.pipeline_stage) + '</span>' +
             (s.visit_time ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100"><i class="fas fa-clock mr-0.5"></i>' + s.visit_label + '</span>' : '') +
@@ -3696,7 +3794,7 @@ function renderScoreView(list) {
 
 function setSchView(mode) {
   _schViewMode = mode;
-  var region = document.getElementById('sch-region').value;
+  var regions = Array.from(_schSelectedRegions).join(', ');
   var date = document.getElementById('sch-date').value;
   // 기존 stats에서 가져오기 어려우므로 단순 re-render
   var stats = {
@@ -3705,7 +3803,7 @@ function setSchView(mode) {
     has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
     clinic_today_count: _scheduleSuggestions.filter(function(s) { return s.has_clinic_today; }).length
   };
-  renderScheduleResults(region, date, stats);
+  renderScheduleResults(regions, date, stats);
   updateScheduleSelection();
 }
 

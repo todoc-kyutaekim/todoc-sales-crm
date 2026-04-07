@@ -62,22 +62,29 @@ function analyzeClinicDay(clinicHoursStr: string, dayKey: string): {
  * GET /api/schedule/suggest
  */
 schedule.get('/suggest', async (c) => {
-  const region = c.req.query('region')
+  const regionParam = c.req.query('region')
   const date = c.req.query('date')
-  const max = parseInt(c.req.query('max') || '15', 10)
+  const max = parseInt(c.req.query('max') || '20', 10)
   const includeInactive = c.req.query('include_inactive') !== 'false'
 
-  if (!region || !date) {
+  if (!regionParam || !date) {
     return c.json({ error: '지역(region)과 날짜(date)는 필수입니다.' }, 400)
+  }
+
+  // 복수 지역 지원 (쉼표 구분)
+  const regions = regionParam.split(',').map(r => r.trim()).filter(r => r.length > 0)
+  if (regions.length === 0) {
+    return c.json({ error: '유효한 지역을 입력해주세요.' }, 400)
   }
 
   // 해당 날짜의 요일 구하기
   const targetDate = new Date(date + 'T00:00:00Z')
-  const dayOfWeek = targetDate.getUTCDay() // 0=일, 1=월...6=토
+  const dayOfWeek = targetDate.getUTCDay()
   const dayKey = DAY_KEYS[dayOfWeek]
   const dayLabel = DAY_LABELS[dayKey]
 
-  // 해당 지역의 기관 목록 가져오기
+  // 해당 지역들의 기관 목록 가져오기
+  const regionPlaceholders = regions.map(() => '?').join(',')
   let hospQuery = `
     SELECT h.*,
       (SELECT COUNT(*) FROM doctors d WHERE d.hospital_id = h.id) as doctor_count,
@@ -89,16 +96,16 @@ schedule.get('/suggest', async (c) => {
       (SELECT m.next_action FROM meetings m WHERE m.hospital_id = h.id ORDER BY m.meeting_date DESC LIMIT 1) as pending_next_action,
       (SELECT m.next_meeting_date FROM meetings m WHERE m.hospital_id = h.id AND m.next_meeting_date IS NOT NULL AND m.next_meeting_date != '' ORDER BY m.meeting_date DESC LIMIT 1) as next_scheduled_date
     FROM hospitals h
-    WHERE h.region = ?
+    WHERE h.region IN (${regionPlaceholders})
   `
-  const params: any[] = [region]
+  const params: any[] = [...regions]
   if (!includeInactive) hospQuery += ' AND h.status = "active"'
 
   const hosps = await c.env.DB.prepare(hospQuery).bind(...params).all()
   const hospitals = hosps.results as any[]
 
   if (hospitals.length === 0) {
-    return c.json({ data: [], region, date, dayKey, dayLabel, message: '해당 지역에 등록된 기관이 없습니다.' })
+    return c.json({ data: [], regions, date, dayKey, dayLabel, message: '해당 지역에 등록된 기관이 없습니다.' })
   }
 
   // 모든 의사 정보를 한번에 가져오기 (clinic_hours 포함)
@@ -263,8 +270,11 @@ schedule.get('/suggest', async (c) => {
   scored.sort((a, b) => b.score - a.score)
   const suggestions = scored.slice(0, max)
 
-  // 시간순 정렬 버전도 제공 (visit_time 기준)
+  // 시간순 정렬 버전도 제공 (지역 → visit_time 기준)
   const timeOrdered = [...suggestions].sort((a, b) => {
+    // 지역별 → 시간순 정렬
+    const regionComp = a.region.localeCompare(b.region)
+    if (regionComp !== 0) return regionComp
     // 시간 있는 것 우선, 없으면 뒤로
     if (a.visit_time && !b.visit_time) return -1
     if (!a.visit_time && b.visit_time) return 1
@@ -282,7 +292,7 @@ schedule.get('/suggest', async (c) => {
     clinic_today_count: suggestions.filter(s => s.has_clinic_today).length
   }
 
-  return c.json({ data: suggestions, time_ordered: timeOrdered, stats, region, date, dayKey, dayLabel })
+  return c.json({ data: suggestions, time_ordered: timeOrdered, stats, regions, date, dayKey, dayLabel })
 })
 
 /**
