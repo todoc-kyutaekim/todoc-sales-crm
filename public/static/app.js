@@ -1915,7 +1915,7 @@ function renderMeetCard(m, isFuture) {
     '<div class="flex-1 min-w-0">' +
     '<div class="flex items-center gap-1.5 mb-0.5">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800 truncate">' + meetDoctorNames(m) + '</span>' +
     (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
-    '<div class="text-[11px] text-slate-400 truncate">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + ' · <i class="fas fa-user-tie text-[9px]"></i> ' + (m.user_name || (currentUser ? currentUser.name : '')) + '</div>' +
+    '<div class="text-[11px] text-slate-400 truncate">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + ' · <i class="fas fa-user-tie text-[9px]"></i> ' + (m.user_names || m.user_name || (currentUser ? currentUser.name : '')) + '</div>' +
     (m.result ? '<div class="text-[10px] text-emerald-600 mt-0.5"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
     (m.next_action ? '<div class="text-[10px] text-amber-600 mt-0.5"><i class="fas fa-arrow-right mr-0.5"></i>' + m.next_action + '</div>' : '') +
     '</div>' +
@@ -2426,8 +2426,8 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
   let m = {}; if (mid) { try { const ms = (await API.get('/meetings?hospital_id=' + hid)).data; const found = ms.data.find(x => x.id === mid); if (found) { m = found; doctorIds = (found.doctors || []).map(function(d) { return d.id || d.doctor_id }) || doctorIds; } } catch (e) { } }
   let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
   let usersList = []; try { usersList = (await API.get('/users')).data.data || [] } catch(e) {}
-  
-  var userOpts = '<option value="">-- 선택 안 함 --</option>' + usersList.map(function(u) { var sel = (m.user_id && m.user_id === u.id) ? ' selected' : ''; return '<option value="' + u.id + '"' + sel + '>' + u.name + '</option>'; }).join('');
+  var existingUserIds = (m.user_ids || (m.user_id ? [m.user_id] : [])).map(Number);
+  var userCheckboxes = usersList.length ? '<div class="col-span-full"><label class="input-label"><i class="fas fa-user-tie mr-1 text-slate-400"></i>영업사원 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1">' + usersList.map(function(u) { var ck = existingUserIds.includes(u.id) ? ' checked' : ''; return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 cursor-pointer transition"><input type="checkbox" name="user_ids" value="' + u.id + '" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"' + ck + '><span class="text-[13px] font-medium text-slate-700">' + u.name + '</span></label>'; }).join('') + '</div></div>' : '';
   
   var doctorCheckboxes = docs.length ?
     '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
@@ -2445,7 +2445,7 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
   openModal('미팅 수정',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
     doctorCheckboxes +
-    '<div><label class="input-label"><i class="fas fa-user-tie mr-1 text-slate-400"></i>영업사원</label><select name="user_id" class="input">' + userOpts + '</select></div>' +
+    userCheckboxes +
     field('미팅일자 *', 'meeting_date', 'date', m.meeting_date || '') +
     field('유형', 'meeting_type', 'select', m.meeting_type || 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) + field('목적', 'purpose', 'text', m.purpose || '') +
     field('미팅 내용', 'content', 'textarea', m.content || '') + field('결과', 'result', 'textarea', m.result || '') + field('후속 액션', 'next_action', 'textarea', m.next_action || '') +
@@ -2456,7 +2456,8 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
     const f = Object.fromEntries(new FormData(e.target));
     const selectedIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
     if (!selectedIds.length) { toast('의료진을 선택하세요', 'warn'); return }
-    const payload = { ...f, doctor_ids: selectedIds, hospital_id: hid };
+    const selectedUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
+    const payload = { ...f, doctor_ids: selectedIds, user_ids: selectedUserIds, hospital_id: hid };
     try { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨'); closeModal(); loadMeet() } catch (e) { toast('저장 실패', 'err') }
   };
 }
@@ -2470,11 +2471,11 @@ async function showNewMeetGlobal() {
     const allDocs = data.data.doctors || [];
     const usersList = data.data.users || [];
     const hospOpts = hosps.map(h => '<option value="' + h.id + '">' + h.name + (h.region ? ' (' + h.region + ')' : '') + '</option>').join('');
-    const userOpts = '<option value="">-- 선택 안 함 --</option>' + usersList.map(function(u) { var sel = (currentUser && currentUser.id === u.id) ? ' selected' : ''; return '<option value="' + u.id + '"' + sel + '>' + u.name + '</option>'; }).join('');
+    var newMeetUserCbs = '<div class="col-span-full"><label class="input-label"><i class="fas fa-user-tie mr-1 text-slate-400"></i>영업사원 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1">' + usersList.map(function(u) { var ck = (currentUser && currentUser.id === u.id) ? ' checked' : ''; return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 cursor-pointer transition"><input type="checkbox" name="user_ids" value="' + u.id + '" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"' + ck + '><span class="text-[13px] font-medium text-slate-700">' + u.name + '</span></label>'; }).join('') + '</div></div>';
     document.getElementById('modal-body').innerHTML = 
       '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
       '<div><label class="input-label">병원 *</label><select name="hospital_id" id="nm-hosp" class="input" onchange="updateNewMeetDocs()"><option value="">-- 병원 선택 --</option>' + hospOpts + '</select></div>' +
-      '<div><label class="input-label"><i class="fas fa-user-tie mr-1 text-slate-400"></i>영업사원</label><select name="user_id" class="input">' + userOpts + '</select></div>' +
+      newMeetUserCbs +
       '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div></div></div>' +
       field('미팅일자 *', 'meeting_date', 'date', new Date().toISOString().split('T')[0]) +
       field('유형', 'meeting_type', 'select', 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
@@ -2490,7 +2491,8 @@ async function showNewMeetGlobal() {
       const doctorIds = Array.from(document.querySelectorAll('#nm-doc-list input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
       if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
-      const payload = { ...f, doctor_ids: doctorIds };
+      const selUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
+      const payload = { ...f, doctor_ids: doctorIds, user_ids: selUserIds };
       try { await API.post('/meetings', payload); toast('미팅 등록됨'); closeModal(); if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); } catch (e) { toast('저장 실패', 'err') }
     };
   } catch (e) { toast('데이터를 불러올 수 없습니다', 'err'); closeModal(); }
@@ -2656,7 +2658,7 @@ function showMeetDetail(m) {
       '<div class="w-10 h-10 rounded-xl bg-' + tc + '-50 flex items-center justify-center"><i class="fas fa-calendar-check text-' + tc + '-500"></i></div>' +
       '<div class="flex-1"><div class="flex items-center gap-2"><span class="font-bold text-slate-800">' + (m.hospital_name || '') + '</span>' +
         '<span class="text-[10px] px-2 py-0.5 rounded-full bg-' + tc + '-50 text-' + tc + '-600 font-semibold">' + (typeLabels[m.meeting_type] || m.meeting_type || '') + '</span></div>' +
-        '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-clock mr-1"></i>' + fmtShort(m.meeting_date) + ' · ' + daysAgo(m.meeting_date) + ' · <i class="fas fa-user-tie mr-0.5"></i>' + (m.user_name || (currentUser ? currentUser.name : '')) + '</div></div></div>' +
+        '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-clock mr-1"></i>' + fmtShort(m.meeting_date) + ' · ' + daysAgo(m.meeting_date) + ' · <i class="fas fa-user-tie mr-0.5"></i>' + (m.user_names || m.user_name || (currentUser ? currentUser.name : '')) + '</div></div></div>' +
     doctorCards + sections +
     '<div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">' +
       '<button class="btn btn-outline btn-sm" onclick="closeModal();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen mr-1.5 text-xs"></i>수정</button>' +
@@ -3895,29 +3897,28 @@ async function createSchedulePlan() {
     }
   });
   
-  // 영업사원 목록 가져오기
-  var usersHtml = '<div class="text-left mt-2"><label class="text-xs font-semibold text-slate-500 mb-1 block"><i class="fas fa-user-tie mr-1"></i>방문 영업사원</label>' +
-    '<select id="confirm-user-select" class="input w-full text-sm"><option value="">-- 선택 안 함 --</option></select></div>';
+  // 영업사원 목록 가져오기 (복수 선택 체크박스)
+  var usersHtml = '<div class="text-left mt-2"><label class="text-xs font-semibold text-slate-500 mb-1 block"><i class="fas fa-user-tie mr-1"></i>방문 영업사원 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+    '<div id="confirm-users-list" class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1"><div class="text-xs text-slate-400 text-center py-2">로딩 중...</div></div></div>';
 
   try {
     var usersRes = await API.get('/users');
     var usersList = usersRes.data.data || [];
-    var opts = '<option value="">-- 선택 안 함 --</option>';
-    usersList.forEach(function(u) {
-      var sel = (currentUser && currentUser.id === u.id) ? ' selected' : '';
-      opts += '<option value="' + u.id + '"' + sel + '>' + u.name + ' (' + u.email + ')</option>';
-    });
-    usersHtml = '<div class="text-left mt-2"><label class="text-xs font-semibold text-slate-500 mb-1 block"><i class="fas fa-user-tie mr-1"></i>방문 영업사원</label>' +
-      '<select id="confirm-user-select" class="input w-full text-sm">' + opts + '</select></div>';
+    var userCbs = usersList.map(function(u) {
+      var ck = (currentUser && currentUser.id === u.id) ? ' checked' : '';
+      return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 cursor-pointer transition"><input type="checkbox" name="confirm_user_ids" value="' + u.id + '" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"' + ck + '><span class="text-[12px] font-medium text-slate-700">' + u.name + '</span><span class="text-[10px] text-slate-400">' + u.email + '</span></label>';
+    }).join('');
+    usersHtml = '<div class="text-left mt-2"><label class="text-xs font-semibold text-slate-500 mb-1 block"><i class="fas fa-user-tie mr-1"></i>방문 영업사원 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
+      '<div class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1">' + userCbs + '</div></div>';
   } catch(e) {}
   
   showConfirm(
     '미팅 일괄 생성',
     date + '에 <strong>' + visits.length + '건</strong>의 방문 미팅을 생성합니다.',
     async function() {
-      var userId = document.getElementById('confirm-user-select') ? document.getElementById('confirm-user-select').value : '';
+      var selUserIds = Array.from(document.querySelectorAll('input[name="confirm_user_ids"]:checked')).map(function(cb) { return Number(cb.value); });
       try {
-        var res = await API.post('/schedule/plan', { date: date, visits: visits, user_id: userId ? Number(userId) : null });
+        var res = await API.post('/schedule/plan', { date: date, visits: visits, user_ids: selUserIds.length > 0 ? selUserIds : null });
         toast(res.data.data.count + '건의 미팅이 생성되었습니다');
         _scheduleSelected.clear();
         fetchScheduleSuggestions();

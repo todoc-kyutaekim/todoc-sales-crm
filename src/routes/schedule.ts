@@ -320,9 +320,20 @@ schedule.get('/regions', async (c) => {
  */
 schedule.post('/plan', async (c) => {
   const body = await c.req.json()
-  const { date, visits, user_id } = body
-  // Use session user if user_id not provided
-  const resolvedUserId = user_id || c.get('userId') || null
+  const { date, visits, user_id, user_ids } = body
+  
+  // Support multiple user_ids for co-visits
+  let resolvedUserIds: number[] = []
+  if (Array.isArray(user_ids) && user_ids.length > 0) {
+    resolvedUserIds = user_ids.map((id: any) => Number(id)).filter((id: number) => id > 0)
+  } else if (user_id) {
+    resolvedUserIds = [Number(user_id)].filter(id => id > 0)
+  }
+  if (resolvedUserIds.length === 0) {
+    const sessionUserId = c.get('userId')
+    if (sessionUserId) resolvedUserIds = [sessionUserId]
+  }
+  const primaryUserId = resolvedUserIds.length > 0 ? resolvedUserIds[0] : null
   
   if (!date || !Array.isArray(visits) || visits.length === 0) {
     return c.json({ error: '날짜와 방문 목록이 필요합니다.' }, 400)
@@ -347,13 +358,18 @@ schedule.post('/plan', async (c) => {
     const primaryDoctorId = docIds[0]
     const r = await c.env.DB.prepare(
       'INSERT INTO meetings (doctor_id, hospital_id, meeting_date, meeting_type, purpose, content, result, next_action, next_meeting_date, user_id) VALUES (?,?,?,?,?,?,?,?,?,?)'
-    ).bind(primaryDoctorId, hospital_id, date, meeting_type || 'visit', purpose || '일정 플래너 자동 생성', '', '', '', null, resolvedUserId).run()
+    ).bind(primaryDoctorId, hospital_id, date, meeting_type || 'visit', purpose || '일정 플래너 자동 생성', '', '', '', null, primaryUserId).run()
 
     const meetingId = r.meta.last_row_id as number
+    // Sync meeting_doctors
     for (const did of docIds) {
       await c.env.DB.prepare('INSERT INTO meeting_doctors (meeting_id, doctor_id) VALUES (?, ?)').bind(meetingId, did).run()
     }
-    created.push({ meeting_id: meetingId, hospital_id, doctor_ids: docIds })
+    // Sync meeting_users (multiple salespeople)
+    for (const uid of resolvedUserIds) {
+      await c.env.DB.prepare('INSERT OR IGNORE INTO meeting_users (meeting_id, user_id) VALUES (?, ?)').bind(meetingId, uid).run()
+    }
+    created.push({ meeting_id: meetingId, hospital_id, doctor_ids: docIds, user_ids: resolvedUserIds })
   }
 
   return c.json({ data: { created, count: created.length, date } })

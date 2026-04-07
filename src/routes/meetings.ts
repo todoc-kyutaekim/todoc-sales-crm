@@ -5,6 +5,52 @@ type Bindings = { DB: D1Database }
 type Variables = { userId: number }
 const meetings = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
+// Helper: get assigned users for a list of meeting IDs
+async function getMeetingUsers(db: D1Database, meetingIds: number[]): Promise<Map<number, any[]>> {
+  const map = new Map<number, any[]>()
+  if (!meetingIds.length) return map
+  const placeholders = meetingIds.map(() => '?').join(',')
+  const r = await db.prepare(
+    `SELECT mu.meeting_id, u.id as user_id, u.name as user_name, u.email as user_email
+     FROM meeting_users mu
+     LEFT JOIN users u ON mu.user_id = u.id
+     WHERE mu.meeting_id IN (${placeholders})
+     ORDER BY mu.meeting_id, u.name`
+  ).bind(...meetingIds).all()
+  for (const row of r.results as any[]) {
+    if (!map.has(row.meeting_id)) map.set(row.meeting_id, [])
+    map.get(row.meeting_id)!.push({
+      id: row.user_id,
+      name: row.user_name,
+      email: row.user_email,
+    })
+  }
+  return map
+}
+
+// Helper: sync meeting_users for a meeting
+async function syncMeetingUsers(db: D1Database, meetingId: number, userIds: number[]) {
+  await db.prepare('DELETE FROM meeting_users WHERE meeting_id = ?').bind(meetingId).run()
+  for (const uid of userIds) {
+    await db.prepare('INSERT OR IGNORE INTO meeting_users (meeting_id, user_id) VALUES (?, ?)').bind(meetingId, uid).run()
+  }
+}
+
+// Extract user_ids from request body (supports user_id single and user_ids array)
+function extractUserIds(body: any, sessionUserId?: number | null): number[] {
+  if (Array.isArray(body.user_ids) && body.user_ids.length > 0) {
+    return body.user_ids.map((id: any) => Number(id)).filter((id: number) => id > 0)
+  }
+  if (body.user_id) {
+    return [Number(body.user_id)].filter(id => id > 0)
+  }
+  // Fallback to session user
+  if (sessionUserId && sessionUserId > 0) {
+    return [sessionUserId]
+  }
+  return []
+}
+
 // Helper: get doctors for a list of meeting IDs
 async function getMeetingDoctors(db: D1Database, meetingIds: number[]): Promise<Map<number, any[]>> {
   const map = new Map<number, any[]>()
@@ -80,13 +126,17 @@ meetings.get('/', async (c) => {
   const r = await c.env.DB.prepare(q).bind(...p).all()
   const meetingsList = r.results as any[]
   
-  // Fetch doctors for all meetings
+  // Fetch doctors and users for all meetings
   const meetingIds = meetingsList.map(m => m.id)
-  const doctorsMap = await getMeetingDoctors(c.env.DB, meetingIds)
+  const [doctorsMap, usersMap] = await Promise.all([
+    getMeetingDoctors(c.env.DB, meetingIds),
+    getMeetingUsers(c.env.DB, meetingIds),
+  ])
   
-  // Attach doctors array to each meeting + backward compat fields
+  // Attach doctors + users array to each meeting
   const data = meetingsList.map(m => {
     const doctors = doctorsMap.get(m.id) || []
+    const users = usersMap.get(m.id) || []
     return {
       ...m,
       doctors,
@@ -95,6 +145,10 @@ meetings.get('/', async (c) => {
       doctor_id: doctors.length > 0 ? doctors[0].id : m.doctor_id,
       doctor_name: doctors.length > 0 ? doctors.map((d: any) => d.name).join(', ') : null,
       doctor_photo: doctors.length > 0 ? doctors[0].photo : null,
+      // Multi-user support
+      users,
+      user_ids: users.map((u: any) => u.id),
+      user_names: users.map((u: any) => u.name).join(', ') || m.user_name || null,
     }
   })
   
@@ -108,18 +162,21 @@ meetings.post('/', async (c) => {
   if (!b.hospital_id) return c.json({ error: 'hospital_id is required' }, 400)
   if (!b.meeting_date) return c.json({ error: 'meeting_date is required' }, 400)
   
-  // Use session user if user_id not provided
-  const userId = b.user_id || c.get('userId') || null
+  // Extract user IDs (supports multiple)
+  const userIds = extractUserIds(b, c.get('userId'))
+  const primaryUserId = userIds.length > 0 ? userIds[0] : null
   
   // Insert meeting (keep doctor_id as first doctor for backward compat)
   const primaryDoctorId = doctorIds[0]
   const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, userId).run()
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId).run()
   
   const meetingId = r.meta.last_row_id as number
   
   // Sync meeting_doctors
   await syncMeetingDoctors(c.env.DB, meetingId, doctorIds)
+  // Sync meeting_users
+  if (userIds.length > 0) await syncMeetingUsers(c.env.DB, meetingId, userIds)
   
   // Get doctor names for activity log
   const names: string[] = []
@@ -129,7 +186,7 @@ meetings.post('/', async (c) => {
   }
   await logActivity(c.env.DB, 'create', 'meeting', meetingId, names.join(', '), `type:${b.meeting_type || 'visit'}, purpose:${b.purpose || ''}`)
   
-  return c.json({ data: { id: meetingId, ...b, doctor_ids: doctorIds } }, 201)
+  return c.json({ data: { id: meetingId, ...b, doctor_ids: doctorIds, user_ids: userIds } }, 201)
 })
 
 meetings.put('/:id', async (c) => {
@@ -139,19 +196,22 @@ meetings.put('/:id', async (c) => {
   if (!b.hospital_id || !b.meeting_date) return c.json({ error: 'Required fields missing' }, 400)
   
   const primaryDoctorId = doctorIds[0]
-  const userId = b.user_id || c.get('userId') || null
+  const userIds = extractUserIds(b, c.get('userId'))
+  const primaryUserId = userIds.length > 0 ? userIds[0] : null
   await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, userId, id).run()
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId, id).run()
   
-  // Sync meeting_doctors
+  // Sync meeting_doctors and meeting_users
   await syncMeetingDoctors(c.env.DB, Number(id), doctorIds)
+  if (userIds.length > 0) await syncMeetingUsers(c.env.DB, Number(id), userIds)
   
   await logActivity(c.env.DB, 'update', 'meeting', Number(id), '', `type:${b.meeting_type}`)
-  return c.json({ data: { id: Number(id), ...b, doctor_ids: doctorIds } })
+  return c.json({ data: { id: Number(id), ...b, doctor_ids: doctorIds, user_ids: userIds } })
 })
 
 meetings.delete('/:id', async (c) => {
   const id = c.req.param('id')
+  await c.env.DB.prepare('DELETE FROM meeting_users WHERE meeting_id=?').bind(id).run()
   await c.env.DB.prepare('DELETE FROM meeting_doctors WHERE meeting_id=?').bind(id).run()
   await c.env.DB.prepare('DELETE FROM meetings WHERE id=?').bind(id).run()
   await logActivity(c.env.DB, 'delete', 'meeting', Number(id), '')
