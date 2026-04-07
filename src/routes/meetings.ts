@@ -53,7 +53,7 @@ function extractDoctorIds(body: any): number[] {
 meetings.get('/', async (c) => {
   const { doctor_id, hospital_id, limit, meeting_type, date_from, date_to, search } = c.req.query()
   
-  let q = 'SELECT m.*, h.name as hospital_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id'
+  let q = 'SELECT m.*, h.name as hospital_name, u.name as user_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id LEFT JOIN users u ON m.user_id=u.id'
   const conds: string[] = [], p: any[] = []
   
   if (doctor_id) {
@@ -109,8 +109,8 @@ meetings.post('/', async (c) => {
   
   // Insert meeting (keep doctor_id as first doctor for backward compat)
   const primaryDoctorId = doctorIds[0]
-  const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,purpose,content,result,next_action,next_meeting_date) VALUES (?,?,?,?,?,?,?,?,?)')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null).run()
+  const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, b.user_id || null).run()
   
   const meetingId = r.meta.last_row_id as number
   
@@ -135,8 +135,8 @@ meetings.put('/:id', async (c) => {
   if (!b.hospital_id || !b.meeting_date) return c.json({ error: 'Required fields missing' }, 400)
   
   const primaryDoctorId = doctorIds[0]
-  await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, id).run()
+  await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, b.user_id || null, id).run()
   
   // Sync meeting_doctors
   await syncMeetingDoctors(c.env.DB, Number(id), doctorIds)
@@ -155,11 +155,12 @@ meetings.delete('/:id', async (c) => {
 
 // Quick list of hospitals + doctors for global meeting form
 meetings.get('/form-data', async (c) => {
-  const [hosps, docs] = await Promise.all([
+  const [hosps, docs, users] = await Promise.all([
     c.env.DB.prepare('SELECT id, name, region FROM hospitals WHERE status="active" ORDER BY name').all(),
     c.env.DB.prepare('SELECT d.id, d.name, d.hospital_id, d.position, h.name as hospital_name FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id ORDER BY d.name').all(),
+    c.env.DB.prepare('SELECT id, name, email FROM users ORDER BY name').all(),
   ])
-  return c.json({ data: { hospitals: hosps.results, doctors: docs.results } })
+  return c.json({ data: { hospitals: hosps.results, doctors: docs.results, users: users.results } })
 })
 
 export default meetings

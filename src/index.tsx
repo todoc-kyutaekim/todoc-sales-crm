@@ -64,6 +64,12 @@ app.get('/api/regions', async (c) => {
   return c.json({ data: r.results.map((x:any) => x.region) })
 })
 
+// Users list (for sales rep selection)
+app.get('/api/users', async (c) => {
+  const r = await c.env.DB.prepare('SELECT id, name, email FROM users ORDER BY name').all()
+  return c.json({ data: r.results })
+})
+
 // PWA Manifest
 app.get('/manifest.json', (c) => {
   return c.json({
@@ -276,12 +282,13 @@ const HTML = `<!DOCTYPE html>
 <!-- Confirm Dialog -->
 <div id="confirm-dialog" class="fixed inset-0 modal-bg z-[60] hidden flex items-center justify-center p-4">
   <div class="bg-white w-full max-w-sm p-6 text-center" style="border-radius:20px;box-shadow:0 24px 48px -12px rgba(16,24,40,.18);animation:scaleIn .2s ease">
-    <div id="confirm-icon" class="w-14 h-14 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4"><i class="fas fa-trash text-red-400 text-xl"></i></div>
+    <div id="confirm-icon" class="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"></div>
     <h4 id="confirm-title" class="font-bold text-slate-800 text-[15px] mb-2"></h4>
     <p id="confirm-msg" class="text-sm text-slate-500 mb-6 leading-relaxed"></p>
+    <div id="confirm-extra" class="mb-4 hidden"></div>
     <div class="flex gap-3 justify-center">
       <button onclick="confirmNo()" class="btn btn-outline flex-1">취소</button>
-      <button id="confirm-yes" class="btn btn-danger-fill flex-1">삭제</button>
+      <button id="confirm-yes" class="flex-1"></button>
     </div>
   </div>
 </div>
