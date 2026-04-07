@@ -3390,14 +3390,16 @@ async function toggleFavAndRefresh(type, id) {
 // ===== Schedule Planner =====
 var _scheduleRegions = [];
 var _scheduleSuggestions = [];
+var _scheduleTimeOrdered = [];
 var _scheduleSelected = new Set();
+var _schViewMode = 'time'; // 'time' or 'score'
+var _schDayLabel = '';
 
 async function loadSchedule() {
   var c = document.getElementById('content');
   document.getElementById('page-title').textContent = '일정 플래너';
-  document.getElementById('page-subtitle').textContent = '지역별 방문 일정 자동 추천';
+  document.getElementById('page-subtitle').textContent = '외래 일정 기반 방문 루트 추천';
   
-  // 내일 날짜 기본값
   var tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   var defaultDate = tomorrow.toISOString().split('T')[0];
@@ -3410,7 +3412,7 @@ async function loadSchedule() {
         '</div>' +
         '<div>' +
           '<h3 class="font-bold text-slate-800 text-[15px]">영업 방문 플래너</h3>' +
-          '<p class="text-xs text-slate-400">방문할 지역과 날짜를 선택하면 최적의 방문 일정을 추천합니다</p>' +
+          '<p class="text-xs text-slate-400">교수 외래 일정에 맞춰 진료 끝나는 시간에 방문할 루트를 추천합니다</p>' +
         '</div>' +
       '</div>' +
       '<div class="flex flex-col sm:flex-row gap-3 mb-4">' +
@@ -3422,7 +3424,7 @@ async function loadSchedule() {
         '</div>' +
         '<div class="flex-1">' +
           '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">방문 날짜</label>' +
-          '<input type="date" id="sch-date" class="input w-full" value="' + defaultDate + '">' +
+          '<input type="date" id="sch-date" class="input w-full" value="' + defaultDate + '" onchange="updateSchDayPreview()">' +
         '</div>' +
         '<div class="flex items-end">' +
           '<button onclick="fetchScheduleSuggestions()" class="btn btn-primary whitespace-nowrap h-[42px]">' +
@@ -3430,12 +3432,14 @@ async function loadSchedule() {
           '</button>' +
         '</div>' +
       '</div>' +
+      '<div id="sch-day-preview" class="text-xs text-slate-400 mb-2"></div>' +
       '<div id="sch-region-stats" class="hidden"></div>' +
     '</div>' +
     '<div id="sch-results"></div>' +
   '</div>';
 
-  // 지역 목록 로드
+  updateSchDayPreview();
+
   try {
     var res = await API.get('/schedule/regions');
     _scheduleRegions = res.data.data || [];
@@ -3446,19 +3450,24 @@ async function loadSchedule() {
       opt.textContent = r.region + ' (' + r.total + '개 기관' + (r.needs_visit > 0 ? ', ' + r.needs_visit + '곳 방문필요' : '') + ')';
       sel.appendChild(opt);
     });
-  } catch(e) {
-    console.error('Failed to load schedule regions', e);
-  }
+  } catch(e) { console.error('Failed to load schedule regions', e); }
+}
+
+function updateSchDayPreview() {
+  var dateInput = document.getElementById('sch-date');
+  var preview = document.getElementById('sch-day-preview');
+  if (!dateInput || !preview) return;
+  var d = new Date(dateInput.value + 'T00:00:00');
+  var dayNames = ['일','월','화','수','목','금','토'];
+  preview.innerHTML = '<i class="fas fa-calendar-day mr-1"></i>' + d.getFullYear() + '년 ' + (d.getMonth()+1) + '월 ' + d.getDate() + '일 <strong>' + dayNames[d.getDay()] + '요일</strong> — 해당 요일 외래 일정에 맞춰 추천합니다';
 }
 
 function onSchRegionChange() {
   var region = document.getElementById('sch-region').value;
   var statsDiv = document.getElementById('sch-region-stats');
   if (!region) { statsDiv.classList.add('hidden'); return; }
-  
   var info = _scheduleRegions.find(function(r) { return r.region === region; });
   if (!info) { statsDiv.classList.add('hidden'); return; }
-  
   statsDiv.classList.remove('hidden');
   statsDiv.innerHTML = '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">' +
     schStatCard('전체 기관', info.total, 'fas fa-hospital', '#2563eb') +
@@ -3482,12 +3491,14 @@ async function fetchScheduleSuggestions() {
   if (!date) { toast('날짜를 선택해주세요', 'warn'); return; }
   
   var resultsDiv = document.getElementById('sch-results');
-  resultsDiv.innerHTML = '<div class="flex items-center justify-center py-12"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div><span class="ml-3 text-sm text-slate-400">추천 일정 분석 중...</span></div>';
+  resultsDiv.innerHTML = '<div class="flex items-center justify-center py-12"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div><span class="ml-3 text-sm text-slate-400">외래 일정 분석 중...</span></div>';
   
   try {
     var res = await API.get('/schedule/suggest?region=' + encodeURIComponent(region) + '&date=' + date + '&max=15');
     _scheduleSuggestions = res.data.data || [];
+    _scheduleTimeOrdered = res.data.time_ordered || [];
     _scheduleSelected = new Set();
+    _schDayLabel = res.data.dayLabel || '';
     var stats = res.data.stats || {};
     
     if (_scheduleSuggestions.length === 0) {
@@ -3495,78 +3506,207 @@ async function fetchScheduleSuggestions() {
       return;
     }
     
-    var dateObj = new Date(date + 'T00:00:00');
-    var dateStr = dateObj.getFullYear() + '년 ' + (dateObj.getMonth()+1) + '월 ' + dateObj.getDate() + '일';
-    var dayNames = ['일','월','화','수','목','금','토'];
-    dateStr += ' (' + dayNames[dateObj.getDay()] + ')';
-    
-    var html = '<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">' +
-      '<div>' +
-        '<h3 class="font-bold text-slate-800 text-[15px]"><i class="fas fa-map-pin text-blue-500 mr-1.5"></i>' + region + ' 방문 추천</h3>' +
-        '<p class="text-xs text-slate-400 mt-0.5">' + dateStr + ' · 추천 ' + _scheduleSuggestions.length + '곳 (전체 ' + stats.total_in_region + '곳)</p>' +
-      '</div>' +
-      '<div class="flex gap-2">' +
-        '<button onclick="selectAllSchedule()" class="btn btn-outline btn-sm text-xs"><i class="fas fa-check-double mr-1"></i>전체 선택</button>' +
-        '<button onclick="createSchedulePlan()" id="sch-create-btn" class="btn btn-primary btn-sm text-xs hidden"><i class="fas fa-calendar-plus mr-1"></i>미팅 일괄 생성 (<span id="sch-sel-count">0</span>건)</button>' +
-      '</div>' +
-    '</div>';
-    
-    // 추천 카드들
-    _scheduleSuggestions.forEach(function(s, idx) {
-      var isSelected = _scheduleSelected.has(s.hospital_id);
-      var scoreColor = s.score >= 100 ? '#ef4444' : s.score >= 80 ? '#f59e0b' : s.score >= 60 ? '#2563eb' : '#64748b';
-      var gradeColors = { S: '#7c3aed', A: '#2563eb', B: '#059669', C: '#f59e0b', D: '#94a3b8' };
-      var stageLabels = { contact: '컨택', meeting: '미팅', demo: '데모', proposal: '제안', contract: '계약', active_customer: '기존고객' };
-      var stageColors = { contact: '#94a3b8', meeting: '#2563eb', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#ef4444', active_customer: '#059669' };
-      
-      html += '<div id="sch-card-' + s.hospital_id + '" class="card mb-3 transition-all duration-200 cursor-pointer hover:shadow-md ' + (isSelected ? 'ring-2 ring-blue-500 bg-blue-50/30' : '') + '" onclick="toggleScheduleSelect(' + s.hospital_id + ')" style="' + (isSelected ? 'border-color:#2563eb40' : '') + '">' +
-        '<div class="p-4 lg:p-5">' +
-          '<div class="flex items-start gap-3">' +
-            // 순위 번호 + 체크박스
-            '<div class="flex flex-col items-center gap-1 flex-shrink-0">' +
-              '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ' + (isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400') + '" id="sch-rank-' + s.hospital_id + '">' +
-                (isSelected ? '<i class="fas fa-check"></i>' : (idx + 1)) +
-              '</div>' +
-              '<div class="text-[10px] font-bold" style="color:' + scoreColor + '">' + s.score + '점</div>' +
-            '</div>' +
-            // 기관 정보
-            '<div class="flex-1 min-w-0">' +
-              '<div class="flex items-center gap-2 flex-wrap">' +
-                '<h4 class="font-bold text-slate-800 text-sm">' + s.name + '</h4>' +
-                '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style="background:' + (gradeColors[s.grade] || '#94a3b8') + '15;color:' + (gradeColors[s.grade] || '#94a3b8') + '">' + s.grade + '등급</span>' +
-                '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md" style="background:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '12;color:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '">' + (stageLabels[s.pipeline_stage] || s.pipeline_stage) + '</span>' +
-                (s.status === 'inactive' ? '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-400">비활성</span>' : '') +
-              '</div>' +
-              (s.address ? '<p class="text-xs text-slate-400 mt-1 truncate"><i class="fas fa-map-marker-alt mr-1 text-slate-300"></i>' + s.address + '</p>' : '') +
-              // 추천 이유
-              '<div class="flex flex-wrap gap-1.5 mt-2">' +
-                s.reasons.map(function(r) { return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium"><i class="fas fa-lightbulb mr-0.5 text-amber-400"></i>' + r + '</span>'; }).join('') +
-              '</div>' +
-              // 미팅 히스토리 & 의사 정보
-              '<div class="flex items-center gap-4 mt-2.5 text-[11px] text-slate-400 flex-wrap">' +
-                '<span><i class="fas fa-calendar-check mr-1"></i>미팅 ' + s.total_meetings + '회</span>' +
-                (s.last_meeting_date ? '<span><i class="fas fa-clock mr-1"></i>최근 ' + fmtDateShort(s.last_meeting_date) + '</span>' : '<span class="text-amber-500 font-medium"><i class="fas fa-exclamation-circle mr-1"></i>미방문</span>') +
-                (s.doctor_count > 0 ? '<span><i class="fas fa-user-doctor mr-1"></i>의료진 ' + s.doctor_count + '명</span>' : '') +
-                (s.next_scheduled_date ? '<span class="text-blue-500 font-medium"><i class="fas fa-star mr-1"></i>예정 ' + fmtDateShort(s.next_scheduled_date) + '</span>' : '') +
-              '</div>' +
-              // 의료진 목록
-              (s.doctors && s.doctors.length > 0 ? '<div class="flex flex-wrap gap-1.5 mt-2">' + s.doctors.map(function(d) { return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-500"><i class="fas fa-user-doctor mr-0.5 text-slate-300"></i>' + d.name + (d.position ? ' (' + d.position + ')' : '') + '</span>'; }).join('') + '</div>' : '') +
-              // 후속 과제
-              (s.pending_next_action ? '<div class="mt-2 text-[11px] text-orange-600 bg-orange-50 px-2.5 py-1.5 rounded-lg"><i class="fas fa-flag mr-1"></i>' + s.pending_next_action + '</div>' : '') +
-              // 마지막 미팅 결과
-              (s.last_meeting_result ? '<div class="mt-1.5 text-[11px] text-slate-400 bg-slate-50 px-2.5 py-1.5 rounded-lg"><i class="fas fa-comment-dots mr-1 text-slate-300"></i>최근 결과: ' + s.last_meeting_result.substring(0, 80) + (s.last_meeting_result.length > 80 ? '...' : '') + '</div>' : '') +
-            '</div>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    });
-    
-    resultsDiv.innerHTML = html;
+    renderScheduleResults(region, date, stats);
     
   } catch(e) {
     console.error('Schedule suggestion error', e);
     resultsDiv.innerHTML = '<div class="card p-8 text-center"><i class="fas fa-exclamation-triangle text-3xl text-red-200 mb-3"></i><p class="text-sm text-red-400">추천 생성 중 오류가 발생했습니다</p></div>';
   }
+}
+
+function renderScheduleResults(region, date, stats) {
+  var resultsDiv = document.getElementById('sch-results');
+  var dateObj = new Date(date + 'T00:00:00');
+  var dayNames = ['일','월','화','수','목','금','토'];
+  var dateStr = dateObj.getFullYear() + '년 ' + (dateObj.getMonth()+1) + '월 ' + dateObj.getDate() + '일 (' + dayNames[dateObj.getDay()] + ')';
+  var list = _schViewMode === 'time' ? _scheduleTimeOrdered : _scheduleSuggestions;
+  
+  var html = '';
+  
+  // 헤더
+  html += '<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">' +
+    '<div>' +
+      '<h3 class="font-bold text-slate-800 text-[15px]"><i class="fas fa-map-pin text-blue-500 mr-1.5"></i>' + region + ' 방문 추천</h3>' +
+      '<p class="text-xs text-slate-400 mt-0.5">' + dateStr + ' · 추천 ' + list.length + '곳' +
+        (stats.clinic_today_count > 0 ? ' · <span class="text-cyan-600 font-medium">' + dayNames[dateObj.getDay()] + '요일 외래 ' + stats.clinic_today_count + '곳</span>' : '') +
+      '</p>' +
+    '</div>' +
+    '<div class="flex gap-2 flex-wrap">' +
+      '<div class="flex rounded-lg overflow-hidden border border-gray-200">' +
+        '<button onclick="setSchView(\'time\')" class="text-[11px] px-3 py-1.5 font-medium transition ' + (_schViewMode === 'time' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50') + '"><i class="fas fa-clock mr-1"></i>시간순</button>' +
+        '<button onclick="setSchView(\'score\')" class="text-[11px] px-3 py-1.5 font-medium transition ' + (_schViewMode === 'score' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50') + '"><i class="fas fa-ranking-star mr-1"></i>추천순</button>' +
+      '</div>' +
+      '<button onclick="selectAllSchedule()" class="btn btn-outline btn-sm text-xs"><i class="fas fa-check-double mr-1"></i>전체 선택</button>' +
+      '<button onclick="createSchedulePlan()" id="sch-create-btn" class="btn btn-primary btn-sm text-xs hidden"><i class="fas fa-calendar-plus mr-1"></i>미팅 생성 (<span id="sch-sel-count">0</span>건)</button>' +
+    '</div>' +
+  '</div>';
+  
+  // 외래 일정 안내 배너
+  if (!stats.has_clinic_data) {
+    html += '<div class="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 mb-4 text-[12px] text-amber-700">' +
+      '<i class="fas fa-info-circle text-amber-400 mr-1.5"></i>' +
+      '의료진 외래 일정이 아직 등록되지 않았습니다. <strong>의료진 관리</strong>에서 각 교수의 외래 시간을 입력하면 진료 끝나는 시간에 맞춰 방문 루트를 추천합니다.' +
+    '</div>';
+  }
+  
+  // 시간순 보기일 때 타임라인 형태로
+  if (_schViewMode === 'time' && stats.has_clinic_data) {
+    html += renderTimelineView(list, dateObj);
+  } else {
+    html += renderScoreView(list);
+  }
+  
+  resultsDiv.innerHTML = html;
+}
+
+function renderTimelineView(list, dateObj) {
+  var dayNames = ['일','월','화','수','목','금','토'];
+  var dayName = dayNames[dateObj.getDay()];
+  var html = '';
+  
+  // 시간대별 그룹핑
+  var amEndGroup = list.filter(function(s) { return s.visit_slot === 'am_end'; });
+  var pmEndGroup = list.filter(function(s) { return s.visit_slot === 'pm_end'; });
+  var noTimeGroup = list.filter(function(s) { return !s.visit_time; });
+  
+  // 타임라인
+  html += '<div class="relative">';
+  // 세로선
+  html += '<div class="absolute left-[23px] top-0 bottom-0 w-0.5 bg-gradient-to-b from-cyan-200 via-blue-200 to-indigo-200 hidden sm:block"></div>';
+  
+  // 오전 외래 후 (11:30~)
+  if (amEndGroup.length > 0) {
+    html += schTimeSlotHeader('11:30~', '오전 외래 후', 'fas fa-sun', '#f59e0b', 'bg-amber-50', dayName);
+    amEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
+  }
+  
+  // 오후 외래 후 (16:30~)
+  if (pmEndGroup.length > 0) {
+    html += schTimeSlotHeader('16:30~', '오후 외래 후', 'fas fa-cloud-sun', '#6366f1', 'bg-indigo-50', dayName);
+    pmEndGroup.forEach(function(s) { html += schTimeCard(s, list); });
+  }
+  
+  // 외래 정보 없음
+  if (noTimeGroup.length > 0) {
+    html += schTimeSlotHeader('', '외래 시간 미등록', 'fas fa-question-circle', '#94a3b8', 'bg-slate-50', dayName);
+    noTimeGroup.forEach(function(s) { html += schTimeCard(s, list); });
+  }
+  
+  html += '</div>';
+  return html;
+}
+
+function schTimeSlotHeader(time, label, icon, color, bgClass, dayName) {
+  return '<div class="flex items-center gap-3 mb-3 mt-5 first:mt-0 sm:pl-[14px]">' +
+    '<div class="w-[18px] h-[18px] rounded-full flex items-center justify-center z-10 hidden sm:flex" style="background:' + color + ';box-shadow:0 0 0 4px white">' +
+      '<div class="w-2 h-2 bg-white rounded-full"></div>' +
+    '</div>' +
+    '<div class="flex items-center gap-2">' +
+      (time ? '<span class="text-sm font-bold" style="color:' + color + '">' + time + '</span>' : '') +
+      '<span class="text-[12px] font-semibold text-slate-600">' + label + '</span>' +
+      '<span class="text-[10px] px-2 py-0.5 rounded-full font-medium" style="background:' + color + '12;color:' + color + '"><i class="' + icon + ' mr-0.5"></i>' + dayName + '</span>' +
+    '</div>' +
+  '</div>';
+}
+
+function schTimeCard(s, list) {
+  var isSelected = _scheduleSelected.has(s.hospital_id);
+  var gradeColors = { S: '#7c3aed', A: '#2563eb', B: '#059669', C: '#f59e0b', D: '#94a3b8' };
+  var stageLabels = { contact: '컨택', meeting: '미팅', demo: '데모', proposal: '제안', contract: '계약', active_customer: '기존고객' };
+  var stageColors = { contact: '#94a3b8', meeting: '#2563eb', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#ef4444', active_customer: '#059669' };
+  var idx = list.indexOf(s);
+  
+  var html = '<div id="sch-card-' + s.hospital_id + '" class="card mb-3 sm:ml-[48px] transition-all duration-200 cursor-pointer hover:shadow-md ' + (isSelected ? 'ring-2 ring-blue-500' : '') + '" onclick="toggleScheduleSelect(' + s.hospital_id + ')" style="' + (isSelected ? 'border-color:#2563eb40;background:linear-gradient(135deg,#eff6ff,#f8fafc)' : '') + '">' +
+    '<div class="p-4">' +
+      '<div class="flex items-start gap-3">' +
+        '<div class="flex flex-col items-center gap-1 flex-shrink-0">' +
+          '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ' + (isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400') + '" id="sch-rank-' + s.hospital_id + '">' +
+            (isSelected ? '<i class="fas fa-check"></i>' : (idx + 1)) +
+          '</div>' +
+          '<div class="text-[10px] font-bold text-slate-400">' + s.score + '점</div>' +
+        '</div>' +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="flex items-center gap-2 flex-wrap">' +
+            '<h4 class="font-bold text-slate-800 text-sm">' + s.name + '</h4>' +
+            '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style="background:' + (gradeColors[s.grade] || '#94a3b8') + '15;color:' + (gradeColors[s.grade] || '#94a3b8') + '">' + s.grade + '</span>' +
+            '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md" style="background:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '12;color:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '">' + (stageLabels[s.pipeline_stage] || s.pipeline_stage) + '</span>' +
+            (s.visit_time ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100"><i class="fas fa-clock mr-0.5"></i>' + s.visit_label + '</span>' : '') +
+          '</div>';
+  
+  // 외래 의사 상세 표시
+  if (s.clinic_analysis && s.clinic_analysis.length > 0) {
+    var clinicDocs = s.clinic_analysis.filter(function(a) { return a.am || a.pm; });
+    if (clinicDocs.length > 0) {
+      html += '<div class="mt-2 flex flex-wrap gap-1.5">';
+      clinicDocs.forEach(function(a) {
+        var amBadge = a.am ? schSlotBadge(a.am, 'AM') : '';
+        var pmBadge = a.pm ? schSlotBadge(a.pm, 'PM') : '';
+        html += '<div class="flex items-center gap-1 text-[10px] bg-slate-50 border border-slate-100 rounded-lg px-2 py-1">' +
+          '<span class="font-semibold text-slate-700">' + a.doctor_name + '</span>' +
+          (a.position ? '<span class="text-slate-400">' + a.position + '</span>' : '') +
+          amBadge + pmBadge +
+          (a.hasClinic ? '<span class="text-cyan-500"><i class="fas fa-stethoscope text-[8px]"></i></span>' : '') +
+        '</div>';
+      });
+      html += '</div>';
+    }
+  }
+  
+  html += (s.address ? '<p class="text-[11px] text-slate-400 mt-1.5 truncate"><i class="fas fa-map-marker-alt mr-1 text-slate-300"></i>' + s.address + '</p>' : '');
+  
+  // 추천 이유 (최대 3개만)
+  var topReasons = s.reasons.slice(0, 3);
+  html += '<div class="flex flex-wrap gap-1 mt-2">' +
+    topReasons.map(function(r) { return '<span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-medium">' + r + '</span>'; }).join('') +
+  '</div>';
+  
+  // 미팅 정보
+  html += '<div class="flex items-center gap-3 mt-2 text-[11px] text-slate-400 flex-wrap">' +
+    '<span><i class="fas fa-calendar-check mr-1"></i>' + s.total_meetings + '회</span>' +
+    (s.last_meeting_date ? '<span><i class="fas fa-clock mr-1"></i>' + fmtDateShort(s.last_meeting_date) + '</span>' : '<span class="text-amber-500 font-medium">미방문</span>') +
+    (s.doctor_count > 0 ? '<span><i class="fas fa-user-doctor mr-1"></i>' + s.doctor_count + '명</span>' : '') +
+  '</div>';
+  
+  // 후속 과제
+  if (s.pending_next_action) {
+    html += '<div class="mt-2 text-[11px] text-orange-600 bg-orange-50 px-2.5 py-1.5 rounded-lg"><i class="fas fa-flag mr-1"></i>' + s.pending_next_action + '</div>';
+  }
+  
+  html += '</div></div></div></div>';
+  return html;
+}
+
+function schSlotBadge(val, period) {
+  if (!val) return '';
+  var colors = {
+    '진료': 'bg-cyan-100 text-cyan-700',
+    '수술': 'bg-rose-100 text-rose-600',
+    '휴진': 'bg-gray-100 text-gray-400',
+    '순환진료': 'bg-amber-100 text-amber-600'
+  };
+  var cls = colors[val] || 'bg-blue-100 text-blue-600';
+  return '<span class="text-[9px] px-1 py-0.5 rounded ' + cls + ' font-medium">' + period + ':' + val + '</span>';
+}
+
+function renderScoreView(list) {
+  var html = '';
+  list.forEach(function(s, idx) { html += schTimeCard(s, list); });
+  return html;
+}
+
+function setSchView(mode) {
+  _schViewMode = mode;
+  var region = document.getElementById('sch-region').value;
+  var date = document.getElementById('sch-date').value;
+  // 기존 stats에서 가져오기 어려우므로 단순 re-render
+  var stats = {
+    total_in_region: _scheduleSuggestions.length,
+    suggested: _scheduleSuggestions.length,
+    has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
+    clinic_today_count: _scheduleSuggestions.filter(function(s) { return s.has_clinic_today; }).length
+  };
+  renderScheduleResults(region, date, stats);
+  updateScheduleSelection();
 }
 
 function fmtDateShort(d) {
@@ -3576,50 +3716,39 @@ function fmtDateShort(d) {
 }
 
 function toggleScheduleSelect(hospId) {
-  if (_scheduleSelected.has(hospId)) {
-    _scheduleSelected.delete(hospId);
-  } else {
-    _scheduleSelected.add(hospId);
-  }
+  if (_scheduleSelected.has(hospId)) _scheduleSelected.delete(hospId);
+  else _scheduleSelected.add(hospId);
   updateScheduleSelection();
 }
 
 function selectAllSchedule() {
-  if (_scheduleSelected.size === _scheduleSuggestions.length) {
-    _scheduleSelected.clear();
-  } else {
-    _scheduleSuggestions.forEach(function(s) { _scheduleSelected.add(s.hospital_id); });
-  }
+  var list = _schViewMode === 'time' ? _scheduleTimeOrdered : _scheduleSuggestions;
+  if (_scheduleSelected.size === list.length) _scheduleSelected.clear();
+  else list.forEach(function(s) { _scheduleSelected.add(s.hospital_id); });
   updateScheduleSelection();
 }
 
 function updateScheduleSelection() {
   var btn = document.getElementById('sch-create-btn');
   var countSpan = document.getElementById('sch-sel-count');
+  if (!btn) return;
+  if (_scheduleSelected.size > 0) { btn.classList.remove('hidden'); countSpan.textContent = _scheduleSelected.size; }
+  else { btn.classList.add('hidden'); }
   
-  if (_scheduleSelected.size > 0) {
-    btn.classList.remove('hidden');
-    countSpan.textContent = _scheduleSelected.size;
-  } else {
-    btn.classList.add('hidden');
-  }
-  
-  _scheduleSuggestions.forEach(function(s, idx) {
+  var list = _schViewMode === 'time' ? _scheduleTimeOrdered : _scheduleSuggestions;
+  list.forEach(function(s, idx) {
     var card = document.getElementById('sch-card-' + s.hospital_id);
     var rank = document.getElementById('sch-rank-' + s.hospital_id);
     if (!card || !rank) return;
-    var isSelected = _scheduleSelected.has(s.hospital_id);
-    
-    if (isSelected) {
+    var isSel = _scheduleSelected.has(s.hospital_id);
+    if (isSel) {
       card.classList.add('ring-2', 'ring-blue-500');
-      card.style.borderColor = '#2563eb40';
-      card.style.background = 'linear-gradient(135deg, #eff6ff 0%, #f8fafc 100%)';
+      card.style.borderColor = '#2563eb40'; card.style.background = 'linear-gradient(135deg,#eff6ff,#f8fafc)';
       rank.className = 'w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-blue-600 text-white';
       rank.innerHTML = '<i class="fas fa-check"></i>';
     } else {
       card.classList.remove('ring-2', 'ring-blue-500');
-      card.style.borderColor = '';
-      card.style.background = '';
+      card.style.borderColor = ''; card.style.background = '';
       rank.className = 'w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold bg-slate-100 text-slate-400';
       rank.textContent = (idx + 1);
     }
@@ -3628,7 +3757,6 @@ function updateScheduleSelection() {
 
 async function createSchedulePlan() {
   if (_scheduleSelected.size === 0) { toast('방문할 기관을 선택해주세요', 'warn'); return; }
-  
   var date = document.getElementById('sch-date').value;
   if (!date) { toast('날짜를 선택해주세요', 'warn'); return; }
   
@@ -3652,10 +3780,8 @@ async function createSchedulePlan() {
         var res = await API.post('/schedule/plan', { date: date, visits: visits });
         toast(res.data.data.count + '건의 미팅이 생성되었습니다');
         _scheduleSelected.clear();
-        fetchScheduleSuggestions(); // 새로고침
-      } catch(e) {
-        toast('미팅 생성 중 오류가 발생했습니다', 'err');
-      }
+        fetchScheduleSuggestions();
+      } catch(e) { toast('미팅 생성 중 오류가 발생했습니다', 'err'); }
     }
   );
 }
