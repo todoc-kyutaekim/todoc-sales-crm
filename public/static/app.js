@@ -538,11 +538,14 @@ async function loadDash() {
       // Reminder banner
       (s.reminders?.length ? '<div class="reminder-banner"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:rgba(255,255,255,.12)"><i class="fas fa-bell text-white text-lg animate-bounce-gentle"></i></div><div class="flex-1 min-w-0"><div class="font-bold text-white text-sm mb-0.5">미팅 리마인더</div><div class="text-white/70 text-xs">앞으로 7일 이내 예정된 미팅이 <strong class="text-white">' + s.reminders.length + '건</strong> 있습니다</div></div></div>' +
         '<div class="mt-3 space-y-2">' + s.reminders.map(r => {
-          const du = daysUntil(r.next_meeting_date);
+          const rdate = r.reminder_type === 'scheduled' ? r.meeting_date : r.next_meeting_date;
+          const du = daysUntil(rdate);
           const urgency = du <= 1 ? 'bg-red-500/30 border-red-400/50' : du <= 3 ? 'bg-amber-500/20 border-amber-400/40' : 'bg-white/10 border-white/20';
+          const typeLabel = r.reminder_type === 'scheduled' ? '<span class="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-white/15 text-white/80">플래너</span>' : '';
+          const userLabel = r.user_names ? '<span class="text-white/50 text-[10px] ml-1">[' + r.user_names + ']</span>' : '';
           return '<div class="flex items-center gap-3 px-3 py-2 rounded-lg border ' + urgency + ' cursor-pointer" onclick="viewHosp(' + r.hospital_id + ')">' +
-            '<div class="text-white/90 text-sm flex-1 min-w-0 truncate"><span class="font-semibold">' + meetDoctorNames(r) + '</span>' + (r.doctors && r.doctors.length > 1 ? '<span class="text-[10px] text-white/50 ml-1">(' + r.doctors.length + '명)</span>' : '') + ' <span class="text-white/60">· ' + (r.hospital_name || '') + '</span></div>' +
-            '<div class="text-right flex-shrink-0"><div class="text-white font-bold text-sm">' + fmtShort(r.next_meeting_date) + '</div><div class="text-white/70 text-[10px]">' + (du === 0 ? '오늘!' : du === 1 ? '내일' : du + '일 후') + '</div></div></div>'
+            '<div class="text-white/90 text-sm flex-1 min-w-0 truncate"><span class="font-semibold">' + meetDoctorNames(r) + '</span>' + (r.doctors && r.doctors.length > 1 ? '<span class="text-[10px] text-white/50 ml-1">(' + r.doctors.length + '명)</span>' : '') + typeLabel + userLabel + ' <span class="text-white/60">· ' + (r.hospital_name || '') + '</span></div>' +
+            '<div class="text-right flex-shrink-0"><div class="text-white font-bold text-sm">' + fmtShort(rdate) + '</div><div class="text-white/70 text-[10px]">' + (du === 0 ? '오늘!' : du === 1 ? '내일' : du + '일 후') + '</div></div></div>'
         }).join('') + '</div></div>' : '') +
 
       // ===== Stats overview row =====

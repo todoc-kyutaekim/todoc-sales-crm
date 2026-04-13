@@ -54,13 +54,26 @@ dashboard.get('/', async (c) => {
       FROM meetings WHERE meeting_date >= date('now','-6 months')
       GROUP BY month ORDER BY month ASC
     `).all(),
-    // Upcoming meeting reminders (next 7 days)
+    // Upcoming meeting reminders (next 7 days) — includes both:
+    // 1. meetings with next_meeting_date in next 7 days (follow-up scheduled)
+    // 2. meetings with meeting_date in next 7 days (future meetings, e.g. from schedule planner)
     c.env.DB.prepare(`
-      SELECT m.*, h.name as hospital_name
+      SELECT m.*, h.name as hospital_name, 'next' as reminder_type,
+        COALESCE(m.next_meeting_date, m.meeting_date) as sort_date
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
       WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
         AND m.next_meeting_date >= date('now') AND m.next_meeting_date <= date('now','+7 days')
-      ORDER BY m.next_meeting_date ASC LIMIT 10
+      UNION ALL
+      SELECT m.*, h.name as hospital_name, 'scheduled' as reminder_type,
+        m.meeting_date as sort_date
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.meeting_date >= date('now') AND m.meeting_date <= date('now','+7 days')
+        AND m.id NOT IN (
+          SELECT m2.id FROM meetings m2
+          WHERE m2.next_meeting_date IS NOT NULL AND m2.next_meeting_date != ''
+            AND m2.next_meeting_date >= date('now') AND m2.next_meeting_date <= date('now','+7 days')
+        )
+      ORDER BY sort_date ASC LIMIT 20
     `).all(),
     // This week's meetings (Mon-Sun)
     c.env.DB.prepare(`
@@ -111,29 +124,45 @@ dashboard.get('/', async (c) => {
     `).all(),
   ])
 
-  // Helper: attach doctor names to meetings via meeting_doctors
+  // Helper: attach doctor names & user names to meetings via meeting_doctors + meeting_users
   async function enrichMeetings(meetingsList: any[]): Promise<any[]> {
     if (!meetingsList.length) return meetingsList
     const ids = meetingsList.map(m => m.id)
     const placeholders = ids.map(() => '?').join(',')
-    const dr = await c.env.DB.prepare(
-      `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo
-       FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id
-       WHERE md.meeting_id IN (${placeholders}) ORDER BY md.meeting_id, d.name`
-    ).bind(...ids).all()
+    const [dr, ur] = await Promise.all([
+      c.env.DB.prepare(
+        `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo
+         FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id
+         WHERE md.meeting_id IN (${placeholders}) ORDER BY md.meeting_id, d.name`
+      ).bind(...ids).all(),
+      c.env.DB.prepare(
+        `SELECT mu.meeting_id, u.id as user_id, u.name as user_name
+         FROM meeting_users mu LEFT JOIN users u ON mu.user_id=u.id
+         WHERE mu.meeting_id IN (${placeholders}) ORDER BY mu.meeting_id, u.name`
+      ).bind(...ids).all(),
+    ])
     const dMap = new Map<number, any[]>()
     for (const row of dr.results as any[]) {
       if (!dMap.has(row.meeting_id)) dMap.set(row.meeting_id, [])
       dMap.get(row.meeting_id)!.push(row)
     }
+    const uMap = new Map<number, any[]>()
+    for (const row of ur.results as any[]) {
+      if (!uMap.has(row.meeting_id)) uMap.set(row.meeting_id, [])
+      uMap.get(row.meeting_id)!.push(row)
+    }
     return meetingsList.map(m => {
       const doctors = dMap.get(m.id) || []
+      const users = uMap.get(m.id) || []
       return {
         ...m,
         doctors,
         doctor_name: doctors.map((d: any) => d.doctor_name).join(', ') || null,
         doctor_photo: doctors.length > 0 ? doctors[0].doctor_photo : null,
         doctor_id: doctors.length > 0 ? doctors[0].doctor_id : m.doctor_id,
+        users,
+        user_names: users.map((u: any) => u.user_name).join(', ') || null,
+        user_ids: users.map((u: any) => u.user_id),
       }
     })
   }
