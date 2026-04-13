@@ -12,12 +12,11 @@ pipeline.get('/', async (c) => {
     proposal: '제안/협의', contract: '계약', active_customer: '활성 거래처'
   }
   const r = await c.env.DB.prepare(`
-    SELECT h.id, h.name, h.region, h.grade, h.pipeline_stage,
+    SELECT h.id, h.name, h.region, h.grade, h.status, h.pipeline_stage,
       COUNT(DISTINCT m.id) as meeting_count,
       MAX(m.meeting_date) as last_meeting
     FROM hospitals h
     LEFT JOIN meetings m ON h.id = m.hospital_id
-    WHERE h.status='active'
     GROUP BY h.id
     ORDER BY h.pipeline_stage, h.name
   `).all()
