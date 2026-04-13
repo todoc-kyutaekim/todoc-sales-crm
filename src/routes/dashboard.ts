@@ -3,20 +3,23 @@ import { Hono } from 'hono'
 type Bindings = { DB: D1Database }
 const dashboard = new Hono<{ Bindings: Bindings }>()
 
+// KST helper: SQLite date('now') is UTC, add +9 hours for Korean Standard Time
+const KST = "'+9 hours'"
+
 // Period-aware dashboard (supports ?period=month|quarter|year)
 dashboard.get('/', async (c) => {
   const period = c.req.query('period') || 'month'
-  let dateFilter = "date('now','start of month')"
-  let prevDateFilter = "date('now','start of month','-1 month')"
-  let prevEndFilter = "date('now','start of month')"
+  let dateFilter = `date('now',${KST},'start of month')`
+  let prevDateFilter = `date('now',${KST},'start of month','-1 month')`
+  let prevEndFilter = `date('now',${KST},'start of month')`
   if (period === 'quarter') {
-    dateFilter = "date('now','start of month','-2 months','start of month')"
-    prevDateFilter = "date('now','start of month','-5 months','start of month')"
-    prevEndFilter = "date('now','start of month','-2 months','start of month')"
+    dateFilter = `date('now',${KST},'start of month','-2 months','start of month')`
+    prevDateFilter = `date('now',${KST},'start of month','-5 months','start of month')`
+    prevEndFilter = `date('now',${KST},'start of month','-2 months','start of month')`
   } else if (period === 'year') {
-    dateFilter = "date('now','start of year')"
-    prevDateFilter = "date('now','start of year','-1 year')"
-    prevEndFilter = "date('now','start of year')"
+    dateFilter = `date('now',${KST},'start of year')`
+    prevDateFilter = `date('now',${KST},'start of year','-1 year')`
+    prevEndFilter = `date('now',${KST},'start of year')`
   }
 
   const [hospitals, hospitalsAll, doctors, meetings, monthMeetings, lastMonthMeetings, recentMeetingsRaw, upcomingActionsRaw, regionStats, ciLatest, monthlyTrend, remindersRaw,
@@ -51,7 +54,7 @@ dashboard.get('/', async (c) => {
         SUM(CASE WHEN meeting_type='conference' THEN 1 ELSE 0 END) as conf_count,
         SUM(CASE WHEN meeting_type='email' THEN 1 ELSE 0 END) as email_count,
         SUM(CASE WHEN meeting_type='online' THEN 1 ELSE 0 END) as online_count
-      FROM meetings WHERE meeting_date >= date('now','-6 months')
+      FROM meetings WHERE meeting_date >= date('now','+9 hours','-6 months')
       GROUP BY month ORDER BY month ASC
     `).all(),
     // Upcoming meeting reminders (next 7 days) — includes both:
@@ -62,16 +65,16 @@ dashboard.get('/', async (c) => {
         COALESCE(m.next_meeting_date, m.meeting_date) as sort_date
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
       WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
-        AND m.next_meeting_date >= date('now') AND m.next_meeting_date <= date('now','+7 days')
+        AND m.next_meeting_date >= date('now','+9 hours') AND m.next_meeting_date <= date('now','+9 hours','+7 days')
       UNION ALL
       SELECT m.*, h.name as hospital_name, 'scheduled' as reminder_type,
         m.meeting_date as sort_date
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
-      WHERE m.meeting_date >= date('now') AND m.meeting_date <= date('now','+7 days')
+      WHERE m.meeting_date >= date('now','+9 hours') AND m.meeting_date <= date('now','+9 hours','+7 days')
         AND m.id NOT IN (
           SELECT m2.id FROM meetings m2
           WHERE m2.next_meeting_date IS NOT NULL AND m2.next_meeting_date != ''
-            AND m2.next_meeting_date >= date('now') AND m2.next_meeting_date <= date('now','+7 days')
+            AND m2.next_meeting_date >= date('now','+9 hours') AND m2.next_meeting_date <= date('now','+9 hours','+7 days')
         )
       ORDER BY sort_date ASC LIMIT 20
     `).all(),
@@ -79,15 +82,15 @@ dashboard.get('/', async (c) => {
     c.env.DB.prepare(`
       SELECT m.*, h.name as hospital_name
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
-      WHERE (m.meeting_date >= date('now','weekday 1','-7 days') AND m.meeting_date <= date('now','weekday 0'))
-         OR (m.next_meeting_date >= date('now','weekday 1','-7 days') AND m.next_meeting_date <= date('now','weekday 0'))
+      WHERE (m.meeting_date >= date('now','+9 hours','weekday 1','-7 days') AND m.meeting_date <= date('now','+9 hours','weekday 0'))
+         OR (m.next_meeting_date >= date('now','+9 hours','weekday 1','-7 days') AND m.next_meeting_date <= date('now','+9 hours','weekday 0'))
       ORDER BY COALESCE(m.next_meeting_date, m.meeting_date) ASC LIMIT 15
     `).all(),
     // Long-inactive hospitals (last meeting > 30 days ago or never)
     c.env.DB.prepare(`
       SELECT h.id, h.name, h.region, h.grade, h.status, h.pipeline_stage,
         MAX(m.meeting_date) as last_meeting_date,
-        CAST(julianday('now') - julianday(MAX(m.meeting_date)) AS INTEGER) as days_since
+        CAST(julianday('now','+9 hours') - julianday(MAX(m.meeting_date)) AS INTEGER) as days_since
       FROM hospitals h
       LEFT JOIN meetings m ON m.hospital_id = h.id
       GROUP BY h.id
@@ -99,14 +102,14 @@ dashboard.get('/', async (c) => {
     c.env.DB.prepare(`
       SELECT id, name, region, grade, status, type, created_at
       FROM hospitals
-      WHERE created_at >= date('now', '-14 days')
+      WHERE created_at >= date('now', '+9 hours', '-14 days')
       ORDER BY created_at DESC LIMIT 5
     `).all(),
     // Recently added doctors (last 14 days)
     c.env.DB.prepare(`
       SELECT d.id, d.name, d.department, d.position, d.hospital_id, h.name as hospital_name, d.created_at
       FROM doctors d LEFT JOIN hospitals h ON d.hospital_id = h.id
-      WHERE d.created_at >= date('now', '-14 days')
+      WHERE d.created_at >= date('now', '+9 hours', '-14 days')
       ORDER BY d.created_at DESC LIMIT 5
     `).all(),
     // Hospital code registration stats
@@ -187,11 +190,11 @@ dashboard.get('/', async (c) => {
     }
   }
 
-  // KPI targets for current month
-  const now = new Date()
+  // KPI targets for current month (KST)
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000)
   const kpiTarget = await c.env.DB.prepare(
     'SELECT * FROM kpi_targets WHERE year=? AND month=?'
-  ).bind(now.getFullYear(), now.getMonth() + 1).first().catch(() => null) as any
+  ).bind(now.getUTCFullYear(), now.getUTCMonth() + 1).first().catch(() => null) as any
 
   // Reminder count (for notification badge)
   const reminderCount = reminders.length
