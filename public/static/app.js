@@ -8,6 +8,54 @@ let _searchHistory = JSON.parse(localStorage.getItem('todoc_search_history') || 
 let _favorites = new Set();
 let _offlineMode = !navigator.onLine;
 
+// ===== Sort State =====
+var _hospSort = { key: 'name', dir: 'asc' };
+var _docSort = { key: 'name', dir: 'asc' };
+var _meetSort = { key: 'meeting_date', dir: 'desc' };
+
+function sortList(list, key, dir) {
+  return list.slice().sort(function(a, b) {
+    var va = a[key], vb = b[key];
+    if (va == null) va = '';
+    if (vb == null) vb = '';
+    // Numeric sort for known numeric fields
+    if (['meeting_count', 'total_meetings', 'doctor_count', 'score'].includes(key)) {
+      va = Number(va) || 0; vb = Number(vb) || 0;
+    }
+    // Grade sort: S > A > B > C > D
+    if (key === 'grade') {
+      var go = { S: 5, A: 4, B: 3, C: 2, D: 1 };
+      va = go[va] || 0; vb = go[vb] || 0;
+    }
+    // Influence sort: high > medium > low
+    if (key === 'influence_level') {
+      var io = { high: 3, medium: 2, low: 1 };
+      va = io[va] || 0; vb = io[vb] || 0;
+    }
+    // Date fields
+    if (['last_meeting', 'meeting_date', 'last_meeting_date', 'created_at'].includes(key)) {
+      va = va ? new Date(va + (va.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
+      vb = vb ? new Date(vb + (vb.length === 10 ? 'T00:00:00' : '')).getTime() : 0;
+    }
+    // String compare
+    if (typeof va === 'string' && typeof vb === 'string') {
+      va = va.toLowerCase(); vb = vb.toLowerCase();
+    }
+    if (va < vb) return dir === 'asc' ? -1 : 1;
+    if (va > vb) return dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+}
+function sortIcon(currentKey, sortState) {
+  if (sortState.key !== currentKey) return '<i class="fas fa-sort text-slate-200 ml-1 text-[9px]"></i>';
+  return sortState.dir === 'asc' ? '<i class="fas fa-sort-up text-brand-500 ml-1 text-[9px]"></i>' : '<i class="fas fa-sort-down text-brand-500 ml-1 text-[9px]"></i>';
+}
+function toggleSort(sortState, key, refreshFn) {
+  if (sortState.key === key) { sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc'; }
+  else { sortState.key = key; sortState.dir = 'asc'; }
+  refreshFn();
+}
+
 // ===== Auth: Session Management =====
 function getSession() { return localStorage.getItem('todoc_session') || '' }
 function setSession(sid, user) {
@@ -719,6 +767,7 @@ async function loadHosp(typeFilter) {
       '<select id="h-region" onchange="filterH()" class="input filter-select"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
       '<select id="h-grade" onchange="filterH()" class="input filter-select"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
       '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="h-fav-only" onchange="filterH()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
+      '<select id="h-sort" onchange="applyHospSort()" class="input filter-select text-[11px] !w-auto !min-w-0"><option value="name-asc">\uc774\ub984 \u2191</option><option value="name-desc">\uc774\ub984 \u2193</option><option value="grade-desc">\ub4f1\uae09 \u2191</option><option value="grade-asc">\ub4f1\uae09 \u2193</option><option value="total_meetings-desc">\ubbf8\ud305 \u2191</option><option value="total_meetings-asc">\ubbf8\ud305 \u2193</option><option value="last_meeting-desc">\ucd5c\uadfc\ubc29\ubb38 \u2191</option><option value="last_meeting-asc">\ucd5c\uadfc\ubc29\ubb38 \u2193</option><option value="doctor_count-desc">\uc758\ub8cc\uc9c4 \u2191</option><option value="doctor_count-asc">\uc758\ub8cc\uc9c4 \u2193</option></select>' +
       // View mode switcher
       '<div class="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5 flex-shrink-0">' +
       '<button id="hv-card" class="hv-btn" onclick="setHospView(\'card\')" title="카드뷰"><i class="fas fa-th-large"></i></button>' +
@@ -979,7 +1028,13 @@ function renderKoreaMap(counts, grades) {
 function filterH() {
   const s = (document.getElementById('h-search')?.value || '').toLowerCase(), r = document.getElementById('h-region')?.value || '', g = document.getElementById('h-grade')?.value || '', t = document.getElementById('h-type')?.value || '';
   const favOnly = document.getElementById('h-fav-only')?.checked || false;
-  renderH(hospList.filter(h => (!s || h.name.toLowerCase().includes(s)) && (!r || h.region === r) && (!g || h.grade === g) && (!t || h.type === t) && (!favOnly || isFavorited('hospital', h.id))));
+  var filtered = hospList.filter(h => (!s || h.name.toLowerCase().includes(s)) && (!r || h.region === r) && (!g || h.grade === g) && (!t || h.type === t) && (!favOnly || isFavorited('hospital', h.id)));
+  renderH(sortList(filtered, _hospSort.key, _hospSort.dir));
+}
+function applyHospSort() {
+  var v = (document.getElementById('h-sort')?.value || 'name-asc').split('-');
+  _hospSort.key = v[0]; _hospSort.dir = v[1] || 'asc';
+  filterH();
 }
 
 // ===== HOSPITAL DETAIL =====
@@ -1435,14 +1490,23 @@ async function loadDoc() {
       '<select id="d-visit" onchange="filterD()" class="input filter-select"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
       '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="d-fav-only" onchange="filterD()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
       '<span id="d-count" class="text-xs text-slate-300 font-medium"></span></div>' +
-      '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
-      '<th class="px-4 lg:px-6 py-3.5 text-left">의료진</th><th class="px-4 py-3.5 text-left">소속 병원</th><th class="px-4 py-3.5 text-left hide-mobile">진료과</th><th class="px-4 py-3.5 text-left hide-mobile">전문분야</th><th class="px-4 py-3.5 text-center">영향력</th><th class="px-4 py-3.5 text-center">미팅</th><th class="px-4 py-3.5 text-left">최근</th></tr></thead>' +
+      '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full"><thead id="d-thead"></thead>' +
       '<tbody id="d-tbody" class="divide-y divide-gray-50"></tbody></table></div></div></div>';
     renderDR(docList);
   } catch (e) { toast('의료진 목록을 불러올 수 없습니다', 'err') }
 }
 function renderDR(list) {
   document.getElementById('d-count').textContent = list.length + '명';
+  // Sortable table header
+  var thCls = 'cursor-pointer select-none hover:text-brand-500 transition';
+  document.getElementById('d-thead').innerHTML = '<tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
+    '<th class="px-4 lg:px-6 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'name\',filterD)">의료진' + sortIcon('name', _docSort) + '</th>' +
+    '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'hospital_name\',filterD)">소속 병원' + sortIcon('hospital_name', _docSort) + '</th>' +
+    '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'department\',filterD)">진료과' + sortIcon('department', _docSort) + '</th>' +
+    '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'specialty\',filterD)">전문분야' + sortIcon('specialty', _docSort) + '</th>' +
+    '<th class="px-4 py-3.5 text-center ' + thCls + '" onclick="toggleSort(_docSort,\'influence_level\',filterD)">영향력' + sortIcon('influence_level', _docSort) + '</th>' +
+    '<th class="px-4 py-3.5 text-center ' + thCls + '" onclick="toggleSort(_docSort,\'meeting_count\',filterD)">미팅' + sortIcon('meeting_count', _docSort) + '</th>' +
+    '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'last_meeting\',filterD)">최근' + sortIcon('last_meeting', _docSort) + '</th></tr>';
   document.getElementById('d-tbody').innerHTML = list.map(d =>
     '<tr class="tr cursor-pointer" onclick="viewDocProfile(' + d.id + ')">' +
     '<td class="px-4 lg:px-6 py-3.5"><div class="flex items-center gap-3">' + avatar(d.photo, d.name) + '<div><div class="font-semibold text-[13px] text-slate-800">' + d.name + '</div><div class="text-[11px] text-slate-400">' + (d.position || '') + '</div></div></div></td>' +
@@ -1460,7 +1524,7 @@ function filterD() {
   const dept = document.getElementById('d-dept')?.value || '';
   const vis = document.getElementById('d-visit')?.value || '';
   const favOnly = document.getElementById('d-fav-only')?.checked || false;
-  renderDR(docList.filter(d => {
+  renderDR(sortList(docList.filter(d => {
     if (q && !d.name.toLowerCase().includes(q) && !(d.hospital_name || '').toLowerCase().includes(q)) return false;
     if (inf && d.influence_level !== inf) return false;
     if (dept && d.department !== dept) return false;
@@ -1470,7 +1534,7 @@ function filterD() {
       if (d.last_meeting) { const diff = Math.floor((Date.now() - new Date(d.last_meeting + 'T00:00:00').getTime()) / 86400000); if (diff < days) return false; }
     }
     return true;
-  }));
+  }), _docSort.key, _docSort.dir));
 }
 
 // ===== DOCTOR PROFILE =====
@@ -1650,6 +1714,7 @@ function renderMeetPage() {
     '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="m-search" oninput="filterM()" placeholder="의료진/병원/목적 검색" class="input pl-10"></div>' +
     '<select id="m-hospital" onchange="filterM()" class="input filter-select-lg hide-mobile">' + hospOpts + '</select>' +
     '<select id="m-type" onchange="filterM()" class="input filter-select hide-mobile"><option value="">전체 유형</option><option value="visit">방문</option><option value="phone">전화</option><option value="conference">학회</option><option value="email">이메일</option><option value="online">온라인</option></select>' +
+    '<select id="m-sort" onchange="applyMeetSort()" class="input filter-select text-[11px] !w-auto !min-w-0"><option value="meeting_date-desc">날짜 최신순</option><option value="meeting_date-asc">날짜 오래된순</option><option value="hospital_name-asc">병원 이름순</option><option value="hospital_name-desc">병원 역순</option><option value="meeting_type-asc">유형순</option></select>' +
     '<span id="m-count" class="text-xs text-slate-300 font-medium"></span>' +
     '</div>' +
     '<div id="m-body"></div></div>';
@@ -1938,8 +2003,9 @@ function renderML(list) {
     if (hid && String(m.hospital_id) !== hid) return false;
     return true;
   });
-  document.getElementById('m-count').textContent = filtered.length + '건';
-  document.getElementById('m-body').innerHTML = '<div class="card-flat p-0 overflow-hidden">' + (filtered.length ? filtered.map(function(m) {
+  var sorted = sortList(filtered, _meetSort.key, _meetSort.dir);
+  document.getElementById('m-count').textContent = sorted.length + '건';
+  document.getElementById('m-body').innerHTML = '<div class="card-flat p-0 overflow-hidden">' + (sorted.length ? sorted.map(function(m) {
     return '<div class="px-4 lg:px-6 py-4 tr flex gap-3 lg:gap-4 border-b border-gray-50 last:border-0">' +
     '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:13px') + '</div>' +
     '<div class="flex-1 min-w-0 cursor-pointer" onclick="viewMeetDoctors(' + m.id + ',' + JSON.stringify((m.doctors||[]).map(function(d){return d.doctor_id||d.id})).replace(/"/g, '&quot;') + ')">' +
@@ -1957,6 +2023,11 @@ function filterM() {
   if (_meetViewMode === 'calendar') renderMeetCalendar();
   else if (_meetViewMode === 'upcoming') renderMeetUpcoming();
   else renderMeetList();
+}
+function applyMeetSort() {
+  var v = (document.getElementById('m-sort')?.value || 'meeting_date-desc').split('-');
+  _meetSort.key = v[0]; _meetSort.dir = v[1] || 'desc';
+  filterM();
 }
 
 // ===== ACTIVITY LOG =====
