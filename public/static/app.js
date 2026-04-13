@@ -577,11 +577,17 @@ async function loadDash() {
       // Pipeline summary
       '<div class="card-flat p-5">' +
         '<div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe)"><i class="fas fa-filter text-violet-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">파이프라인 현황</span></div><button class="text-[11px] text-brand-500 font-bold hover:text-brand-600 transition" onclick="showPipelineView()">상세보기 <i class="fas fa-chevron-right text-[8px] ml-0.5"></i></button></div>' +
-        '<div class="flex gap-2 flex-wrap">' + (s.pipelineSummary || []).map(function(p) {
-          var label = pipeLabels[p.pipeline_stage] || p.pipeline_stage || '미설정';
-          var color = pipeColors[p.pipeline_stage] || '#94a3b8';
-          return '<div class="flex-1 min-w-[60px] text-center p-2 rounded-xl" style="background:' + color + '10"><div class="text-lg font-extrabold" style="color:' + color + '">' + p.count + '</div><div class="text-[10px] text-slate-500 font-medium mt-0.5">' + label + '</div></div>';
-        }).join('') + '</div>' +
+        '<div class="flex gap-2 flex-wrap">' + (function() {
+          var pipeOrder = ['contact','meeting','demo','proposal','contract','active_customer'];
+          var pipeMap = {};
+          (s.pipelineSummary || []).forEach(function(p) { pipeMap[p.pipeline_stage] = p.count; });
+          return pipeOrder.map(function(stage) {
+            var label = pipeLabels[stage] || stage;
+            var color = pipeColors[stage] || '#94a3b8';
+            var count = pipeMap[stage] || 0;
+            return '<div class="flex-1 min-w-[60px] text-center p-2 rounded-xl" style="background:' + color + '10"><div class="text-lg font-extrabold" style="color:' + color + '">' + count + '</div><div class="text-[10px] text-slate-500 font-medium mt-0.5">' + label + '</div></div>';
+          }).join('');
+        })() + '</div>' +
       '</div>' +
       '</div>' +
 
