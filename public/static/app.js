@@ -454,7 +454,7 @@ function renderSearchResults(d) {
 
   if (d.hospitals?.length) {
     html += '<div class="search-cat"><i class="fas fa-hospital mr-1"></i>기관</div>';
-    d.hospitals.forEach(h => { html += '<div class="search-item" onclick="hideSearchResults();viewHosp(' + h.id + ')"><div class="si-icon bg-blue-50 text-blue-500"><i class="fas fa-hospital"></i></div><div><div class="font-semibold text-slate-700">' + h.name + '</div><div class="text-[11px] text-slate-400">' + (h.region || '') + ' · ' + (h.grade || '-') + '급</div></div></div>'; });
+    d.hospitals.forEach(h => { html += '<div class="search-item" onclick="hideSearchResults();viewHosp(' + h.id + ')"><div class="si-icon bg-blue-50 text-blue-500"><i class="fas fa-hospital"></i></div><div><div class="font-semibold text-slate-700">' + h.name + '</div><div class="text-[11px] text-slate-400">' + (h.region || '') + '</div></div></div>'; });
   }
   if (d.doctors?.length) {
     html += '<div class="search-cat"><i class="fas fa-user-doctor mr-1"></i>의료진</div>';
@@ -610,7 +610,7 @@ async function loadDash() {
         '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="background:linear-gradient(135deg,#fef2f2 0%,#fff1f2 100%);border-bottom:1px solid #fecaca"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fee2e2,#fecaca)"><i class="fas fa-exclamation-triangle text-red-500 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">장기 미접촉 기관</span><span class="text-[10px] text-red-500 font-bold">30일+ 미팅 없음</span></div></div>' +
         '<div class="border-t border-gray-50 divide-y divide-gray-50">' + s.longInactive.slice(0, 5).map(function(h) {
           return '<div class="px-4 lg:px-6 py-3 flex items-center gap-3 tr cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
-            '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-bold flex-shrink-0 ' + (h.grade === 'S' ? 'bg-amber-100 text-amber-700' : h.grade === 'A' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500') + '">' + (h.grade || '-') + '</div>' +
+            '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-[11px] font-bold flex-shrink-0 bg-slate-100 text-slate-500"><i class="fas fa-hospital text-xs"></i></div>' +
             '<div class="flex-1 min-w-0"><div class="flex items-center gap-2"><span class="font-semibold text-[13px] text-slate-800 truncate">' + h.name + '</span>' + statusDot(h.status) + '</div><div class="text-[11px] text-slate-400">' + (h.region || '-') + '</div></div>' +
             '<div class="text-right flex-shrink-0"><div class="text-[11px] font-bold text-red-500">' + (h.days_since != null ? h.days_since + '일' : '미방문') + '</div></div>' +
             '</div>';
@@ -749,7 +749,7 @@ async function showPipelineView() {
       html += '<div class="space-y-2">';
       s.hospitals.forEach(function(h) {
         html += '<div class="card-flat !p-3 cursor-pointer hover:shadow-md transition" onclick="closeModal();viewHosp(' + h.id + ')" draggable="true" data-hosp-id="' + h.id + '">' +
-          '<div class="flex items-center gap-2 mb-1">' + gradeBadge(h.grade) + '<span class="text-[12px] font-bold text-slate-700 truncate">' + h.name + '</span></div>' +
+          '<div class="flex items-center gap-2 mb-1"><span class="text-[12px] font-bold text-slate-700 truncate">' + h.name + '</span></div>' +
           '<div class="flex items-center justify-between text-[10px] text-slate-400"><span>' + (h.region || '') + '</span><span>' + (h.meeting_count || 0) + '회</span></div></div>';
       });
       if (!s.hospitals.length) html += '<div class="text-center py-6 text-[11px] text-slate-300 border border-dashed border-gray-200 rounded-xl">비어 있음</div>';
@@ -775,9 +775,9 @@ async function loadHosp(typeFilter) {
       '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="기관명 검색" class="input pl-10"></div>' +
       '<select id="h-type" onchange="filterH()" class="input filter-select"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option></select>' +
       '<select id="h-region" onchange="filterH()" class="input filter-select"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
-      '<select id="h-grade" onchange="filterH()" class="input filter-select"><option value="">전체 등급</option><option value="S">S급</option><option value="A">A급</option><option value="B">B급</option><option value="C">C급</option></select>' +
+
       '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="h-fav-only" onchange="filterH()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
-      '<select id="h-sort" onchange="applyHospSort()" class="input filter-select text-[11px] !w-auto !min-w-0"><option value="name-asc">\uc774\ub984 \u2191</option><option value="name-desc">\uc774\ub984 \u2193</option><option value="grade-desc">\ub4f1\uae09 \u2191</option><option value="grade-asc">\ub4f1\uae09 \u2193</option><option value="total_meetings-desc">\ubbf8\ud305 \u2191</option><option value="total_meetings-asc">\ubbf8\ud305 \u2193</option><option value="last_meeting-desc">\ucd5c\uadfc\ubc29\ubb38 \u2191</option><option value="last_meeting-asc">\ucd5c\uadfc\ubc29\ubb38 \u2193</option><option value="doctor_count-desc">\uc758\ub8cc\uc9c4 \u2191</option><option value="doctor_count-asc">\uc758\ub8cc\uc9c4 \u2193</option></select>' +
+      '<select id="h-sort" onchange="applyHospSort()" class="input filter-select text-[11px] !w-auto !min-w-0"><option value="name-asc">\uc774\ub984 \u2191</option><option value="name-desc">\uc774\ub984 \u2193</option><option value="total_meetings-desc">\ubbf8\ud305 \u2191</option><option value="total_meetings-asc">\ubbf8\ud305 \u2193</option><option value="last_meeting-desc">\ucd5c\uadfc\ubc29\ubb38 \u2191</option><option value="last_meeting-asc">\ucd5c\uadfc\ubc29\ubb38 \u2193</option><option value="doctor_count-desc">\uc758\ub8cc\uc9c4 \u2191</option><option value="doctor_count-asc">\uc758\ub8cc\uc9c4 \u2193</option></select>' +
       // View mode switcher
       '<div class="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5 flex-shrink-0">' +
       '<button id="hv-card" class="hv-btn" onclick="setHospView(\'card\')" title="카드뷰"><i class="fas fa-th-large"></i></button>' +
@@ -824,9 +824,9 @@ function renderHCard(el, list) {
   el.className = 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5';
   el.innerHTML = list.map(h => {
     const warn = h.last_meeting ? Math.floor((Date.now() - new Date(h.last_meeting + 'T00:00:00').getTime()) / 86400000) > 30 : '';
-    return '<div class="card accent-' + h.grade + ' p-5 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
+    return '<div class="card p-5 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
       '<div class="flex items-center gap-2 mb-3">' +
-      gradeBadge(h.grade) + todocBadge(h.todoc_contact) +
+      todocBadge(h.todoc_contact) +
       statusDot(h.status) + (warn ? '<span class="ml-auto text-[10px] text-red-400 bg-red-50 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-exclamation-triangle mr-0.5"></i>30일+</span>' : '') +
       '<span class="ml-auto">' + favStar('hospital', h.id) + '</span></div>' +
       '<h3 class="font-bold text-slate-800 text-[15px] mb-1 truncate">' + h.name + '</h3>' +
@@ -847,8 +847,7 @@ function renderHList(el, list) {
   el.innerHTML = '<div class="card-flat p-0 overflow-hidden">' + list.map(function(h) {
     var warn = h.last_meeting ? Math.floor((Date.now() - new Date(h.last_meeting + 'T00:00:00').getTime()) / 86400000) > 30 : false;
     return '<div class="flex items-center gap-3 px-4 lg:px-5 py-3.5 border-b border-gray-50 last:border-0 tr cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
-      '<div class="w-10 h-10 rounded-xl flex items-center justify-center text-sm font-extrabold flex-shrink-0 ' +
-        (h.grade === 'S' ? 'bg-amber-100 text-amber-700' : h.grade === 'A' ? 'bg-blue-100 text-blue-700' : h.grade === 'B' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500') + '">' + (h.grade || '-') + '</div>' +
+      '<div class="w-10 h-10 rounded-xl flex items-center justify-center text-sm flex-shrink-0 bg-brand-50 text-brand-600"><i class="fas fa-hospital text-base"></i></div>' +
       '<div class="flex-1 min-w-0">' +
       '<div class="flex items-center gap-2"><span class="font-bold text-[13px] text-slate-800 truncate">' + h.name + '</span>' + statusDot(h.status) + (warn ? '<span class="text-[9px] text-red-400 bg-red-50 px-1.5 py-0.5 rounded-full font-bold">30일+</span>' : '') + '</div>' +
       '<div class="flex items-center gap-3 mt-0.5 text-[11px] text-slate-400">' +
@@ -869,7 +868,7 @@ function renderHTable(el, list) {
   el.className = '';
   el.innerHTML = '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full text-left">' +
     '<thead><tr class="bg-slate-50 border-b border-gray-200">' +
-    '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">등급</th>' +
+
     '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">기관명</th>' +
     '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500">지역</th>' +
     '<th class="px-3 py-2.5 text-[10px] font-bold text-slate-500 text-center">인원</th>' +
@@ -882,7 +881,7 @@ function renderHTable(el, list) {
     '</tr></thead><tbody>' +
     list.map(function(h) {
       return '<tr class="border-b border-gray-50 tr cursor-pointer hover:bg-slate-50/50" onclick="viewHosp(' + h.id + ')">' +
-        '<td class="px-3 py-2.5">' + gradeBadge(h.grade) + '</td>' +
+
         '<td class="px-3 py-2.5"><span class="font-bold text-[12px] text-slate-800">' + h.name + '</span></td>' +
         '<td class="px-3 py-2.5 text-[11px] text-slate-500">' + (h.region || '-') + '</td>' +
         '<td class="px-3 py-2.5 text-center text-[12px] font-bold text-brand-600">' + (h.doctor_count || 0) + '</td>' +
@@ -1036,9 +1035,9 @@ function renderKoreaMap(counts, grades) {
   return svg;
 }
 function filterH() {
-  const s = (document.getElementById('h-search')?.value || '').toLowerCase(), r = document.getElementById('h-region')?.value || '', g = document.getElementById('h-grade')?.value || '', t = document.getElementById('h-type')?.value || '';
+  const s = (document.getElementById('h-search')?.value || '').toLowerCase(), r = document.getElementById('h-region')?.value || '', t = document.getElementById('h-type')?.value || '';
   const favOnly = document.getElementById('h-fav-only')?.checked || false;
-  var filtered = hospList.filter(h => (!s || h.name.toLowerCase().includes(s)) && (!r || h.region === r) && (!g || h.grade === g) && (!t || h.type === t) && (!favOnly || isFavorited('hospital', h.id)));
+  var filtered = hospList.filter(h => (!s || h.name.toLowerCase().includes(s)) && (!r || h.region === r) && (!t || h.type === t) && (!favOnly || isFavorited('hospital', h.id)));
   renderH(sortList(filtered, _hospSort.key, _hospSort.dir));
 }
 function applyHospSort() {
@@ -1096,7 +1095,7 @@ function renderDetail() {
     '</div>' +
     // Info card
     '<div class="card-flat p-4 lg:p-6">' +
-    '<div class="flex flex-wrap items-center gap-2 mb-4">' + gradeBadge(h.grade) + statusDot(h.status) + '<div class="ml-auto flex items-center gap-4 text-xs text-slate-400">' + (h.phone ? '<span><i class="fas fa-phone mr-1"></i>' + h.phone + '</span>' : '') + '</div></div>' +
+    '<div class="flex flex-wrap items-center gap-2 mb-4">' + statusDot(h.status) + '<div class="ml-auto flex items-center gap-4 text-xs text-slate-400">' + (h.phone ? '<span><i class="fas fa-phone mr-1"></i>' + h.phone + '</span>' : '') + '</div></div>' +
     '<div class="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-3 text-sm">' +
     '<div><span class="text-slate-400 text-xs font-medium">지역</span><p class="font-semibold text-slate-700 mt-0.5">' + (h.region || '-') + '</p></div>' +
     '<div><span class="text-slate-400 text-xs font-medium">주소</span><p class="font-semibold text-slate-700 mt-0.5">' + (h.address || '-') + '</p></div>' +
@@ -1581,7 +1580,7 @@ function renderDocProfile() {
     '<div class="flex-1 pt-2 sm:pt-14">' +
     '<div class="flex flex-wrap items-center gap-2 lg:gap-3 mb-1"><h2 class="text-xl lg:text-2xl font-extrabold text-slate-800">' + d.name + '</h2><span class="text-sm lg:text-base text-slate-400 font-medium">' + (d.position || '') + '</span></div>' +
     '<div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-slate-500">' +
-    (d.hospital_name ? '<span class="flex items-center gap-1.5"><i class="fas fa-hospital text-brand-400"></i><span class="font-semibold cursor-pointer hover:text-brand-600" onclick="viewHosp(' + d.hospital_id + ')">' + d.hospital_name + '</span>' + (d.hospital_grade ? ' <span class="badge grade-' + d.hospital_grade + '" style="font-size:9px;padding:1px 6px">' + d.hospital_grade + '급</span>' : '') + '</span>' : '') +
+    (d.hospital_name ? '<span class="flex items-center gap-1.5"><i class="fas fa-hospital text-brand-400"></i><span class="font-semibold cursor-pointer hover:text-brand-600" onclick="viewHosp(' + d.hospital_id + ')">' + d.hospital_name + '</span></span>' : '') +
     (d.department ? '<span class="flex items-center gap-1.5"><i class="fas fa-stethoscope text-emerald-400"></i>' + d.department + '</span>' : '') +
     (d.specialty ? '<span class="flex items-center gap-1.5"><i class="fas fa-microscope text-purple-400"></i>' + d.specialty + '</span>' : '') +
     '</div></div>' +
@@ -2201,7 +2200,7 @@ async function showHospForm(id) {
     field('유형', 'type', 'select', h.type || 'hospital', [{ v: 'hospital', l: '병원' }, { v: 'clinic', l: '의원' }]) +
     '<div class="relative col-span-full sm:col-span-1"><label class="input-label">이름 *</label><input type="text" name="name" value="' + (h.name || '') + '" class="input" placeholder="기관명을 입력하세요" autocomplete="off"><div id="hosp-suggest" class="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-60 overflow-y-auto"></div></div>' +
     field('지역', 'region', 'text', h.region) + field('주소', 'address', 'text', h.address) + field('전화번호', 'phone', 'tel', h.phone) +
-    field('등급', 'grade', 'select', h.grade, [{ v: 'S', l: 'S급' }, { v: 'A', l: 'A급' }, { v: 'B', l: 'B급' }, { v: 'C', l: 'C급' }]) +
+
     field('병원코드', 'status', 'select', h.status, [{ v: 'active', l: '등록완료' }, { v: 'inactive', l: '미등록' }]) +
 
     field('토닥접점', 'todoc_contact', 'select', h.todoc_contact || 'X', [{ v: 'O', l: 'O (접점)' }, { v: '△', l: '△ (일부)' }, { v: 'X', l: 'X (미접점)' }]) +
@@ -3838,7 +3837,6 @@ function schTimeCard(s, list) {
           '<div class="flex items-center gap-2 flex-wrap">' +
             '<h4 class="font-bold text-slate-800 text-sm">' + s.name + '</h4>' +
             '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500"><i class="fas fa-map-marker-alt text-[8px] mr-0.5"></i>' + s.region + '</span>' +
-            '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style="background:' + (gradeColors[s.grade] || '#94a3b8') + '15;color:' + (gradeColors[s.grade] || '#94a3b8') + '">' + s.grade + '</span>' +
             '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md" style="background:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '12;color:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '">' + (stageLabels[s.pipeline_stage] || s.pipeline_stage) + '</span>' +
             (s.visit_time ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100"><i class="fas fa-clock mr-0.5"></i>' + s.visit_label + '</span>' : '') +
           '</div>';
