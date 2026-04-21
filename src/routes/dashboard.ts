@@ -78,12 +78,12 @@ dashboard.get('/', async (c) => {
         )
       ORDER BY sort_date ASC LIMIT 20
     `).all(),
-    // This week's meetings (Mon-Sun)
+    // This week's meetings (Mon-Sun) — only today and future, exclude past dates
     c.env.DB.prepare(`
       SELECT m.*, h.name as hospital_name
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
-      WHERE (m.meeting_date >= date('now','+9 hours','weekday 1','-7 days') AND m.meeting_date <= date('now','+9 hours','weekday 0'))
-         OR (m.next_meeting_date >= date('now','+9 hours','weekday 1','-7 days') AND m.next_meeting_date <= date('now','+9 hours','weekday 0'))
+      WHERE (m.meeting_date >= date('now','+9 hours') AND m.meeting_date >= date('now','+9 hours','weekday 1','-7 days') AND m.meeting_date <= date('now','+9 hours','weekday 0'))
+         OR (m.next_meeting_date >= date('now','+9 hours') AND m.next_meeting_date >= date('now','+9 hours','weekday 1','-7 days') AND m.next_meeting_date <= date('now','+9 hours','weekday 0'))
       ORDER BY COALESCE(m.next_meeting_date, m.meeting_date) ASC LIMIT 15
     `).all(),
     // Long-inactive hospitals (last meeting > 30 days ago or never)

@@ -1236,7 +1236,7 @@ function renderMeetingsTab(h, meets) {
       (m.content ? '<div class="text-xs text-slate-500 leading-relaxed mb-2 bg-slate-50 rounded-lg p-3">' + m.content + '</div>' : '') +
       '<div class="flex flex-wrap gap-2">' +
       (m.result ? '<div class="text-xs text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-check-circle mr-1.5"></i><strong>결과:</strong> ' + m.result + '</div>' : '') +
-      (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + (m.next_meeting_date ? ' <span class="font-bold">(' + fmtShort(m.next_meeting_date) + ')</span>' : '') + '</div>' : '') +
+      (m.next_action ? '<div class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 flex-1 meet-result-card"><i class="fas fa-arrow-right mr-1.5"></i><strong>후속:</strong> ' + m.next_action + (m.next_meeting_date ? ' <span class="font-bold' + (daysUntil(m.next_meeting_date) < 0 ? ' text-red-500 line-through' : '') + '">(' + fmtShort(m.next_meeting_date) + ')</span>' : '') + '</div>' : '') +
       '</div></div></div>';
   }).join('') + '</div>';
 }
@@ -2726,8 +2726,12 @@ function showMeetDetail(m) {
       '<div class="text-sm text-amber-700 leading-relaxed bg-amber-50 rounded-xl p-3.5"><i class="fas fa-arrow-right mr-1.5 text-amber-500"></i>' + m.next_action + '</div></div>';
   }
   if (m.next_meeting_date) {
+    var nextDu = daysUntil(m.next_meeting_date);
+    var nextLabel = nextDu < 0 ? '미팅 예정일 지남 (' + fmtShort(m.next_meeting_date) + ')' : fmtShort(m.next_meeting_date) + (nextDu === 0 ? ' (오늘)' : nextDu === 1 ? ' (내일)' : ' (' + nextDu + '일 후)');
+    var nextColor = nextDu < 0 ? 'text-red-600 bg-red-50' : 'text-blue-700 bg-blue-50';
+    var nextIcon = nextDu < 0 ? 'fa-exclamation-circle text-red-500' : 'fa-calendar-day text-blue-500';
     sections += '<div class="mb-4"><div class="text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider">다음 미팅 예정</div>' +
-      '<div class="text-sm text-blue-700 leading-relaxed bg-blue-50 rounded-xl p-3.5"><i class="fas fa-calendar-day mr-1.5 text-blue-500"></i>' + fmtShort(m.next_meeting_date) + '</div></div>';
+      '<div class="text-sm leading-relaxed rounded-xl p-3.5 ' + nextColor + '"><i class="fas ' + nextIcon + ' mr-1.5"></i>' + nextLabel + '</div></div>';
   }
   
   if (!sections && !m.purpose) {
