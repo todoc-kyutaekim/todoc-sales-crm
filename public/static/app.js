@@ -1102,6 +1102,45 @@ function renderDetail() {
     '</div>' +
     (h.notes ? '<div class="mt-5 bg-amber-50/70 rounded-xl p-4 text-[13px] text-amber-800 leading-relaxed"><i class="fas fa-lightbulb text-amber-400 mr-1.5"></i>' + h.notes + '</div>' : '') +
     '</div>' +
+    // Audiology/Mapping Room Info
+    '<div class="card-flat p-4 lg:p-6">' +
+    '<div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-ear-listen text-cyan-600 text-xs"></i></div><span class="font-bold text-sm text-slate-800">청각실 / 매핑실 정보</span></div><button class="text-[11px] text-brand-500 font-bold hover:text-brand-600 transition" onclick="editRoomInfo(' + h.id + ')"><i class="fas fa-pen text-[9px] mr-0.5"></i>편집</button></div>' +
+    (function() {
+      var aud = h.audiology_room ? (typeof h.audiology_room === 'string' ? (function(){ try { return JSON.parse(h.audiology_room) } catch(e) { return null } })() : h.audiology_room) : null;
+      var mp = h.mapping_room ? (typeof h.mapping_room === 'string' ? (function(){ try { return JSON.parse(h.mapping_room) } catch(e) { return null } })() : h.mapping_room) : null;
+      if (!aud && !mp) return '<div class="text-sm text-slate-400 text-center py-4"><i class="fas fa-info-circle text-slate-300 mr-1"></i>등록된 정보가 없습니다. 편집 버튼을 눌러 추가하세요.</div>';
+      var html = '<div class="grid grid-cols-1 sm:grid-cols-2 gap-4">';
+      // Audiology room
+      html += '<div class="rounded-xl border border-cyan-100 p-4 ' + (aud && aud.exists ? 'bg-cyan-50/40' : 'bg-slate-50') + '">';
+      html += '<div class="flex items-center gap-2 mb-3"><i class="fas fa-headphones text-cyan-500"></i><span class="font-bold text-[13px] text-slate-700">청각실 (청력검사실)</span>';
+      html += aud && aud.exists ? '<span class="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">있음</span>' : '<span class="text-[10px] bg-slate-200 text-slate-500 px-2 py-0.5 rounded-full font-bold">없음</span>';
+      html += '</div>';
+      if (aud && aud.exists) {
+        html += '<div class="space-y-2 text-[12px]">';
+        if (aud.location) html += '<div class="flex items-center gap-2"><i class="fas fa-map-pin text-slate-300 w-4 text-center"></i><span class="text-slate-600"><strong>위치:</strong> ' + aud.location + '</span></div>';
+        if (aud.staff_count) html += '<div class="flex items-center gap-2"><i class="fas fa-users text-slate-300 w-4 text-center"></i><span class="text-slate-600"><strong>인원:</strong> ' + aud.staff_count + '명</span></div>';
+        if (aud.meeting_type) html += '<div class="flex items-center gap-2"><i class="fas fa-handshake text-slate-300 w-4 text-center"></i><span class="text-slate-600"><strong>미팅:</strong> ' + aud.meeting_type + '</span></div>';
+        if (aud.notes) html += '<div class="flex items-start gap-2"><i class="fas fa-sticky-note text-slate-300 w-4 text-center mt-0.5"></i><span class="text-slate-500">' + aud.notes + '</span></div>';
+        html += '</div>';
+      }
+      html += '</div>';
+      // Mapping room
+      html += '<div class="rounded-xl border border-violet-100 p-4 ' + (mp && mp.exists ? 'bg-violet-50/40' : 'bg-slate-50') + '">';
+      html += '<div class="flex items-center gap-2 mb-3"><i class="fas fa-microchip text-violet-500"></i><span class="font-bold text-[13px] text-slate-700">매핑실</span>';
+      html += mp && mp.exists ? '<span class="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">있음</span>' : '<span class="text-[10px] bg-slate-200 text-slate-500 px-2 py-0.5 rounded-full font-bold">없음</span>';
+      html += '</div>';
+      if (mp && mp.exists) {
+        html += '<div class="space-y-2 text-[12px]">';
+        if (mp.location) html += '<div class="flex items-center gap-2"><i class="fas fa-map-pin text-slate-300 w-4 text-center"></i><span class="text-slate-600"><strong>위치:</strong> ' + mp.location + '</span></div>';
+        if (mp.staff_count) html += '<div class="flex items-center gap-2"><i class="fas fa-users text-slate-300 w-4 text-center"></i><span class="text-slate-600"><strong>인원:</strong> ' + mp.staff_count + '명</span></div>';
+        if (mp.meeting_type) html += '<div class="flex items-center gap-2"><i class="fas fa-handshake text-slate-300 w-4 text-center"></i><span class="text-slate-600"><strong>미팅:</strong> ' + mp.meeting_type + '</span></div>';
+        if (mp.notes) html += '<div class="flex items-start gap-2"><i class="fas fa-sticky-note text-slate-300 w-4 text-center mt-0.5"></i><span class="text-slate-500">' + mp.notes + '</span></div>';
+        html += '</div>';
+      }
+      html += '</div></div>';
+      return html;
+    })() +
+    '</div>' +
     '<div class="flex border-b border-gray-100 px-1 overflow-x-auto">' +
     '<div class="tab ' + (detailTab === 'doctors' ? 'active' : '') + '" onclick="detailTab=\'doctors\';renderDetail()"><i class="fas fa-user-doctor text-xs"></i>인원 (' + docs.length + ')</div>' +
     '<div class="tab ' + (detailTab === 'meetings' ? 'active' : '') + '" onclick="detailTab=\'meetings\';renderDetail()"><i class="fas fa-calendar-check text-xs"></i>미팅 (' + meets.length + ')</div>' +
@@ -2342,6 +2381,47 @@ async function showHospForm(id) {
   }
   document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.name) { toast('이름을 입력하세요', 'warn'); return } try { if (id) { await API.put('/hospitals/' + id, f); toast('정보 수정됨') } else { await API.post('/hospitals', f); toast('새 항목 추가됨') } closeModal(); if (id) viewHosp(id); else loadHosp() } catch (e) { toast('저장 실패', 'err') } };
   setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
+}
+async function editRoomInfo(hospId) {
+  let h = {};
+  try { h = (await API.get('/hospitals/' + hospId)).data.data || {} } catch(e) {}
+  var aud = h.audiology_room ? (typeof h.audiology_room === 'string' ? (function(){ try { return JSON.parse(h.audiology_room) } catch(e) { return {} } })() : h.audiology_room) : {};
+  var mp = h.mapping_room ? (typeof h.mapping_room === 'string' ? (function(){ try { return JSON.parse(h.mapping_room) } catch(e) { return {} } })() : h.mapping_room) : {};
+  if (!aud) aud = {};
+  if (!mp) mp = {};
+  openModal('청각실 / 매핑실 정보 편집',
+    '<form id="fm" class="space-y-6">' +
+    '<div class="bg-cyan-50/50 rounded-xl p-4 border border-cyan-100">' +
+    '<div class="flex items-center gap-2 mb-3"><i class="fas fa-headphones text-cyan-500"></i><span class="font-bold text-[14px] text-slate-700">청각실 (청력검사실)</span></div>' +
+    '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+    '<div><label class="input-label">유무</label><select name="aud_exists" class="input"><option value="true"' + (aud.exists ? ' selected' : '') + '>있음</option><option value="false"' + (!aud.exists ? ' selected' : '') + '>없음</option></select></div>' +
+    '<div><label class="input-label">위치</label><input type="text" name="aud_location" value="' + (aud.location || '') + '" class="input" placeholder="예: 본관 3층"></div>' +
+    '<div><label class="input-label">인원 수</label><input type="number" name="aud_staff_count" value="' + (aud.staff_count || '') + '" class="input" min="0" placeholder="예: 2"></div>' +
+    '<div><label class="input-label">미팅 유형</label><input type="text" name="aud_meeting_type" value="' + (aud.meeting_type || '') + '" class="input" placeholder="예: 장비설명회, 데모"></div>' +
+    '<div class="col-span-full"><label class="input-label">메모</label><textarea name="aud_notes" class="input" rows="2" placeholder="청각실 관련 메모">' + (aud.notes || '') + '</textarea></div>' +
+    '</div></div>' +
+    '<div class="bg-violet-50/50 rounded-xl p-4 border border-violet-100">' +
+    '<div class="flex items-center gap-2 mb-3"><i class="fas fa-microchip text-violet-500"></i><span class="font-bold text-[14px] text-slate-700">매핑실</span></div>' +
+    '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+    '<div><label class="input-label">유무</label><select name="mp_exists" class="input"><option value="true"' + (mp.exists ? ' selected' : '') + '>있음</option><option value="false"' + (!mp.exists ? ' selected' : '') + '>없음</option></select></div>' +
+    '<div><label class="input-label">위치</label><input type="text" name="mp_location" value="' + (mp.location || '') + '" class="input" placeholder="예: 별관 2층"></div>' +
+    '<div><label class="input-label">인원 수</label><input type="number" name="mp_staff_count" value="' + (mp.staff_count || '') + '" class="input" min="0" placeholder="예: 1"></div>' +
+    '<div><label class="input-label">미팅 유형</label><input type="text" name="mp_meeting_type" value="' + (mp.meeting_type || '') + '" class="input" placeholder="예: CI 매핑교육, 프로그래밍"></div>' +
+    '<div class="col-span-full"><label class="input-label">메모</label><textarea name="mp_notes" class="input" rows="2" placeholder="매핑실 관련 메모">' + (mp.notes || '') + '</textarea></div>' +
+    '</div></div>' +
+    '<div class="flex justify-end gap-2 pt-3 border-t border-gray-50"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">저장</button></div></form>', true);
+  document.getElementById('fm').onsubmit = async function(e) {
+    e.preventDefault();
+    var f = new FormData(e.target);
+    var audData = JSON.stringify({ exists: f.get('aud_exists') === 'true', location: f.get('aud_location') || '', staff_count: parseInt(f.get('aud_staff_count')) || 0, meeting_type: f.get('aud_meeting_type') || '', notes: f.get('aud_notes') || '' });
+    var mpData = JSON.stringify({ exists: f.get('mp_exists') === 'true', location: f.get('mp_location') || '', staff_count: parseInt(f.get('mp_staff_count')) || 0, meeting_type: f.get('mp_meeting_type') || '', notes: f.get('mp_notes') || '' });
+    try {
+      await API.put('/hospitals/' + hospId, Object.assign({}, h, { audiology_room: audData, mapping_room: mpData }));
+      toast('청각실/매핑실 정보가 저장되었습니다');
+      closeModal();
+      viewHosp(hospId);
+    } catch(err) { toast('저장 실패', 'err'); }
+  };
 }
 async function showDocForm(hid, did) {
   let d = { name: '', department: '이비인후과', position: '', phone: '', email: '', specialty: '', influence_level: 'medium', notes: '', hospital_id: hid, bio: '', education: '', career: '', clinic_hours: '', profile_url: '' };
