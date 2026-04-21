@@ -232,7 +232,7 @@ meetings.patch('/:id', async (c) => {
 // Quick list of hospitals + doctors for global meeting form
 meetings.get('/form-data', async (c) => {
   const [hosps, docs, users] = await Promise.all([
-    c.env.DB.prepare('SELECT id, name, region FROM hospitals WHERE status="active" ORDER BY name').all(),
+    c.env.DB.prepare('SELECT id, name, region FROM hospitals ORDER BY name').all(),
     c.env.DB.prepare('SELECT d.id, d.name, d.hospital_id, d.position, h.name as hospital_name FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id ORDER BY d.name').all(),
     c.env.DB.prepare('SELECT id, name, email FROM users ORDER BY name').all(),
   ])

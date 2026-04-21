@@ -2610,9 +2610,9 @@ async function showNewMeetGlobal() {
     var newMeetUserCbs = '<div class="col-span-full"><label class="input-label"><i class="fas fa-user-tie mr-1 text-slate-400"></i>영업사원 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1">' + usersList.map(function(u) { var ck = (currentUser && currentUser.id === u.id) ? ' checked' : ''; return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 cursor-pointer transition"><input type="checkbox" name="user_ids" value="' + u.id + '" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"' + ck + '><span class="text-[13px] font-medium text-slate-700">' + u.name + '</span></label>'; }).join('') + '</div></div>';
     document.getElementById('modal-body').innerHTML = 
       '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
-      '<div><label class="input-label">병원 *</label><select name="hospital_id" id="nm-hosp" class="input" onchange="updateNewMeetDocs()"><option value="">-- 병원 선택 --</option>' + hospOpts + '</select></div>' +
+      '<div><label class="input-label">기관 *</label><select name="hospital_id" id="nm-hosp" class="input" onchange="updateNewMeetDocs()"><option value="">-- 기관 선택 --</option>' + hospOpts + '</select></div>' +
       newMeetUserCbs +
-      '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div></div></div>' +
+      '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 기관을 선택하세요</div></div></div>' +
       field('미팅일자 *', 'meeting_date', 'date', new Date().toISOString().split('T')[0]) +
       field('유형', 'meeting_type', 'select', 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
       field('목적', 'purpose', 'text', '') +
@@ -2623,7 +2623,7 @@ async function showNewMeetGlobal() {
     document.getElementById('fm').onsubmit = async e => {
       e.preventDefault();
       const f = Object.fromEntries(new FormData(e.target));
-      if (!f.hospital_id) { toast('병원을 선택하세요', 'warn'); return }
+      if (!f.hospital_id) { toast('기관을 선택하세요', 'warn'); return }
       const doctorIds = Array.from(document.querySelectorAll('#nm-doc-list input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
       if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
@@ -2636,7 +2636,7 @@ async function showNewMeetGlobal() {
 function updateNewMeetDocs() {
   const hid = document.getElementById('nm-hosp')?.value;
   const container = document.getElementById('nm-doc-list');
-  if (!hid || !container) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">먼저 병원을 선택하세요</div>'; return }
+  if (!hid || !container) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">먼저 기관을 선택하세요</div>'; return }
   const docs = (window._newMeetDocs || []).filter(d => String(d.hospital_id) === String(hid));
   if (!docs.length) { container.innerHTML = '<div class="text-sm text-slate-400 text-center py-3">소속 의료진이 없습니다</div>'; return }
   container.innerHTML = '<div class="space-y-1">' + docs.map(function(d) {
