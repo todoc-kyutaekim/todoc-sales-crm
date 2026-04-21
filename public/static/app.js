@@ -543,8 +543,9 @@ async function loadDash() {
           const urgency = du <= 1 ? 'bg-red-500/30 border-red-400/50' : du <= 3 ? 'bg-amber-500/20 border-amber-400/40' : 'bg-white/10 border-white/20';
           const typeLabel = r.reminder_type === 'scheduled' ? '<span class="ml-1 text-[9px] px-1.5 py-0.5 rounded bg-white/15 text-white/80">플래너</span>' : '';
           const userLabel = r.user_names ? '<span class="text-white/50 text-[10px] ml-1">[' + r.user_names + ']</span>' : '';
+          const todayBtn = du === 0 ? '<button class="ml-2 px-2 py-0.5 rounded bg-white/25 hover:bg-white/40 text-white text-[10px] font-bold transition" onclick="event.stopPropagation();showMeetFormGlobal(' + r.hospital_id + ',' + JSON.stringify(r.doctor_ids || []).replace(/"/g, '&quot;') + ',' + r.id + ')"><i class="fas fa-pen mr-0.5"></i>작성</button>' : '';
           return '<div class="flex items-center gap-3 px-3 py-2 rounded-lg border ' + urgency + ' cursor-pointer" onclick="viewHosp(' + r.hospital_id + ')">' +
-            '<div class="text-white/90 text-sm flex-1 min-w-0 truncate"><span class="font-semibold">' + meetDoctorNames(r) + '</span>' + (r.doctors && r.doctors.length > 1 ? '<span class="text-[10px] text-white/50 ml-1">(' + r.doctors.length + '명)</span>' : '') + typeLabel + userLabel + ' <span class="text-white/60">· ' + (r.hospital_name || '') + '</span></div>' +
+            '<div class="text-white/90 text-sm flex-1 min-w-0 truncate"><span class="font-semibold">' + meetDoctorNames(r) + '</span>' + (r.doctors && r.doctors.length > 1 ? '<span class="text-[10px] text-white/50 ml-1">(' + r.doctors.length + '명)</span>' : '') + typeLabel + userLabel + ' <span class="text-white/60">· ' + (r.hospital_name || '') + '</span>' + todayBtn + '</div>' +
             '<div class="text-right flex-shrink-0"><div class="text-white font-bold text-sm">' + fmtShort(rdate) + '</div><div class="text-white/70 text-[10px]">' + (du === 0 ? '오늘!' : du === 1 ? '내일' : du + '일 후') + '</div></div></div>'
         }).join('') + '</div></div>' : '') +
 
@@ -825,7 +826,7 @@ function renderHCard(el, list) {
     const warn = h.last_meeting ? Math.floor((Date.now() - new Date(h.last_meeting + 'T00:00:00').getTime()) / 86400000) > 30 : '';
     return '<div class="card accent-' + h.grade + ' p-5 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
       '<div class="flex items-center gap-2 mb-3">' +
-      gradeBadge(h.grade) + priorityStars(h.priority) + todocBadge(h.todoc_contact) +
+      gradeBadge(h.grade) + todocBadge(h.todoc_contact) +
       statusDot(h.status) + (warn ? '<span class="ml-auto text-[10px] text-red-400 bg-red-50 px-2 py-0.5 rounded-full font-semibold"><i class="fas fa-exclamation-triangle mr-0.5"></i>30일+</span>' : '') +
       '<span class="ml-auto">' + favStar('hospital', h.id) + '</span></div>' +
       '<h3 class="font-bold text-slate-800 text-[15px] mb-1 truncate">' + h.name + '</h3>' +
@@ -1090,7 +1091,7 @@ function renderDetail() {
     '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-ear-listen text-slate-300 mr-0.5"></i>난청환자</div><div class="text-lg font-extrabold text-blue-600">' + (h.patient_count || 0) + '</div></div>' +
     '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-headphones text-slate-300 mr-0.5"></i>보청기</div><div class="text-lg font-extrabold text-teal-600">' + (h.hearing_aid_sales || 0) + '</div></div>' +
     '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-microchip text-slate-300 mr-0.5"></i>CI의뢰</div><div class="text-lg font-extrabold text-violet-600">' + (h.ci_referrals || 0) + '</div></div>' +
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">우선순위</div><div class="mt-1">' + priorityStars(h.priority) + '</div></div>' +
+
     '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">토닥접점</div><div class="mt-1">' + todocBadge(h.todoc_contact) + '</div></div>' +
     '</div>' +
     // Info card
@@ -1122,7 +1123,7 @@ function renderDoctorsTab(h, docs) {
     '<div class="photo-ov" style="border-radius:14px"><i class="fas fa-camera"></i></div></div>' +
     '<input type="file" id="pi-' + d.id + '" accept="image/*" style="display:none" onchange="uploadPhoto(' + d.id + ',' + h.id + ',this)">' +
     '<div class="flex-1 min-w-0">' +
-    '<div class="flex items-center gap-2 mb-1"><span class="font-bold text-[14px] text-slate-800">' + d.name + '</span><span class="text-xs text-slate-400">' + (d.position || '') + '</span>' + infBadge(d.influence_level) + '</div>' +
+    '<div class="flex items-center gap-2 mb-1"><span class="font-bold text-[14px] text-slate-800">' + d.name + '</span><span class="text-xs text-slate-400">' + (d.position || '') + '</span></div>' +
     '<div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400 mb-2">' + (d.department ? '<span><i class="fas fa-stethoscope mr-1 text-slate-300"></i>' + d.department + '</span>' : '') + (d.specialty ? '<span class="hidden sm:inline"><i class="fas fa-microscope mr-1 text-slate-300"></i>' + d.specialty + '</span>' : '') + '</div>' +
     '<div class="flex items-center gap-3 text-[11px]"><span class="text-slate-400"><i class="fas fa-handshake mr-1"></i>' + (d.meeting_count || 0) + '회</span>' + (d.last_meeting ? '<span class="' + daysClass(d.last_meeting) + '"><i class="fas fa-clock mr-1"></i>' + daysAgo(d.last_meeting) + '</span>' : '') + (d.clinic_hours ? '<span class="text-cyan-500"><i class="fas fa-calendar-days mr-1"></i>외래</span>' : '') + '</div></div>' +
     '<div class="flex flex-col gap-1 flex-shrink-0">' +
@@ -1300,7 +1301,6 @@ async function fetchAIDoctors(hid) {
           '<input type="checkbox" class="ai-doc-chk w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500" data-idx="' + i + '"' + (exists ? ' disabled' : ' checked') + '>' +
           '<div class="flex-1 min-w-0">' +
           '<div class="flex items-center gap-2"><span class="font-semibold text-[13px] text-slate-800">' + d.name + '</span><span class="text-xs text-slate-400">' + (d.position || '') + '</span>' +
-          infBadge(d.influence_level) +
           (exists ? '<span class="text-[10px] text-orange-500 bg-orange-50 px-2 py-0.5 rounded-full font-medium">이미 등록됨</span>' : '') + '</div>' +
           '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-microscope mr-1 text-slate-300"></i>' + (d.specialty || '전문분야 미상') + '</div>' +
           (d.notes ? '<div class="text-[10px] text-violet-500 mt-0.5 bg-violet-50 rounded px-1.5 py-0.5 inline-block"><i class="fas fa-newspaper mr-1"></i>' + d.notes + '</div>' : '') +
@@ -1494,7 +1494,7 @@ async function loadDoc() {
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="filter-row">' +
       '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="의료진명/병원명" class="input pl-10"></div>' +
-      '<select id="d-inf" onchange="filterD()" class="input filter-select"><option value="">전체</option><option value="high">핵심</option><option value="medium">주요</option><option value="low">일반</option></select>' +
+
       '<select id="d-dept" onchange="filterD()" class="input filter-select"><option value="">전체 진료과</option>' + depts.map(dp => '<option>' + dp + '</option>').join('') + '</select>' +
       '<select id="d-visit" onchange="filterD()" class="input filter-select"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
       '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="d-fav-only" onchange="filterD()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
@@ -1513,7 +1513,7 @@ function renderDR(list) {
     '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'hospital_name\',filterD)">소속 병원' + sortIcon('hospital_name', _docSort) + '</th>' +
     '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'department\',filterD)">진료과' + sortIcon('department', _docSort) + '</th>' +
     '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'specialty\',filterD)">전문분야' + sortIcon('specialty', _docSort) + '</th>' +
-    '<th class="px-4 py-3.5 text-center ' + thCls + '" onclick="toggleSort(_docSort,\'influence_level\',filterD)">영향력' + sortIcon('influence_level', _docSort) + '</th>' +
+
     '<th class="px-4 py-3.5 text-center ' + thCls + '" onclick="toggleSort(_docSort,\'meeting_count\',filterD)">미팅' + sortIcon('meeting_count', _docSort) + '</th>' +
     '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'last_meeting\',filterD)">최근' + sortIcon('last_meeting', _docSort) + '</th></tr>';
   document.getElementById('d-tbody').innerHTML = list.map(d =>
@@ -1522,20 +1522,18 @@ function renderDR(list) {
     '<td class="px-4 py-3.5 text-[13px] text-slate-600">' + (d.hospital_name || '-') + '</td>' +
     '<td class="px-4 py-3.5 text-[13px] text-slate-500 hide-mobile">' + (d.department || '-') + '</td>' +
     '<td class="px-4 py-3.5 text-[13px] text-slate-500 hide-mobile">' + (d.specialty || '-') + '</td>' +
-    '<td class="px-4 py-3.5 text-center">' + infBadge(d.influence_level) + '</td>' +
+
     '<td class="px-4 py-3.5 text-center text-[13px] font-bold text-slate-700">' + (d.meeting_count || 0) + '</td>' +
     '<td class="px-4 py-3.5"><div class="text-[13px] text-slate-600">' + (d.last_meeting ? fmtShort(d.last_meeting) : '-') + '</div>' + (d.last_meeting ? '<div class="text-[10px] ' + daysClass(d.last_meeting) + '">' + daysAgo(d.last_meeting) + '</div>' : '') + '</td></tr>'
   ).join('');
 }
 function filterD() {
   const q = (document.getElementById('d-search')?.value || '').toLowerCase();
-  const inf = document.getElementById('d-inf')?.value || '';
   const dept = document.getElementById('d-dept')?.value || '';
   const vis = document.getElementById('d-visit')?.value || '';
   const favOnly = document.getElementById('d-fav-only')?.checked || false;
   renderDR(sortList(docList.filter(d => {
     if (q && !d.name.toLowerCase().includes(q) && !(d.hospital_name || '').toLowerCase().includes(q)) return false;
-    if (inf && d.influence_level !== inf) return false;
     if (dept && d.department !== dept) return false;
     if (favOnly && !isFavorited('doctor', d.id)) return false;
     if (vis) {
@@ -1581,7 +1579,7 @@ function renderDocProfile() {
     '<div class="photo-ov" style="border-radius:12px"><i class="fas fa-camera text-lg"></i>' + (d.photo ? '<br><i class="fas fa-trash text-xs mt-1" onclick="event.stopPropagation();delProfilePhoto(' + d.id + ')"></i>' : '') + '</div></div>' +
     '<input type="file" id="pi-profile" accept="image/*" style="display:none" onchange="uploadProfilePhoto(' + d.id + ',this)">' +
     '<div class="flex-1 pt-2 sm:pt-14">' +
-    '<div class="flex flex-wrap items-center gap-2 lg:gap-3 mb-1"><h2 class="text-xl lg:text-2xl font-extrabold text-slate-800">' + d.name + '</h2><span class="text-sm lg:text-base text-slate-400 font-medium">' + (d.position || '') + '</span>' + infBadge(d.influence_level) + '</div>' +
+    '<div class="flex flex-wrap items-center gap-2 lg:gap-3 mb-1"><h2 class="text-xl lg:text-2xl font-extrabold text-slate-800">' + d.name + '</h2><span class="text-sm lg:text-base text-slate-400 font-medium">' + (d.position || '') + '</span></div>' +
     '<div class="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-slate-500">' +
     (d.hospital_name ? '<span class="flex items-center gap-1.5"><i class="fas fa-hospital text-brand-400"></i><span class="font-semibold cursor-pointer hover:text-brand-600" onclick="viewHosp(' + d.hospital_id + ')">' + d.hospital_name + '</span>' + (d.hospital_grade ? ' <span class="badge grade-' + d.hospital_grade + '" style="font-size:9px;padding:1px 6px">' + d.hospital_grade + '급</span>' : '') + '</span>' : '') +
     (d.department ? '<span class="flex items-center gap-1.5"><i class="fas fa-stethoscope text-emerald-400"></i>' + d.department + '</span>' : '') +
@@ -1624,7 +1622,7 @@ function renderProfileOverview(d) {
   if (d.notes) { html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-sticky-note text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">영업 메모</span></div><div class="bg-amber-50/70 rounded-xl p-4 text-[13px] text-amber-800 leading-relaxed"><i class="fas fa-lightbulb text-amber-400 mr-1.5"></i>' + d.notes + '</div></div>'; }
   html += renderClinicHours(d.clinic_hours);
   html += '</div><div class="lg:col-span-2 space-y-5">';
-  html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-id-card text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기본 정보</span></div><div class="space-y-3">' + infoRow('이름', d.name) + infoRow('직위', d.position) + infoRow('진료과', d.department) + infoRow('전문분야', d.specialty) + infoRow('소속 병원', d.hospital_name) + infoRow('지역', d.hospital_region) + '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">영향력</span><span>' + infBadge(d.influence_level) + '</span></div>' + (d.profile_url ? '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">프로필 링크</span><a href="' + d.profile_url + '" target="_blank" rel="noopener" class="text-[12px] text-cyan-600 hover:underline truncate max-w-[160px]"><i class="fas fa-external-link-alt mr-1 text-[10px]"></i>바로가기</a></div>' : '') + '</div></div>';
+  html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center"><i class="fas fa-id-card text-blue-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기본 정보</span></div><div class="space-y-3">' + infoRow('이름', d.name) + infoRow('직위', d.position) + infoRow('진료과', d.department) + infoRow('전문분야', d.specialty) + infoRow('소속 병원', d.hospital_name) + infoRow('지역', d.hospital_region) + (d.profile_url ? '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">프로필 링크</span><a href="' + d.profile_url + '" target="_blank" rel="noopener" class="text-[12px] text-cyan-600 hover:underline truncate max-w-[160px]"><i class="fas fa-external-link-alt mr-1 text-[10px]"></i>바로가기</a></div>' : '') + '</div></div>';
   if (d.papers?.length) { html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-purple-50 flex items-center justify-center"><i class="fas fa-file-lines text-purple-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">최근 논문</span></div><span class="text-[11px] text-brand-500 font-semibold cursor-pointer" onclick="profileTab=\'papers\';renderDocProfile()">전체 &rarr;</span></div>' + d.papers.slice(0, 3).map(p => '<div class="py-2.5 border-b border-gray-50 last:border-0">' + (p.url ? '<a href="' + p.url + '" target="_blank" rel="noopener noreferrer" class="text-[13px] font-semibold text-brand-600 hover:text-brand-800 leading-snug mb-1 line-clamp-2 block transition-colors"><i class="fas fa-link text-[10px] mr-1 text-brand-400"></i>' + p.title + '</a>' : '<div class="text-[13px] font-semibold text-slate-700 leading-snug mb-1 line-clamp-2">' + p.title + '</div>') + '<div class="text-[11px] text-slate-400">' + p.journal + (p.year ? ' &middot; ' + p.year : '') + '</div></div>').join('') + '</div>'; }
   if (d.meetings?.length) { html += '<div class="card-flat p-5 lg:p-6"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-calendar-check text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">최근 미팅</span></div><span class="text-[11px] text-brand-500 font-semibold cursor-pointer" onclick="profileTab=\'meetings\';renderDocProfile()">전체 &rarr;</span></div>' + d.meetings.slice(0, 3).map(m => '<div class="py-2.5 border-b border-gray-50 last:border-0 flex items-center gap-3">' + mtBadge(m.meeting_type) + '<div class="flex-1 min-w-0"><div class="text-[13px] font-medium text-slate-700 truncate">' + (m.purpose || '미팅') + '</div><div class="text-[11px] text-slate-400">' + fmtShort(m.meeting_date) + '</div></div></div>').join('') + '</div>'; }
   html += '</div></div>';
@@ -2205,7 +2203,7 @@ async function showHospForm(id) {
     field('지역', 'region', 'text', h.region) + field('주소', 'address', 'text', h.address) + field('전화번호', 'phone', 'tel', h.phone) +
     field('등급', 'grade', 'select', h.grade, [{ v: 'S', l: 'S급' }, { v: 'A', l: 'A급' }, { v: 'B', l: 'B급' }, { v: 'C', l: 'C급' }]) +
     field('병원코드', 'status', 'select', h.status, [{ v: 'active', l: '등록완료' }, { v: 'inactive', l: '미등록' }]) +
-    field('우선순위', 'priority', 'select', h.priority, [{ v: '5', l: '★★★★★' }, { v: '4', l: '★★★★' }, { v: '3', l: '★★★' }, { v: '2', l: '★★' }, { v: '1', l: '★' }]) +
+
     field('토닥접점', 'todoc_contact', 'select', h.todoc_contact || 'X', [{ v: 'O', l: 'O (접점)' }, { v: '△', l: '△ (일부)' }, { v: 'X', l: 'X (미접점)' }]) +
     field('파이프라인', 'pipeline_stage', 'select', h.pipeline_stage || 'contact', [{ v: 'contact', l: '첫 접촉' }, { v: 'meeting', l: '미팅 진행' }, { v: 'demo', l: '데모/시연' }, { v: 'proposal', l: '제안/협의' }, { v: 'contract', l: '계약' }, { v: 'active_customer', l: '활성 거래처' }]) +
     '<div><label class="input-label">난청 환자수</label><input type="number" name="patient_count" value="' + (h.patient_count || 0) + '" class="input" min="0"></div>' +
@@ -2296,7 +2294,7 @@ async function showDocForm(hid, did) {
   if (did) { try { const dr = (await API.get('/doctors/' + did)).data.data; if (dr) { d = dr; hospName = dr.hospital_name || '' } } catch (e) { } }
   if (!hospName) { try { const hr = (await API.get('/hospitals/' + hid)).data.data; hospName = hr.name || '' } catch(e) {} }
   openModal(did ? '의료진 수정' : '새 의료진 추가',
-    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' + field('이름 *', 'name', 'text', d.name) + field('진료과', 'department', 'text', d.department) + field('직위', 'position', 'text', d.position) + field('전화번호', 'phone', 'tel', d.phone) + field('이메일', 'email', 'email', d.email) + field('전문분야', 'specialty', 'text', d.specialty) + field('영향력', 'influence_level', 'select', d.influence_level, [{ v: 'high', l: '핵심' }, { v: 'medium', l: '주요' }, { v: 'low', l: '일반' }]) +
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' + field('이름 *', 'name', 'text', d.name) + field('진료과', 'department', 'text', d.department) + field('직위', 'position', 'text', d.position) + field('전화번호', 'phone', 'tel', d.phone) + field('이메일', 'email', 'email', d.email) + field('전문분야', 'specialty', 'text', d.specialty) +
     '<div class="col-span-full"><label class="input-label"><i class="fas fa-link text-slate-300 mr-1"></i>병원 프로필 URL <span class="text-[10px] text-slate-400 font-normal">(병원 홈페이지 의료진 소개 등)</span></label><div class="relative"><i class="fas fa-globe absolute left-3 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input type="text" name="profile_url" value="' + (d.profile_url || '') + '" class="input pl-9 w-full" placeholder="https://hospital.or.kr/doctor/..."></div></div>' +
     '<div class="col-span-full"><label class="input-label"><i class="fas fa-clock text-slate-300 mr-1"></i>외래 시간 <span class="text-[10px] text-slate-400 font-normal">(방문 일정 참고)</span></label>' + clinicHoursEditor(d.clinic_hours) + '</div>' +
     '<div class="col-span-full"><button type="button" id="btn-ai-profile" class="btn btn-outline btn-sm w-full !border-violet-200 !text-violet-600 hover:!bg-violet-50" onclick="fetchAIProfile(\'' + hid + '\')"><i class="fas fa-wand-magic-sparkles mr-1.5"></i>AI 프로필 자동 조회 (학력/경력/소개)</button><div id="ai-profile-status" class="text-xs text-center text-slate-400 mt-1 hidden"></div></div>' +

@@ -160,6 +160,7 @@ dashboard.get('/', async (c) => {
       return {
         ...m,
         doctors,
+        doctor_ids: doctors.map((d: any) => d.doctor_id),
         doctor_name: doctors.map((d: any) => d.doctor_name).join(', ') || null,
         doctor_photo: doctors.length > 0 ? doctors[0].doctor_photo : null,
         doctor_id: doctors.length > 0 ? doctors[0].doctor_id : m.doctor_id,
