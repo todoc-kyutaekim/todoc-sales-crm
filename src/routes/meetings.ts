@@ -218,6 +218,17 @@ meetings.delete('/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// Partial update — clear next_meeting_date after conversion
+meetings.patch('/:id', async (c) => {
+  const id = c.req.param('id')
+  const b = await c.req.json()
+  if ('next_meeting_date' in b) {
+    await c.env.DB.prepare('UPDATE meetings SET next_meeting_date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+      .bind(b.next_meeting_date || null, id).run()
+  }
+  return c.json({ data: { id: Number(id), updated: true } })
+})
+
 // Quick list of hospitals + doctors for global meeting form
 meetings.get('/form-data', async (c) => {
   const [hosps, docs, users] = await Promise.all([

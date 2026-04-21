@@ -1907,8 +1907,8 @@ window.showDayMeetsInline = function(dateStr) {
         if (hints.length) schedInfo = '<div class="flex flex-wrap gap-1 mt-1">' + hints.join('') + '</div>';
       }
       var isNextMeet = m._isNextMeeting;
-      return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md ' + (isNextMeet ? 'border-amber-200 border-dashed bg-amber-50/30' : '') + '" onclick="' + (isNextMeet ? '' : 'closeModal();showMeetDetail(' + JSON.stringify(m).replace(/"/g, '&quot;') + ')') + '">' +
-        (isNextMeet ? '<div class="text-[9px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-bold inline-block mb-1"><i class="fas fa-clock mr-1"></i>다음 미팅 예정</div>' : '') +
+      return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md ' + (isNextMeet ? 'border-amber-200 border-dashed bg-amber-50/30' : '') + '" onclick="' + (isNextMeet ? 'closeModal();convertNextMeeting(' + m.id + ',' + m.hospital_id + ',' + JSON.stringify((m.doctors||[]).map(function(d){return d.doctor_id||d.id})).replace(/"/g, '&quot;') + ')' : 'closeModal();showMeetDetail(' + JSON.stringify(m).replace(/"/g, '&quot;') + ')') + '">' +
+        (isNextMeet ? '<div class="text-[9px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-bold inline-block mb-1"><i class="fas fa-clock mr-1"></i>다음 미팅 예정 · 클릭하여 미팅 작성</div>' : '') +
         '<div class="flex items-center gap-2 mb-1">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
         '<div class="text-[11px] text-slate-400">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div>' +
         (m.result ? '<div class="text-[10px] text-emerald-600 mt-1"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
@@ -1922,7 +1922,59 @@ window.showDayMeetsInline = function(dateStr) {
   openModal(fmtDate(dateStr) + ' (' + dayKr + ') 일정', html);
 };
 
-// --- Upcoming View ---
+// Convert a "next meeting" placeholder into a real meeting
+async function convertNextMeeting(originalMeetId, hospitalId, doctorIds) {
+  // Find the original meeting to get its next_meeting_date
+  var meets = window._meetList || [];
+  var orig = meets.find(function(m) { return m.id === originalMeetId; });
+  var meetDate = orig ? orig.next_meeting_date : new Date().toISOString().split('T')[0];
+  // Open a new meeting form pre-filled with this date and doctors
+  showMeetFormForConvert(originalMeetId, hospitalId, doctorIds, meetDate);
+}
+
+async function showMeetFormForConvert(originalMeetId, hid, doctorIds, meetDate) {
+  if (!Array.isArray(doctorIds)) doctorIds = [doctorIds];
+  let docs = []; try { docs = (await API.get('/hospitals/' + hid + '/doctors')).data.data } catch (e) { }
+  let usersList = []; try { usersList = (await API.get('/users')).data.data || [] } catch(e) {}
+  var userCheckboxes = usersList.length ? '<div class="col-span-full"><label class="input-label"><i class="fas fa-user-tie mr-1 text-slate-400"></i>영업사원</label><div class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1">' + usersList.map(function(u) { var ck = (currentUser && currentUser.id === u.id) ? ' checked' : ''; return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-blue-50 cursor-pointer transition"><input type="checkbox" name="user_ids" value="' + u.id + '" class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"' + ck + '><span class="text-[13px] font-medium text-slate-700">' + u.name + '</span></label>'; }).join('') + '</div></div>' : '';
+  var doctorCheckboxes = docs.length ?
+    '<div class="col-span-full"><label class="input-label">참석 의료진 *</label><div class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2 space-y-1">' +
+    docs.map(function(d) {
+      var checked = doctorIds.map(Number).includes(d.id) ? ' checked' : '';
+      return '<label class="flex items-center gap-2.5 p-2 rounded-lg hover:bg-brand-50 cursor-pointer transition"><input type="checkbox" name="doctor_ids" value="' + d.id + '" class="w-4 h-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 cursor-pointer"' + checked + '><div class="flex-1 min-w-0"><span class="text-[13px] font-medium text-slate-700">' + d.name + '</span>' + (d.position ? '<span class="text-[11px] text-slate-400 ml-1">' + d.position + '</span>' : '') + '</div></label>';
+    }).join('') + '</div></div>' :
+    '<div class="col-span-full"><label class="input-label">의료진</label><div class="text-sm text-slate-400 p-3 bg-gray-50 rounded-lg text-center">소속 의료진이 없습니다.</div></div>';
+
+  openModal('<i class="fas fa-exchange-alt text-brand-500 mr-2"></i>미팅 전환 (예정 → 실제 미팅)',
+    '<div class="text-xs text-amber-600 bg-amber-50 rounded-lg p-3 mb-4"><i class="fas fa-info-circle mr-1"></i>예정된 미팅을 실제 미팅으로 전환합니다. 원래 미팅의 "다음 미팅 예정" 날짜가 클리어됩니다.</div>' +
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4"><input type="hidden" name="hospital_id" value="' + hid + '">' +
+    doctorCheckboxes + userCheckboxes +
+    field('미팅일자 *', 'meeting_date', 'date', meetDate) +
+    field('유형', 'meeting_type', 'select', 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
+    field('목적', 'purpose', 'text', '') +
+    field('미팅 내용', 'content', 'textarea', '') + field('결과', 'result', 'textarea', '') + field('후속 액션', 'next_action', 'textarea', '') +
+    '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" class="input"></div>' +
+    '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success"><i class="fas fa-exchange-alt mr-1"></i>미팅 전환</button></div></form>', true);
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    const selectedIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
+    if (!selectedIds.length) { toast('의료진을 선택하세요', 'warn'); return }
+    if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
+    const selUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
+    const payload = { ...f, doctor_ids: selectedIds, user_ids: selUserIds };
+    try {
+      // 1. Create new meeting
+      await API.post('/meetings', payload);
+      // 2. Clear original meeting's next_meeting_date
+      await API.patch('/meetings/' + originalMeetId, { next_meeting_date: '' });
+      toast('미팅 전환 완료');
+      closeModal();
+      if (curPage === 'meetings') loadMeet();
+      else if (curPage === 'dashboard') loadDash();
+    } catch (e) { toast('전환 실패', 'err') }
+  };
+}
 function renderMeetUpcoming() {
   var meets = window._meetList || [];
   var todayStr = new Date().toISOString().split('T')[0];
@@ -1982,19 +2034,23 @@ function renderMeetUpcoming() {
 }
 
 function renderMeetCard(m, isFuture) {
-  return '<div class="flex items-center gap-3 p-3 rounded-xl border ' + (isFuture ? 'border-blue-100 bg-blue-50/30' : 'border-slate-100 bg-white') + ' cursor-pointer hover:shadow-md transition-all" onclick="showDayMeetsInline(\'' + m.meeting_date + '\')">' +
+  var isNext = m._isNextMeeting;
+  var cardClass = isNext ? 'border-amber-200 border-dashed bg-amber-50/30' : (isFuture ? 'border-blue-100 bg-blue-50/30' : 'border-slate-100 bg-white');
+  var clickAction = isNext ? 'convertNextMeeting(' + m.id + ',' + m.hospital_id + ',' + JSON.stringify((m.doctors||[]).map(function(d){return d.doctor_id||d.id})).replace(/"/g, '&quot;') + ')' : 'showDayMeetsInline(\'' + m.meeting_date + '\')';
+  return '<div class="flex items-center gap-3 p-3 rounded-xl border ' + cardClass + ' cursor-pointer hover:shadow-md transition-all" onclick="' + clickAction + '">' +
     '<div class="hidden sm:block flex-shrink-0">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:13px') + '</div>' +
     '<div class="flex-1 min-w-0">' +
-    '<div class="flex items-center gap-1.5 mb-0.5">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-[13px] text-slate-800 truncate">' + meetDoctorNames(m) + '</span>' +
+    '<div class="flex items-center gap-1.5 mb-0.5">' + (isNext ? '<span class="text-[8px] bg-amber-200 text-amber-800 px-1.5 py-0.5 rounded-full font-bold">예정 → 전환</span>' : mtBadge(m.meeting_type)) + '<span class="font-semibold text-[13px] text-slate-800 truncate">' + meetDoctorNames(m) + '</span>' +
     (m.doctors && m.doctors.length > 1 ? '<span class="text-[10px] bg-violet-50 text-violet-600 px-1.5 py-0.5 rounded-full font-bold">' + m.doctors.length + '명</span>' : '') + '</div>' +
     '<div class="text-[11px] text-slate-400 truncate">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + ' · <i class="fas fa-user-tie text-[9px]"></i> ' + (m.user_names || m.user_name || (currentUser ? currentUser.name : '')) + '</div>' +
     (m.result ? '<div class="text-[10px] text-emerald-600 mt-0.5"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
     (m.next_action ? '<div class="text-[10px] text-amber-600 mt-0.5"><i class="fas fa-arrow-right mr-0.5"></i>' + m.next_action + '</div>' : '') +
     '</div>' +
     '<div class="text-right flex-shrink-0"><div class="text-xs font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div>' +
+    (isNext ? '<div class="flex-shrink-0"><span class="text-[10px] text-amber-600 font-bold"><i class="fas fa-exchange-alt"></i></span></div>' :
     '<div class="flex flex-col gap-0.5 flex-shrink-0">' +
     '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen text-[10px]"></i></button>' +
-    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();delMeetGlobal(' + m.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div></div>';
+    '<button class="btn btn-ghost text-xs px-1.5 py-0.5" onclick="event.stopPropagation();delMeetGlobal(' + m.id + ')"><i class="fas fa-trash text-[10px] text-red-300"></i></button></div>') + '</div>';
 }
 
 // --- List View ---
