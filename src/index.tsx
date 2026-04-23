@@ -9,14 +9,13 @@ import search from './routes/search'
 import activity from './routes/activity'
 import exports from './routes/exports'
 import auth from './routes/auth'
-import ai from './routes/ai'
 import tags from './routes/tags'
 import favorites from './routes/favorites'
 import templates from './routes/templates'
 import pipeline from './routes/pipeline'
 import schedule from './routes/schedule'
 
-type Bindings = { DB: D1Database; OPENAI_API_KEY: string; OPENAI_BASE_URL: string }
+type Bindings = { DB: D1Database }
 type Variables = { userId: number }
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 app.use('/api/*', cors())
@@ -56,7 +55,6 @@ app.route('/api/ci-stats', cistats)
 app.route('/api/search', search)
 app.route('/api/activity', activity)
 app.route('/api/export', exports)
-app.route('/api/ai', ai)
 app.route('/api/tags', tags)
 app.route('/api/favorites', favorites)
 app.route('/api/templates', templates)
