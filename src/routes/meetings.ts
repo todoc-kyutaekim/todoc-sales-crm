@@ -168,8 +168,8 @@ meetings.post('/', async (c) => {
   
   // Insert meeting (keep doctor_id as first doctor for backward compat)
   const primaryDoctorId = doctorIds[0]
-  const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId).run()
+  const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,visit_time,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId).run()
   
   const meetingId = r.meta.last_row_id as number
   
@@ -198,8 +198,8 @@ meetings.put('/:id', async (c) => {
   const primaryDoctorId = doctorIds[0]
   const userIds = extractUserIds(b, c.get('userId'))
   const primaryUserId = userIds.length > 0 ? userIds[0] : null
-  await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId, id).run()
+  await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,visit_time=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId, id).run()
   
   // Sync meeting_doctors and meeting_users
   await syncMeetingDoctors(c.env.DB, Number(id), doctorIds)
