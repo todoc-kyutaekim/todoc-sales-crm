@@ -1518,6 +1518,16 @@ function renderMeetCalendar() {
       }
     }
   });
+  // Sort meetings within each day: am → pm → full → unset
+  var visitTimeOrder = { am: 0, pm: 1, full: 2, '': 3 };
+  Object.keys(meetMap).forEach(function(d) {
+    meetMap[d].sort(function(a, b) {
+      var oa = visitTimeOrder[a.visit_time || ''] !== undefined ? visitTimeOrder[a.visit_time || ''] : 3;
+      var ob = visitTimeOrder[b.visit_time || ''] !== undefined ? visitTimeOrder[b.visit_time || ''] : 3;
+      if (oa !== ob) return oa - ob;
+      return (a.id || 0) - (b.id || 0);
+    });
+  });
   // Stats for this month
   var monthPrefix = y + '-' + String(m + 1).padStart(2, '0');
   var allMonthEntries = [];
@@ -1555,16 +1565,21 @@ function renderMeetCalendar() {
       '<div class="flex items-center justify-between">' +
       '<span class="text-[11px] font-bold ' + (isToday ? 'bg-brand-500 text-white w-5 h-5 rounded-full flex items-center justify-center' : isSun ? 'text-red-400' : isSat ? 'text-blue-400' : 'text-slate-600') + '">' + d + '</span>' +
       (dayMeets.length > 0 ? '<span class="text-[8px] font-bold px-1 py-0 rounded-full ' + (isFuture ? 'bg-blue-500 text-white' : 'bg-emerald-500 text-white') + '">' + dayMeets.length + '</span>' : '') + '</div>';
-    // Show meeting items
+    // Show meeting items (sorted: am → pm → full → unset)
     dayMeets.slice(0, 2).forEach(function(mt) {
       var tc = { visit:'blue', phone:'emerald', conference:'violet', email:'amber', online:'indigo' };
       var c = tc[mt.meeting_type] || 'slate';
       var icon = { visit:'fa-hospital', phone:'fa-phone', conference:'fa-chalkboard-user', email:'fa-envelope', online:'fa-video' };
       var isNext = mt._isNextMeeting;
+      var vtPrefix = '';
+      if (mt.visit_time === 'am') vtPrefix = '<span class="inline-flex items-center justify-center text-[7px] lg:text-[8px] font-extrabold rounded px-0.5 mr-0.5" style="background:#fed7aa;color:#9a3412">오전</span>';
+      else if (mt.visit_time === 'pm') vtPrefix = '<span class="inline-flex items-center justify-center text-[7px] lg:text-[8px] font-extrabold rounded px-0.5 mr-0.5" style="background:#bfdbfe;color:#1e40af">오후</span>';
+      else if (mt.visit_time === 'full') vtPrefix = '<span class="inline-flex items-center justify-center text-[7px] lg:text-[8px] font-extrabold rounded px-0.5 mr-0.5" style="background:#e9d5ff;color:#6b21a8">종일</span>';
       html += '<div class="text-[7px] lg:text-[9px] truncate rounded px-1 py-0.5 mt-0.5 flex items-center gap-0.5 ' +
         (isNext ? 'bg-amber-100 text-amber-700 font-semibold border border-dashed border-amber-300' :
          isFuture ? 'bg-' + c + '-100 text-' + c + '-700 font-semibold' : 'bg-' + c + '-50 text-' + c + '-500') + '">' +
         '<i class="fas ' + (isNext ? 'fa-clock' : (icon[mt.meeting_type] || 'fa-calendar')) + ' text-[6px] lg:text-[7px]"></i>' +
+        vtPrefix +
         (isNext ? '예정: ' : '') + meetDoctorNames(mt) + '</div>';
     });
     if (dayMeets.length > 2) html += '<div class="text-[7px] lg:text-[8px] text-slate-400 mt-0.5 text-center">+' + (dayMeets.length - 2) + '</div>';
@@ -1580,6 +1595,7 @@ function renderMeetCalendar() {
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-emerald-100 border border-emerald-200"></span>전화</span>' +
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-violet-100 border border-violet-200"></span>학회</span>' +
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-amber-100 border border-dashed border-amber-300"></span>다음 미팅 예정</span>' +
+    '<span class="flex items-center gap-1"><span class="text-[8px] font-extrabold rounded px-0.5" style="background:#fed7aa;color:#9a3412">오전</span><span class="text-[8px] font-extrabold rounded px-0.5" style="background:#bfdbfe;color:#1e40af">오후</span><span class="text-slate-400">방문 시간대</span></span>' +
     '</div></div>';
 
   // Upcoming section below calendar - include next_meeting_date as scheduled
@@ -1637,6 +1653,14 @@ window.showDayMeetsInline = function(dateStr) {
   // Also include meetings where next_meeting_date matches this date
   var nextMeets = (window._meetList || []).filter(function(m) { return m.next_meeting_date === dateStr && m.meeting_date !== dateStr; });
   nextMeets.forEach(function(m) { dayMeets.push(Object.assign({}, m, { _isNextMeeting: true, _originalDate: m.meeting_date, meeting_date: dateStr })); });
+  // Sort: am → pm → full → unset
+  var _vto = { am: 0, pm: 1, full: 2, '': 3 };
+  dayMeets.sort(function(a, b) {
+    var oa = _vto[a.visit_time || ''] !== undefined ? _vto[a.visit_time || ''] : 3;
+    var ob = _vto[b.visit_time || ''] !== undefined ? _vto[b.visit_time || ''] : 3;
+    if (oa !== ob) return oa - ob;
+    return (a.id || 0) - (b.id || 0);
+  });
   var meetDay = new Date(dateStr + 'T00:00:00');
   var dayIdx = (meetDay.getDay() + 6) % 7;
   var dayKr = dayIdx < 6 ? DAYS_KR[dayIdx] : '일';
@@ -1670,7 +1694,7 @@ window.showDayMeetsInline = function(dateStr) {
       var isNextMeet = m._isNextMeeting;
       return '<div class="card-flat !p-3 cursor-pointer hover:shadow-md ' + (isNextMeet ? 'border-amber-200 border-dashed bg-amber-50/30' : '') + '" onclick="' + (isNextMeet ? 'closeModal();convertNextMeeting(' + m.id + ',' + m.hospital_id + ',' + JSON.stringify((m.doctors||[]).map(function(d){return d.doctor_id||d.id})).replace(/"/g, '&quot;') + ')' : 'closeModal();showMeetDetail(' + JSON.stringify(m).replace(/"/g, '&quot;') + ')') + '">' +
         (isNextMeet ? '<div class="text-[9px] bg-amber-200 text-amber-800 px-2 py-0.5 rounded-full font-bold inline-block mb-1"><i class="fas fa-clock mr-1"></i>다음 미팅 예정 · 클릭하여 미팅 작성</div>' : '') +
-        '<div class="flex items-center gap-2 mb-1">' + mtBadge(m.meeting_type) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
+        '<div class="flex items-center gap-2 mb-1 flex-wrap">' + mtBadge(m.meeting_type) + vtBadge(m.visit_time) + '<span class="font-semibold text-xs text-slate-800">' + meetDoctorNames(m) + '</span></div>' +
         '<div class="text-[11px] text-slate-400">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div>' +
         (m.result ? '<div class="text-[10px] text-emerald-600 mt-1"><i class="fas fa-check mr-0.5"></i>' + m.result + '</div>' : '') +
         (m.next_action ? '<div class="text-[10px] text-amber-600 mt-0.5"><i class="fas fa-arrow-right mr-0.5"></i>' + m.next_action + '</div>' : '') +
