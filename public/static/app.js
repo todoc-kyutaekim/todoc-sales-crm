@@ -1,5 +1,57 @@
 // ===== TODOC CRM - Frontend Application =====
 const API = axios.create({ baseURL: '/api' });
+
+// ===== Theme (Dark/Light/Auto) =====
+function applyTheme(t) {
+  // t: 'light' | 'dark' | 'auto'
+  var html = document.documentElement;
+  if (t === 'auto') {
+    html.removeAttribute('data-theme');
+  } else {
+    html.setAttribute('data-theme', t);
+  }
+  // Update button icon
+  var btn = document.getElementById('theme-toggle');
+  if (btn) {
+    var resolved = t === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
+    var icon = resolved === 'dark' ? 'fa-sun' : 'fa-moon';
+    btn.innerHTML = '<i class="fas ' + icon + '"></i>';
+    btn.setAttribute('title', t === 'auto' ? '시스템 설정 (' + (resolved === 'dark' ? '다크' : '라이트') + ')' : (resolved === 'dark' ? '다크 모드' : '라이트 모드'));
+    btn.setAttribute('aria-label', '테마 전환 (현재: ' + (t === 'auto' ? '자동' : (resolved === 'dark' ? '다크' : '라이트')) + ')');
+  }
+  // Update theme-color meta for mobile chrome
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    var resolved = t === 'auto' ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : t;
+    meta.setAttribute('content', resolved === 'dark' ? '#0f1218' : '#2563eb');
+  }
+}
+function toggleTheme() {
+  var cur = localStorage.getItem('todoc_theme') || 'auto';
+  // cycle: auto -> light -> dark -> auto
+  var next = cur === 'auto' ? 'light' : (cur === 'light' ? 'dark' : 'auto');
+  localStorage.setItem('todoc_theme', next);
+  applyTheme(next);
+  if (typeof toast === 'function') {
+    var label = next === 'auto' ? '시스템 설정' : (next === 'dark' ? '다크 모드' : '라이트 모드');
+    toast('테마: ' + label);
+  }
+}
+// Initial theme apply (early)
+(function() {
+  var saved = localStorage.getItem('todoc_theme') || 'auto';
+  applyTheme(saved);
+  // React to system theme change in 'auto' mode
+  if (window.matchMedia) {
+    try {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+        var cur = localStorage.getItem('todoc_theme') || 'auto';
+        if (cur === 'auto') applyTheme('auto');
+      });
+    } catch(e) {}
+  }
+})();
+window.toggleTheme = toggleTheme;
 let curPage = '', hospList = [], docList = [], confirmCb = null, searchTimer = null;
 let currentUser = null;
 let _reminderCount = 0;
@@ -307,10 +359,10 @@ function nav(p) {
   curPage = p;
   document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
   document.getElementById('n-' + p)?.classList.add('active');
-  // Update bottom nav
-  document.querySelectorAll('.btm-nav-item').forEach(e => e.classList.remove('active'));
+  // Update bottom nav (also handle aliases: doctors -> stays unmapped now, cistats/activity -> none)
+  document.querySelectorAll('.btm-nav-item').forEach(e => { e.classList.remove('active'); e.setAttribute('aria-current','false'); });
   var bnItem = document.getElementById('bn-' + p);
-  if (bnItem) bnItem.classList.add('active');
+  if (bnItem) { bnItem.classList.add('active'); bnItem.setAttribute('aria-current','page'); }
   document.getElementById('page-subtitle').textContent = '';
   document.getElementById('header-actions').innerHTML = '';
   // Close mobile search if open
@@ -433,6 +485,15 @@ function toggleMobileSearch(forceOpen) {
   }
 }
 
+// Mobile bottom-nav search entry: opens the search overlay
+function openMobileSearchSheet() {
+  // Highlight tab briefly
+  document.querySelectorAll('.btm-nav-item').forEach(e => e.classList.remove('active'));
+  var bn = document.getElementById('bn-search'); if (bn) bn.classList.add('active');
+  toggleMobileSearch(true);
+}
+window.openMobileSearchSheet = openMobileSearchSheet;
+
 // ===== Global Search =====
 function onGlobalSearch(q) {
   clearTimeout(searchTimer);
@@ -492,6 +553,70 @@ function vtBadge(vt) {
   var v = map[vt]; if (!v) return '';
   return '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md" style="background:' + v.bg + ';color:' + v.fg + ';border:1px solid ' + v.bd + '"><i class="fas ' + v.icon + ' text-[8px]"></i>' + v.label + '</span>';
 }
+
+// ===== Quick Action Bar — Today's Tasks =====
+function renderTodayTasks(t) {
+  if (!t) return '';
+  var today = (t.todayMeetings || []), overdue = (t.overdueActions || []), unwritten = (t.unwrittenMeetings || []), upfu = (t.dueFollowups || []);
+  var total = today.length + overdue.length + unwritten.length + upfu.length;
+  if (total === 0) {
+    return '<div class="card-flat p-4 flex items-center gap-3" style="background:linear-gradient(135deg,#ecfdf5,#f0fdfa);border-left:3px solid #10b981">' +
+      '<div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#fff;color:#059669"><i class="fas fa-circle-check text-base"></i></div>' +
+      '<div class="flex-1 min-w-0"><div class="font-bold text-[13px] text-slate-800">오늘의 할 일이 모두 정리되었습니다</div><div class="text-[11px] text-slate-500">오늘 예정 미팅, 미작성 결과, 지연 액션이 없습니다</div></div>' +
+      '<button class="btn btn-success btn-sm" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">미팅 추가</span></button>' +
+      '</div>';
+  }
+
+  function row(items, type, color, icon, label, emptyMsg) {
+    if (!items.length) return '';
+    return '<div class="border-t border-gray-100 first:border-t-0">' +
+      '<div class="px-4 lg:px-5 py-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider" style="color:' + color + ';background:' + color + '08">' +
+        '<i class="fas ' + icon + ' text-[10px]"></i>' + label +
+        '<span class="ml-auto px-1.5 py-0.5 rounded-full text-[10px] font-bold" style="background:' + color + ';color:#fff">' + items.length + '</span>' +
+      '</div>' +
+      '<div class="divide-y divide-gray-50">' + items.slice(0, 5).map(function(m) {
+        var mDate = type === 'overdue' || type === 'upcoming_followup' ? m.next_meeting_date : m.meeting_date;
+        var du = daysUntil(mDate);
+        var duLabel = du === 0 ? '오늘' : du === 1 ? '내일' : du > 0 ? '+' + du + '일' : Math.abs(du) + '일 지연';
+        var actionBtn = '';
+        if (type === 'today') {
+          // 오늘 미팅 → 결과 작성 버튼
+          actionBtn = '<button class="btn btn-success btn-sm flex-shrink-0" onclick="event.stopPropagation();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || []).replace(/"/g, '&quot;') + ',' + m.id + ')" aria-label="결과 작성"><i class="fas fa-pen text-xs"></i><span class="hidden sm:inline">작성</span></button>';
+        } else if (type === 'overdue') {
+          // 지연된 후속 → 결과 작성 또는 일정 변경
+          actionBtn = '<button class="btn btn-outline btn-sm flex-shrink-0" onclick="event.stopPropagation();showMeetFormForConvert(' + m.id + ')" aria-label="후속 미팅 작성"><i class="fas fa-calendar-check text-xs"></i><span class="hidden sm:inline">처리</span></button>';
+        } else if (type === 'unwritten') {
+          // 결과 미작성 → 결과 입력
+          actionBtn = '<button class="btn btn-primary btn-sm flex-shrink-0" onclick="event.stopPropagation();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || []).replace(/"/g, '&quot;') + ',' + m.id + ')" aria-label="결과 입력"><i class="fas fa-edit text-xs"></i><span class="hidden sm:inline">입력</span></button>';
+        } else if (type === 'upcoming_followup') {
+          // 다가오는 후속 → 미팅 변환
+          actionBtn = '<button class="btn btn-outline btn-sm flex-shrink-0" onclick="event.stopPropagation();showMeetFormForConvert(' + m.id + ')" aria-label="미팅 작성"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">진행</span></button>';
+        }
+        return '<div class="px-4 lg:px-5 py-2.5 flex items-center gap-3 tr cursor-pointer" onclick="viewHosp(' + m.hospital_id + ')">' +
+          '<div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 mb-0.5 flex-wrap"><span class="font-semibold text-[13px] text-slate-800 truncate">' + (meetDoctorNames(m) || '-') + '</span>' + mtBadge(m.meeting_type) + vtBadge(m.visit_time) + '</div>' +
+          '<div class="text-[11px] text-slate-400 truncate">' + (m.hospital_name || '') + (m.purpose ? ' · ' + m.purpose : '') + '</div></div>' +
+          '<div class="text-right flex-shrink-0 hidden sm:block"><div class="text-[11px] font-bold ' + (du < 0 ? 'text-red-500' : du === 0 ? 'text-amber-600' : 'text-slate-500') + '">' + duLabel + '</div><div class="text-[10px] text-slate-400">' + fmtShort(mDate) + '</div></div>' +
+          actionBtn +
+          '</div>';
+      }).join('') +
+      (items.length > 5 ? '<div class="px-4 py-2 text-[11px] text-slate-400 text-center">외 ' + (items.length - 5) + '건</div>' : '') +
+      '</div>' +
+      '</div>';
+  }
+
+  return '<div class="card-flat p-0 overflow-hidden" style="border-left:3px solid #2563eb">' +
+    '<div class="px-4 lg:px-5 py-3 flex items-center gap-2.5" style="background:linear-gradient(135deg,#eff6ff,#eef2ff);border-bottom:1px solid #dbeafe">' +
+      '<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#3b7bf7,#2563eb)"><i class="fas fa-bolt text-white text-xs"></i></div>' +
+      '<span class="font-bold text-[14px] text-slate-800 tracking-tight">오늘의 할 일</span>' +
+      '<span class="text-[10px] px-2 py-0.5 rounded-full font-bold" style="background:#2563eb;color:#fff">' + total + '건</span>' +
+      '<button class="ml-auto btn btn-ghost btn-sm" onclick="loadDash()" aria-label="새로고침"><i class="fas fa-arrows-rotate text-xs"></i></button>' +
+    '</div>' +
+    row(today, 'today', '#dc2626', 'fa-calendar-day', '오늘 예정 미팅') +
+    row(overdue, 'overdue', '#d97706', 'fa-triangle-exclamation', '지연된 후속 액션') +
+    row(unwritten, 'unwritten', '#2563eb', 'fa-pen-to-square', '결과 미작성 (최근 7일)') +
+    row(upfu, 'upcoming_followup', '#7c3aed', 'fa-forward', '다가오는 후속 (3일 내)') +
+    '</div>';
+}
 function avatar(ph, nm, extra) { const st = extra ? 'style="' + extra + '"' : ''; if (ph) return '<div class="avatar" ' + st + '><img src="' + ph + '" alt=""></div>'; const c = ['#818cf8', '#f472b6', '#34d399', '#fbbf24', '#60a5fa', '#a78bfa']; const i = (nm || '?').charCodeAt(0) % c.length; return '<div class="avatar" ' + st + ' style="background:' + c[i] + ';color:#fff;' + (extra || '') + '">' + (nm || '?').charAt(0) + '</div>' }
 function field(l, n, tp, v, opts) {
   if (tp === 'select') return '<div><label class="input-label">' + l + '</label><select name="' + n + '" class="input">' + opts.map(o => '<option value="' + o.v + '"' + (o.v == v ? ' selected' : '') + '>' + o.l + '</option>').join('') + '</select></div>';
@@ -513,6 +638,17 @@ function infoRow(label, val) { return '<div class="flex items-center justify-bet
 // ===== CSV/XLSX Download =====
 function downloadCSV(type) { window.open('/api/export/' + type, '_blank'); }
 function downloadXLSX(type) { window.open('/api/export/xlsx/' + type, '_blank'); }
+function exportMenu(type, label) {
+  // Returns HTML for a unified export dropdown button
+  const id = 'expmenu_' + type + '_' + Math.random().toString(36).slice(2,7);
+  return '<div class="relative inline-block" id="' + id + '">'
+    + '<button class="btn btn-outline btn-sm" onclick="(function(e){e.stopPropagation();var m=document.getElementById(\''+id+'\').querySelector(\'.exp-menu\');var open=!m.classList.contains(\'hidden\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')});if(!open)m.classList.remove(\'hidden\');})(event)" aria-label="' + (label || '내보내기') + ' 내보내기"><i class="fas fa-file-export text-xs"></i><span class="hidden sm:inline">내보내기</span></button>'
+    + '<div class="exp-menu hidden absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50" style="min-width:140px">'
+    + '<button class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadXLSX(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-excel text-emerald-600"></i>Excel (.xls)</button>'
+    + '<button class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadCSV(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-csv text-slate-600"></i>CSV (.csv)</button>'
+    + '</div></div>';
+}
+document.addEventListener('click', function() { document.querySelectorAll('.exp-menu').forEach(function(x){x.classList.add('hidden')}); });
 
 // ===== DASHBOARD =====
 let dashCharts = [];
@@ -541,6 +677,8 @@ async function loadDash() {
     var pipeColors = { contact: '#94a3b8', meeting: '#3b82f6', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#059669', active_customer: '#2563eb' };
 
     C.innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-5">' +
+      // ===== Quick Action Bar (오늘의 할 일) =====
+      renderTodayTasks(s.todayTasks) +
       // Reminder banner
       (s.reminders?.length ? '<div class="reminder-banner"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:rgba(255,255,255,.12)"><i class="fas fa-bell text-white text-lg animate-bounce-gentle"></i></div><div class="flex-1 min-w-0"><div class="font-bold text-white text-sm mb-0.5">미팅 리마인더</div><div class="text-white/70 text-xs">앞으로 7일 이내 예정된 미팅이 <strong class="text-white">' + s.reminders.length + '건</strong> 있습니다</div></div></div>' +
         '<div class="mt-3 space-y-2">' + s.reminders.map(r => {
@@ -771,7 +909,7 @@ async function showPipelineView() {
 var _hospViewMode = localStorage.getItem('todoc_hosp_view') || 'card';
 async function loadHosp(typeFilter) {
   document.getElementById('page-title').textContent = '기관 관리';
-  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadXLSX(\'hospitals\')"><i class="fas fa-file-excel text-xs"></i>Excel</button><button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'hospitals\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-primary" onclick="showHospForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">추가</span></button>';
+  document.getElementById('header-actions').innerHTML = exportMenu('hospitals','기관') + '<button class="btn btn-primary" onclick="showHospForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">추가</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">' + Array(6).fill('<div class="card p-5"><div class="space-y-3"><div class="skeleton rounded h-5 w-32"></div><div class="skeleton rounded h-3 w-48"></div></div></div>').join('') + '</div></div>';
   try {
     const [hR, rR] = await Promise.all([API.get('/hospitals'), API.get('/regions')]);
@@ -1284,7 +1422,7 @@ function renderMeetingsTab(h, meets) {
 // ===== DOCTORS PAGE =====
 async function loadDoc() {
   document.getElementById('page-title').textContent = '의료진 관리';
-  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadXLSX(\'doctors\')"><i class="fas fa-file-excel text-xs"></i>Excel</button><button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'doctors\')"><i class="fas fa-download text-xs"></i>CSV</button>';
+  document.getElementById('header-actions').innerHTML = exportMenu('doctors','의료진');
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat overflow-hidden">' + skeleton(6) + '</div></div>';
   try {
     const [dr, deptR] = await Promise.all([API.get('/doctors'), API.get('/doctors/departments')]);
@@ -1455,7 +1593,7 @@ function setMeetView(mode) { _meetViewMode = mode; localStorage.setItem('meetVie
 
 async function loadMeet() {
   document.getElementById('page-title').textContent = '미팅 관리';
-  document.getElementById('header-actions').innerHTML = '<button class="btn btn-outline btn-sm hide-mobile" onclick="downloadCSV(\'meetings\')"><i class="fas fa-download text-xs"></i>CSV</button><button class="btn btn-success" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">미팅 추가</span></button>';
+  document.getElementById('header-actions').innerHTML = exportMenu('meetings','미팅') + '<button class="btn btn-success" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">미팅 추가</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat p-0">' + skeleton(6) + '</div></div>';
   try {
     const [meetR, hospR] = await Promise.all([API.get('/meetings'), API.get('/hospitals')]);

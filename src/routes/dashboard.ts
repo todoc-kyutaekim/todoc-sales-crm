@@ -127,6 +127,45 @@ dashboard.get('/', async (c) => {
     `).all(),
   ])
 
+  // ===== TODAY'S TASKS (오늘의 할 일) =====
+  const [todayMeetingsRaw, overdueActionsRaw, unwrittenMeetingsRaw, dueFollowupsRaw] = await Promise.all([
+    // 1. 오늘 예정된 미팅 (meeting_date = today, OR next_meeting_date = today)
+    c.env.DB.prepare(`
+      SELECT m.*, h.name as hospital_name, 'today' as task_type
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.meeting_date = date('now','+9 hours')
+         OR (m.next_meeting_date IS NOT NULL AND m.next_meeting_date != '' AND m.next_meeting_date = date('now','+9 hours'))
+      ORDER BY m.visit_time ASC, m.meeting_date ASC LIMIT 20
+    `).all(),
+    // 2. 미처리 후속 액션 (next_meeting_date 가 지났는데 결과 처리 안 된 것)
+    c.env.DB.prepare(`
+      SELECT m.*, h.name as hospital_name, 'overdue' as task_type
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
+        AND m.next_meeting_date < date('now','+9 hours')
+        AND m.next_action IS NOT NULL AND m.next_action != ''
+      ORDER BY m.next_meeting_date ASC LIMIT 10
+    `).all(),
+    // 3. 결과 미작성 미팅 (과거 미팅인데 result 비어있음)
+    c.env.DB.prepare(`
+      SELECT m.*, h.name as hospital_name, 'unwritten' as task_type
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.meeting_date < date('now','+9 hours')
+        AND m.meeting_date >= date('now','+9 hours','-7 days')
+        AND (m.result IS NULL OR m.result = '')
+      ORDER BY m.meeting_date DESC LIMIT 10
+    `).all(),
+    // 4. 내일~3일 후 후속 미팅 예정
+    c.env.DB.prepare(`
+      SELECT m.*, h.name as hospital_name, 'upcoming_followup' as task_type
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
+        AND m.next_meeting_date > date('now','+9 hours')
+        AND m.next_meeting_date <= date('now','+9 hours','+3 days')
+      ORDER BY m.next_meeting_date ASC LIMIT 10
+    `).all(),
+  ])
+
   // Helper: attach doctor names & user names to meetings via meeting_doctors + meeting_users
   async function enrichMeetings(meetingsList: any[]): Promise<any[]> {
     if (!meetingsList.length) return meetingsList
@@ -175,6 +214,10 @@ dashboard.get('/', async (c) => {
   const upcomingActions = await enrichMeetings(upcomingActionsRaw.results as any[])
   const reminders = await enrichMeetings(remindersRaw.results as any[])
   const thisWeekMeetings = await enrichMeetings(thisWeekMeetingsRaw.results as any[])
+  const todayMeetings = await enrichMeetings(todayMeetingsRaw.results as any[])
+  const overdueActions = await enrichMeetings(overdueActionsRaw.results as any[])
+  const unwrittenMeetings = await enrichMeetings(unwrittenMeetingsRaw.results as any[])
+  const dueFollowups = await enrichMeetings(dueFollowupsRaw.results as any[])
 
   // CI KPI calculation
   let ciKpi: any = null
@@ -225,6 +268,13 @@ dashboard.get('/', async (c) => {
     recentHospitals: recentHospitalsRaw.results,
     recentDoctors: recentDoctorsRaw.results,
     pipelineSummary: pipelineSummaryRaw.results,
+    todayTasks: {
+      todayMeetings,
+      overdueActions,
+      unwrittenMeetings,
+      dueFollowups,
+      total: todayMeetings.length + overdueActions.length + unwrittenMeetings.length + dueFollowups.length,
+    },
   }})
 })
 

@@ -439,27 +439,27 @@ textarea.input { resize: vertical; min-height: 72px }
 /* ===== Mobile FAB — Elevated action button ===== */
 .mobile-fab {
   position: fixed; z-index: 46;
-  width: 50px; height: 50px; border-radius: 50%;
+  width: 52px; height: 52px; border-radius: 50%;
   background: linear-gradient(135deg, #3b7bf7 0%, #2563eb 100%);
   color: #fff; border: none; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   font-size: 18px;
-  box-shadow: 0 4px 14px rgba(37,99,235,.4), 0 0 0 3px rgba(37,99,235,.08);
-  bottom: calc(32px + env(safe-area-inset-bottom, 0px));
-  left: 50%; transform: translateX(-50%);
+  box-shadow: 0 6px 18px rgba(37,99,235,.45), 0 0 0 3px rgba(37,99,235,.08);
+  bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+  right: 16px;
   transition: all .2s var(--ease-smooth);
   touch-action: manipulation; -webkit-tap-highlight-color: transparent;
 }
-.mobile-fab:active { transform: translateX(-50%) scale(.92) }
-.mobile-fab.fab-open { transform: translateX(-50%) rotate(45deg); background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 4px 14px rgba(220,38,38,.4) }
+.mobile-fab:active { transform: scale(.92) }
+.mobile-fab.fab-open { transform: rotate(45deg); background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); box-shadow: 0 6px 18px rgba(220,38,38,.45) }
 .fab-menu { position: fixed; inset: 0; z-index: 55 }
 .fab-menu-bg { position: fixed; inset: 0; background: rgba(10,15,30,.3); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); opacity: 0; transition: opacity .2s }
 .fab-menu-show .fab-menu-bg { opacity: 1 }
 .fab-menu-items {
   position: fixed; z-index: 56;
-  bottom: calc(90px + env(safe-area-inset-bottom, 0px));
-  left: 50%; transform: translateX(-50%);
-  display: flex; flex-direction: column; gap: 10px; align-items: center;
+  bottom: calc(140px + env(safe-area-inset-bottom, 0px));
+  right: 16px;
+  display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
 }
 .fab-menu-item { display: flex; align-items: center; gap: 10px; opacity: 0; transform: translateY(16px) scale(.9); transition: all .2s var(--ease-smooth) }
 .fab-menu-show .fab-menu-item { opacity: 1; transform: none }
@@ -649,9 +649,142 @@ textarea.input { resize: vertical; min-height: 72px }
   .btm-nav-item { gap: 1px }
   .btm-nav-item i { font-size: 15px }
   .btm-nav-item span { font-size: 9px }
-  .mobile-fab { width: 42px; height: 42px; font-size: 16px; bottom: calc(24px + env(safe-area-inset-bottom, 0px)) }
-  .fab-menu-items { bottom: calc(70px + env(safe-area-inset-bottom, 0px)) }
+  .mobile-fab { width: 44px; height: 44px; font-size: 16px; bottom: calc(60px + env(safe-area-inset-bottom, 0px)); right: 12px }
+  .fab-menu-items { bottom: calc(116px + env(safe-area-inset-bottom, 0px)); right: 12px }
 }
 
-/* Dark mode placeholder */
-@media (prefers-color-scheme: dark) { /* future */ }
+/* ============================
+   DARK MODE — Design Tokens & Overrides
+   ============================ */
+/* Apply dark theme when html[data-theme="dark"] is set, OR when user prefers
+   dark and html[data-theme] is not explicitly set (i.e., 'auto' mode) */
+html[data-theme="dark"],
+html:not([data-theme="light"]):not([data-theme="dark"]) {
+  /* fallback baseline; overridden below by prefers-color-scheme */
+}
+
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) {
+    --surface-primary: #161a23;
+    --surface-secondary: #0f1218;
+    --surface-tertiary: #1c2030;
+    --surface-elevated: #1e2230;
+
+    --gray-25: #1a1e29;
+    --gray-50: #1c2030;
+    --gray-100: #232838;
+    --gray-200: #2c3243;
+    --gray-300: #3a4156;
+    --gray-400: #6b7388;
+    --gray-500: #8a93a8;
+    --gray-600: #aab2c5;
+    --gray-700: #c5cbda;
+    --gray-800: #e2e6ee;
+    --gray-900: #f1f3f9;
+
+    --border-light: #232838;
+    --border-default: #2c3243;
+    --border-strong: #3a4156;
+
+    --shadow-xs: 0 1px 2px rgba(0,0,0,.3);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+    --shadow-md: 0 4px 8px -2px rgba(0,0,0,.4), 0 2px 4px -2px rgba(0,0,0,.3);
+    --shadow-lg: 0 12px 16px -4px rgba(0,0,0,.5), 0 4px 6px -2px rgba(0,0,0,.3);
+    --shadow-xl: 0 20px 24px -4px rgba(0,0,0,.5), 0 8px 8px -4px rgba(0,0,0,.3);
+    --shadow-2xl: 0 24px 48px -12px rgba(0,0,0,.6);
+  }
+}
+
+/* Explicit dark theme override (always applies regardless of system) */
+html[data-theme="dark"] {
+  --surface-primary: #161a23;
+  --surface-secondary: #0f1218;
+  --surface-tertiary: #1c2030;
+  --surface-elevated: #1e2230;
+
+  --gray-25: #1a1e29;
+  --gray-50: #1c2030;
+  --gray-100: #232838;
+  --gray-200: #2c3243;
+  --gray-300: #3a4156;
+  --gray-400: #6b7388;
+  --gray-500: #8a93a8;
+  --gray-600: #aab2c5;
+  --gray-700: #c5cbda;
+  --gray-800: #e2e6ee;
+  --gray-900: #f1f3f9;
+
+  --border-light: #232838;
+  --border-default: #2c3243;
+  --border-strong: #3a4156;
+
+  --shadow-xs: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-sm: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+  --shadow-md: 0 4px 8px -2px rgba(0,0,0,.4), 0 2px 4px -2px rgba(0,0,0,.3);
+  --shadow-lg: 0 12px 16px -4px rgba(0,0,0,.5), 0 4px 6px -2px rgba(0,0,0,.3);
+  --shadow-xl: 0 20px 24px -4px rgba(0,0,0,.5), 0 8px 8px -4px rgba(0,0,0,.3);
+  --shadow-2xl: 0 24px 48px -12px rgba(0,0,0,.6);
+}
+
+/* Dark mode component overrides (apply for both auto-dark and explicit dark) */
+html[data-theme="dark"] body,
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) body { color: var(--gray-800); background: var(--surface-secondary) }
+}
+
+html[data-theme="dark"] body { color: var(--gray-800); background: var(--surface-secondary) }
+html[data-theme="dark"] .skeleton { background: linear-gradient(90deg, #232838 25%, #2c3243 50%, #232838 75%); background-size: 200% 100%; }
+html[data-theme="dark"] .modal-bg { background: rgba(0,0,0,.65) }
+html[data-theme="dark"] .toast { color: #fff }
+html[data-theme="dark"] .mt-visit { background: rgba(59,130,246,.18); color: #93c5fd }
+html[data-theme="dark"] .mt-phone { background: rgba(16,185,129,.18); color: #6ee7b7 }
+html[data-theme="dark"] .mt-conference { background: rgba(139,92,246,.18); color: #c4b5fd }
+html[data-theme="dark"] .mt-email { background: rgba(245,158,11,.18); color: #fcd34d }
+html[data-theme="dark"] .mt-online { background: rgba(99,102,241,.18); color: #a5b4fc }
+html[data-theme="dark"] .grade-S { background: rgba(245,158,11,.16); color: #fcd34d }
+html[data-theme="dark"] .grade-A { background: rgba(59,130,246,.18); color: #93c5fd }
+html[data-theme="dark"] .grade-B { background: rgba(16,185,129,.18); color: #6ee7b7 }
+html[data-theme="dark"] .grade-C { background: var(--gray-100); color: var(--gray-500) }
+html[data-theme="dark"] .inf-high { background: rgba(239,68,68,.18); color: #fca5a5 }
+html[data-theme="dark"] .inf-medium { background: rgba(234,179,8,.18); color: #fde047 }
+html[data-theme="dark"] .al-create { background: rgba(16,185,129,.16); color: #6ee7b7 }
+html[data-theme="dark"] .al-update { background: rgba(59,130,246,.16); color: #93c5fd }
+html[data-theme="dark"] .al-delete { background: rgba(239,68,68,.16); color: #fca5a5 }
+html[data-theme="dark"] .btn-outline { background: var(--surface-primary); color: var(--gray-700); border-color: var(--border-default) }
+html[data-theme="dark"] .btn-outline:hover { background: var(--gray-50) }
+html[data-theme="dark"] .btn-ghost:hover { background: var(--gray-100); color: var(--gray-800) }
+html[data-theme="dark"] .input { background: var(--surface-tertiary); color: var(--gray-800); border-color: var(--border-default) }
+html[data-theme="dark"] .input::placeholder { color: var(--gray-500) }
+html[data-theme="dark"] select.input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7388' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+}
+html[data-theme="dark"] .kbd { background: var(--gray-100); border-color: var(--gray-200); color: var(--gray-500) }
+html[data-theme="dark"] .btm-nav { background: rgba(15,18,24,.92); border-top-color: var(--border-light) }
+html[data-theme="dark"] .mobile-search-open { background: rgba(15,18,24,.95); border-bottom-color: var(--border-light) }
+html[data-theme="dark"] .fab-menu-label { background: var(--surface-elevated); color: var(--gray-800) }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb { background: var(--gray-200) }
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: var(--gray-300) }
+/* Tailwind backdrop overrides for dark theme */
+html[data-theme="dark"] .bg-white { background-color: var(--surface-primary) !important }
+html[data-theme="dark"] .bg-slate-50, html[data-theme="dark"] .bg-gray-50 { background-color: var(--surface-tertiary) !important }
+html[data-theme="dark"] .bg-slate-100, html[data-theme="dark"] .bg-gray-100 { background-color: var(--gray-100) !important }
+html[data-theme="dark"] .text-slate-900, html[data-theme="dark"] .text-gray-900,
+html[data-theme="dark"] .text-slate-800, html[data-theme="dark"] .text-gray-800 { color: var(--gray-800) !important }
+html[data-theme="dark"] .text-slate-700, html[data-theme="dark"] .text-gray-700 { color: var(--gray-700) !important }
+html[data-theme="dark"] .text-slate-600, html[data-theme="dark"] .text-gray-600 { color: var(--gray-600) !important }
+html[data-theme="dark"] .text-slate-500, html[data-theme="dark"] .text-gray-500 { color: var(--gray-500) !important }
+html[data-theme="dark"] .text-slate-400, html[data-theme="dark"] .text-gray-400 { color: var(--gray-400) !important }
+html[data-theme="dark"] .border-slate-200, html[data-theme="dark"] .border-gray-200 { border-color: var(--border-default) !important }
+html[data-theme="dark"] .border-slate-100, html[data-theme="dark"] .border-gray-100 { border-color: var(--border-light) !important }
+html[data-theme="dark"] .divide-slate-200 > * + *, html[data-theme="dark"] .divide-gray-200 > * + * { border-color: var(--border-default) !important }
+
+/* Dark mode toggle button */
+.theme-toggle {
+  width: 32px; height: 32px; border-radius: var(--radius-md);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--gray-500); font-size: 14px;
+  transition: all var(--duration-fast) var(--ease-smooth);
+}
+.theme-toggle:hover { background: var(--gray-100); color: var(--gray-800) }
+.theme-toggle:focus-visible { outline: 2px solid var(--brand-500); outline-offset: 2px }

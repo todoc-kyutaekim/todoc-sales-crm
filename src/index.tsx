@@ -217,6 +217,7 @@ const HTML = `<!DOCTYPE html>
       </div>
     </div>
     <div id="header-actions" class="flex items-center gap-1 lg:gap-2 flex-shrink-0"></div>
+    <button id="theme-toggle" class="theme-toggle flex-shrink-0" onclick="toggleTheme()" aria-label="다크 모드 전환" title="테마 전환"><i class="fas fa-moon"></i></button>
     <div class="h-5 w-px bg-gray-200 mx-1.5 hidden lg:block"></div>
     <div id="user-menu" class="relative flex-shrink-0"></div>
   </header>
@@ -226,20 +227,21 @@ const HTML = `<!DOCTYPE html>
 </div><!-- /app-main -->
 
 <!-- Mobile Bottom Navigation -->
-<nav id="bottom-nav" class="btm-nav">
-  <div onclick="nav('dashboard')" id="bn-dashboard" class="btm-nav-item">
+<nav id="bottom-nav" class="btm-nav" role="navigation" aria-label="모바일 하단 메뉴">
+  <div onclick="nav('dashboard')" id="bn-dashboard" class="btm-nav-item" role="button" tabindex="0" aria-label="대시보드">
     <div class="relative"><i class="fas fa-chart-pie"></i><span id="bn-reminder-badge" class="btm-badge hidden">0</span></div><span>대시보드</span>
   </div>
-  <div onclick="nav('hospitals')" id="bn-hospitals" class="btm-nav-item">
+  <div onclick="nav('hospitals')" id="bn-hospitals" class="btm-nav-item" role="button" tabindex="0" aria-label="기관">
     <i class="fas fa-hospital"></i><span>기관</span>
   </div>
-  <!-- FAB spacer -->
-  <div class="btm-nav-fab-spacer"></div>
-  <div onclick="nav('doctors')" id="bn-doctors" class="btm-nav-item">
-    <i class="fas fa-user-doctor"></i><span>의료진</span>
-  </div>
-  <div onclick="nav('meetings')" id="bn-meetings" class="btm-nav-item">
+  <div onclick="nav('meetings')" id="bn-meetings" class="btm-nav-item" role="button" tabindex="0" aria-label="미팅">
     <i class="fas fa-calendar-check"></i><span>미팅</span>
+  </div>
+  <div onclick="nav('schedule')" id="bn-schedule" class="btm-nav-item" role="button" tabindex="0" aria-label="일정 플래너">
+    <i class="fas fa-route"></i><span>일정</span>
+  </div>
+  <div onclick="openMobileSearchSheet()" id="bn-search" class="btm-nav-item" role="button" tabindex="0" aria-label="검색">
+    <i class="fas fa-search"></i><span>검색</span>
   </div>
 </nav>
 

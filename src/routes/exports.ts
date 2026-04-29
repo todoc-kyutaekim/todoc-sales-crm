@@ -36,10 +36,12 @@ exports.get('/doctors', async (c) => {
 exports.get('/meetings', async (c) => {
   const r = await c.env.DB.prepare(`SELECT m.*, 
     (SELECT GROUP_CONCAT(d.name, ', ') FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id WHERE md.meeting_id=m.id) as doctor_names,
+    (SELECT GROUP_CONCAT(u.name, ', ') FROM meeting_users mu LEFT JOIN auth_users u ON mu.user_id=u.id WHERE mu.meeting_id=m.id) as user_names,
     h.name as hospital_name 
     FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id ORDER BY m.meeting_date DESC`).all()
-  const header = toCsvRow(['ID', '일자', '유형', '의료진', '병원', '목적', '내용', '결과', '후속액션', '다음미팅예정', '등록일'])
-  const rows = (r.results as any[]).map(m => toCsvRow([m.id, m.meeting_date, m.meeting_type, m.doctor_names || '', m.hospital_name, m.purpose, m.content, m.result, m.next_action, m.next_meeting_date || '', m.created_at]))
+  const vtMap: Record<string,string> = { am: '오전', pm: '오후', full: '종일' }
+  const header = toCsvRow(['ID', '일자', '시간대', '유형', '의료진', '병원', '담당자', '목적', '내용', '결과', '후속액션', '다음미팅예정', '등록일'])
+  const rows = (r.results as any[]).map(m => toCsvRow([m.id, m.meeting_date, vtMap[m.visit_time] || '', m.meeting_type, m.doctor_names || '', m.hospital_name, m.user_names || '', m.purpose, m.content, m.result, m.next_action, m.next_meeting_date || '', m.created_at]))
   const bom = '\uFEFF'
   c.header('Content-Type', 'text/csv; charset=utf-8')
   c.header('Content-Disposition', 'attachment; filename="meetings.csv"')
@@ -74,9 +76,11 @@ exports.get('/xlsx/:type', async (c) => {
   } else if (type === 'meetings') {
     const r = await c.env.DB.prepare(`SELECT m.*, 
       (SELECT GROUP_CONCAT(d.name, ', ') FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id WHERE md.meeting_id=m.id) as doctor_names,
+      (SELECT GROUP_CONCAT(u.name, ', ') FROM meeting_users mu LEFT JOIN auth_users u ON mu.user_id=u.id WHERE mu.meeting_id=m.id) as user_names,
       h.name as hospital_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id ORDER BY m.meeting_date DESC`).all()
-    headers = ['ID', '일자', '유형', '의료진', '병원', '목적', '내용', '결과', '후속액션', '다음미팅예정']
-    rows = (r.results as any[]).map(m => [m.id, m.meeting_date, m.meeting_type, m.doctor_names || '', m.hospital_name, m.purpose, m.content, m.result, m.next_action, m.next_meeting_date || ''])
+    const vtMap: Record<string,string> = { am: '오전', pm: '오후', full: '종일' }
+    headers = ['ID', '일자', '시간대', '유형', '의료진', '병원', '담당자', '목적', '내용', '결과', '후속액션', '다음미팅예정']
+    rows = (r.results as any[]).map(m => [m.id, m.meeting_date, vtMap[m.visit_time] || '', m.meeting_type, m.doctor_names || '', m.hospital_name, m.user_names || '', m.purpose, m.content, m.result, m.next_action, m.next_meeting_date || ''])
   } else {
     return c.json({ error: 'Invalid type' }, 400)
   }
