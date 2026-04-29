@@ -3256,6 +3256,7 @@ var _scheduleRegions = [];
 var _scheduleSuggestions = [];
 var _scheduleTimeOrdered = [];
 var _scheduleSelected = new Set();
+var _scheduleVisitTimes = {}; // hospital_id -> 'am'|'pm'|'full'|''
 var _schViewMode = 'time'; // 'time' or 'score'
 var _schDayLabel = '';
 var _schSelectedRegions = new Set();
@@ -3422,6 +3423,7 @@ async function fetchScheduleSuggestions() {
     _scheduleSuggestions = res.data.data || [];
     _scheduleTimeOrdered = res.data.time_ordered || [];
     _scheduleSelected = new Set();
+    _scheduleVisitTimes = {};
     _schDayLabel = res.data.dayLabel || '';
     var stats = res.data.stats || {};
     
@@ -3592,7 +3594,31 @@ function schTimeCard(s, list) {
             '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500"><i class="fas fa-map-marker-alt text-[8px] mr-0.5"></i>' + s.region + '</span>' +
             '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md" style="background:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '12;color:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '">' + (stageLabels[s.pipeline_stage] || s.pipeline_stage) + '</span>' +
             (s.visit_time ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100"><i class="fas fa-clock mr-0.5"></i>' + s.visit_label + '</span>' : '') +
-          '</div>';
+          '</div>' +
+          // 방문 시간대 선택 (오전/오후/종일)
+          (function() {
+            // 추천 슬롯 기반 기본값 자동 설정 (사용자가 변경 안 했을 때)
+            if (_scheduleVisitTimes[s.hospital_id] === undefined) {
+              if (s.visit_slot === 'am_end') _scheduleVisitTimes[s.hospital_id] = 'am';
+              else if (s.visit_slot === 'pm_end') _scheduleVisitTimes[s.hospital_id] = 'pm';
+              else _scheduleVisitTimes[s.hospital_id] = '';
+            }
+            var current = _scheduleVisitTimes[s.hospital_id] || '';
+            var btn = function(val, label, bg, fg, bd) {
+              var active = current === val;
+              var style = active
+                ? 'background:' + bg + ';color:' + fg + ';border-color:' + bd + ';font-weight:700'
+                : 'background:#fff;color:#94a3b8;border-color:#e5e7eb';
+              return '<button type="button" onclick="event.stopPropagation();setScheduleVisitTime(' + s.hospital_id + ',\'' + val + '\')" class="text-[10px] px-2 py-1 rounded-md border transition-all" style="' + style + '">' + label + '</button>';
+            };
+            return '<div class="flex items-center gap-1.5 mt-2 flex-wrap" onclick="event.stopPropagation()">' +
+              '<span class="text-[10px] text-slate-400 font-semibold mr-0.5"><i class="fas fa-clock-rotate-left mr-0.5"></i>방문 시간대:</span>' +
+              btn('am',   '오전', '#fff7ed', '#c2410c', '#fed7aa') +
+              btn('pm',   '오후', '#eff6ff', '#1d4ed8', '#bfdbfe') +
+              btn('full', '종일', '#f3e8ff', '#7e22ce', '#e9d5ff') +
+              btn('',     '미지정', '#f1f5f9', '#475569', '#cbd5e1') +
+            '</div>';
+          })();
   
   // 외래 의사 상세 표시
   if (s.clinic_analysis && s.clinic_analysis.length > 0) {
@@ -3682,6 +3708,23 @@ function toggleScheduleSelect(hospId) {
   updateScheduleSelection();
 }
 
+function setScheduleVisitTime(hospId, val) {
+  _scheduleVisitTimes[hospId] = val;
+  // 선택되지 않았다면 자동으로 선택
+  if (!_scheduleSelected.has(hospId)) _scheduleSelected.add(hospId);
+  // 화면 재렌더링
+  var regions = Array.from(_schSelectedRegions).join(', ');
+  var date = document.getElementById('sch-date').value;
+  var stats = {
+    total_in_region: _scheduleSuggestions.length,
+    suggested: _scheduleSuggestions.length,
+    has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
+    clinic_today_count: _scheduleSuggestions.filter(function(s) { return s.has_clinic_today; }).length
+  };
+  renderScheduleResults(regions, date, stats);
+  updateScheduleSelection();
+}
+
 function selectAllSchedule() {
   var list = _schViewMode === 'time' ? _scheduleTimeOrdered : _scheduleSuggestions;
   if (_scheduleSelected.size === list.length) _scheduleSelected.clear();
@@ -3724,11 +3767,19 @@ async function createSchedulePlan() {
   var visits = [];
   _scheduleSuggestions.forEach(function(s) {
     if (_scheduleSelected.has(s.hospital_id)) {
+      // 방문 시간대 결정 (사용자 선택 우선, 없으면 추천 슬롯 기반)
+      var vt = _scheduleVisitTimes[s.hospital_id];
+      if (vt === undefined) {
+        if (s.visit_slot === 'am_end') vt = 'am';
+        else if (s.visit_slot === 'pm_end') vt = 'pm';
+        else vt = '';
+      }
       visits.push({
         hospital_id: s.hospital_id,
         doctor_ids: s.doctors.map(function(d) { return d.id; }),
         purpose: '영업 방문 (일정 플래너)',
-        meeting_type: 'visit'
+        meeting_type: 'visit',
+        visit_time: vt
       });
     }
   });
@@ -3748,15 +3799,28 @@ async function createSchedulePlan() {
       '<div class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1">' + userCbs + '</div></div>';
   } catch(e) {}
   
+  // 방문 시간대 요약
+  var amCount = visits.filter(function(v) { return v.visit_time === 'am'; }).length;
+  var pmCount = visits.filter(function(v) { return v.visit_time === 'pm'; }).length;
+  var fullCount = visits.filter(function(v) { return v.visit_time === 'full'; }).length;
+  var noneCount = visits.filter(function(v) { return !v.visit_time; }).length;
+  var slotSummary = '<div class="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">' +
+    (amCount   ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#fff7ed;color:#c2410c;border:1px solid #fed7aa"><i class="fas fa-sun mr-0.5"></i>오전 ' + amCount + '</span>' : '') +
+    (pmCount   ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe"><i class="fas fa-cloud-sun mr-0.5"></i>오후 ' + pmCount + '</span>' : '') +
+    (fullCount ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#f3e8ff;color:#7e22ce;border:1px solid #e9d5ff"><i class="fas fa-clock mr-0.5"></i>종일 ' + fullCount + '</span>' : '') +
+    (noneCount ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">미지정 ' + noneCount + '</span>' : '') +
+  '</div>';
+
   showConfirm(
     '미팅 일괄 생성',
-    date + '에 <strong>' + visits.length + '건</strong>의 방문 미팅을 생성합니다.',
+    date + '에 <strong>' + visits.length + '건</strong>의 방문 미팅을 생성합니다.' + slotSummary,
     async function() {
       var selUserIds = Array.from(document.querySelectorAll('input[name="confirm_user_ids"]:checked')).map(function(cb) { return Number(cb.value); });
       try {
         var res = await API.post('/schedule/plan', { date: date, visits: visits, user_ids: selUserIds.length > 0 ? selUserIds : null });
         toast(res.data.data.count + '건의 미팅이 생성되었습니다');
         _scheduleSelected.clear();
+        _scheduleVisitTimes = {};
         fetchScheduleSuggestions();
       } catch(e) { toast('미팅 생성 중 오류가 발생했습니다', 'err'); }
     },

@@ -342,7 +342,7 @@ schedule.post('/plan', async (c) => {
   const created: any[] = []
   
   for (const visit of visits) {
-    const { hospital_id, doctor_ids, purpose, meeting_type } = visit
+    const { hospital_id, doctor_ids, purpose, meeting_type, visit_time } = visit
     if (!hospital_id) continue
 
     let docIds = doctor_ids || []
@@ -355,10 +355,13 @@ schedule.post('/plan', async (c) => {
 
     if (docIds.length === 0) continue
 
+    // Validate visit_time (am/pm/full or empty)
+    const validVisitTime = ['am', 'pm', 'full'].includes(visit_time) ? visit_time : ''
+
     const primaryDoctorId = docIds[0]
     const r = await c.env.DB.prepare(
-      'INSERT INTO meetings (doctor_id, hospital_id, meeting_date, meeting_type, purpose, content, result, next_action, next_meeting_date, user_id) VALUES (?,?,?,?,?,?,?,?,?,?)'
-    ).bind(primaryDoctorId, hospital_id, date, meeting_type || 'visit', purpose || '일정 플래너 자동 생성', '', '', '', null, primaryUserId).run()
+      'INSERT INTO meetings (doctor_id, hospital_id, meeting_date, meeting_type, visit_time, purpose, content, result, next_action, next_meeting_date, user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+    ).bind(primaryDoctorId, hospital_id, date, meeting_type || 'visit', validVisitTime, purpose || '일정 플래너 자동 생성', '', '', '', null, primaryUserId).run()
 
     const meetingId = r.meta.last_row_id as number
     // Sync meeting_doctors
