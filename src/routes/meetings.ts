@@ -155,6 +155,39 @@ meetings.get('/', async (c) => {
   return c.json({ data })
 })
 
+// GET /api/meetings/:id - get a single meeting with doctors and users
+meetings.get('/:id', async (c) => {
+  const id = Number(c.req.param('id'))
+  if (!id) return c.json({ error: 'Invalid meeting id' }, 400)
+  const m = await c.env.DB.prepare(
+    `SELECT m.*, h.name as hospital_name, u.name as user_name
+     FROM meetings m
+     LEFT JOIN hospitals h ON m.hospital_id = h.id
+     LEFT JOIN users u ON m.user_id = u.id
+     WHERE m.id = ?`
+  ).bind(id).first() as any
+  if (!m) return c.json({ error: 'Not found' }, 404)
+  const [doctorsMap, usersMap] = await Promise.all([
+    getMeetingDoctors(c.env.DB, [id]),
+    getMeetingUsers(c.env.DB, [id]),
+  ])
+  const doctors = doctorsMap.get(id) || []
+  const users = usersMap.get(id) || []
+  return c.json({
+    data: {
+      ...m,
+      doctors,
+      doctor_ids: doctors.map((d: any) => d.id),
+      doctor_id: doctors.length > 0 ? doctors[0].id : m.doctor_id,
+      doctor_name: doctors.length > 0 ? doctors.map((d: any) => d.name).join(', ') : null,
+      doctor_photo: doctors.length > 0 ? doctors[0].photo : null,
+      users,
+      user_ids: users.map((u: any) => u.id),
+      user_names: users.map((u: any) => u.name).join(', ') || m.user_name || null,
+    },
+  })
+})
+
 meetings.post('/', async (c) => {
   const b = await c.req.json()
   const doctorIds = extractDoctorIds(b)
@@ -168,8 +201,8 @@ meetings.post('/', async (c) => {
   
   // Insert meeting (keep doctor_id as first doctor for backward compat)
   const primaryDoctorId = doctorIds[0]
-  const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,visit_time,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId).run()
+  const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,visit_time,start_time,end_time,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.start_time || null, b.end_time || null, b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId).run()
   
   const meetingId = r.meta.last_row_id as number
   
@@ -198,8 +231,8 @@ meetings.put('/:id', async (c) => {
   const primaryDoctorId = doctorIds[0]
   const userIds = extractUserIds(b, c.get('userId'))
   const primaryUserId = userIds.length > 0 ? userIds[0] : null
-  await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,visit_time=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId, id).run()
+  await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,visit_time=?,start_time=?,end_time=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.start_time || null, b.end_time || null, b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId, id).run()
   
   // Sync meeting_doctors and meeting_users
   await syncMeetingDoctors(c.env.DB, Number(id), doctorIds)
@@ -225,6 +258,27 @@ meetings.patch('/:id', async (c) => {
   if ('next_meeting_date' in b) {
     await c.env.DB.prepare('UPDATE meetings SET next_meeting_date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
       .bind(b.next_meeting_date || null, id).run()
+  }
+  // Drag-and-drop reschedule: meeting_date / visit_time / start_time / end_time update
+  // If which='next', update next_meeting_date instead of meeting_date (for virtual entries)
+  if ('meeting_date' in b || 'visit_time' in b || 'start_time' in b || 'end_time' in b) {
+    const which = b.which || 'main' // 'main' | 'next'
+    if (which === 'next') {
+      // Only meeting_date payload applies to next_meeting_date
+      if ('meeting_date' in b) {
+        await c.env.DB.prepare('UPDATE meetings SET next_meeting_date=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+          .bind(b.meeting_date || null, id).run()
+      }
+    } else {
+      const current = await c.env.DB.prepare('SELECT meeting_date, visit_time, start_time, end_time FROM meetings WHERE id=?').bind(id).first() as any
+      if (!current) return c.json({ error: 'Not found' }, 404)
+      const newDate = ('meeting_date' in b) ? (b.meeting_date || current.meeting_date) : current.meeting_date
+      const newVT = ('visit_time' in b) ? (b.visit_time === '' ? null : b.visit_time) : current.visit_time
+      const newST = ('start_time' in b) ? (b.start_time === '' ? null : b.start_time) : current.start_time
+      const newET = ('end_time' in b) ? (b.end_time === '' ? null : b.end_time) : current.end_time
+      await c.env.DB.prepare('UPDATE meetings SET meeting_date=?, visit_time=?, start_time=?, end_time=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
+        .bind(newDate, newVT, newST, newET, id).run()
+    }
   }
   return c.json({ data: { id: Number(id), updated: true } })
 })

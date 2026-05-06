@@ -278,4 +278,437 @@ dashboard.get('/', async (c) => {
   }})
 })
 
+// ===== Personal KPI: /api/dashboard/me =====
+// Returns the current user's KPI metrics (this month vs last month)
+dashboard.get('/me', async (c) => {
+  const userId = (c as any).get('userId') as number
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401)
+  const period = c.req.query('period') || 'month'
+  let dateFilter = `date('now',${KST},'start of month')`
+  let prevDateFilter = `date('now',${KST},'start of month','-1 month')`
+  let prevEndFilter = `date('now',${KST},'start of month')`
+  if (period === 'quarter') {
+    dateFilter = `date('now',${KST},'start of month','-2 months','start of month')`
+    prevDateFilter = `date('now',${KST},'start of month','-5 months','start of month')`
+    prevEndFilter = `date('now',${KST},'start of month','-2 months','start of month')`
+  } else if (period === 'year') {
+    dateFilter = `date('now',${KST},'start of year')`
+    prevDateFilter = `date('now',${KST},'start of year','-1 year')`
+    prevEndFilter = `date('now',${KST},'start of year')`
+  }
+
+  // My meetings (joined via meeting_users)
+  const baseFromMyMeetings = `
+    FROM meetings m
+    INNER JOIN meeting_users mu ON mu.meeting_id = m.id AND mu.user_id = ?
+  `
+
+  const [myMeetings, myMeetingsPrev, myNewHospitals, myNewDoctors, myByType, myUpcoming, mySuccessful, monthlyMeetingsTrend] = await Promise.all([
+    c.env.DB.prepare(`SELECT COUNT(*) as c ${baseFromMyMeetings} WHERE m.meeting_date >= ${dateFilter}`).bind(userId).first(),
+    c.env.DB.prepare(`SELECT COUNT(*) as c ${baseFromMyMeetings} WHERE m.meeting_date >= ${prevDateFilter} AND m.meeting_date < ${prevEndFilter}`).bind(userId).first(),
+    // New hospitals where I had a meeting this period (proxy for new institutions)
+    c.env.DB.prepare(`
+      SELECT COUNT(DISTINCT m.hospital_id) as c
+      ${baseFromMyMeetings}
+      WHERE m.meeting_date >= ${dateFilter}
+        AND m.hospital_id NOT IN (
+          SELECT DISTINCT m2.hospital_id
+          FROM meetings m2
+          INNER JOIN meeting_users mu2 ON mu2.meeting_id = m2.id AND mu2.user_id = ?
+          WHERE m2.meeting_date < ${dateFilter}
+        )
+    `).bind(userId, userId).first(),
+    c.env.DB.prepare(`
+      SELECT COUNT(DISTINCT md.doctor_id) as c
+      FROM meetings m
+      INNER JOIN meeting_users mu ON mu.meeting_id = m.id AND mu.user_id = ?
+      INNER JOIN meeting_doctors md ON md.meeting_id = m.id
+      WHERE m.meeting_date >= ${dateFilter}
+    `).bind(userId).first(),
+    c.env.DB.prepare(`
+      SELECT m.meeting_type, COUNT(*) as c
+      ${baseFromMyMeetings}
+      WHERE m.meeting_date >= ${dateFilter}
+      GROUP BY m.meeting_type
+    `).bind(userId).all(),
+    c.env.DB.prepare(`
+      SELECT m.id, m.meeting_date, m.next_meeting_date, m.next_action, m.visit_time, m.meeting_type, h.name as hospital_name
+      ${baseFromMyMeetings}
+      LEFT JOIN hospitals h ON m.hospital_id = h.id
+      WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date >= date('now',${KST})
+      ORDER BY m.next_meeting_date ASC LIMIT 10
+    `).bind(userId).all(),
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as c
+      ${baseFromMyMeetings}
+      WHERE m.meeting_date >= ${dateFilter}
+        AND m.result IS NOT NULL AND m.result != ''
+    `).bind(userId).first(),
+    // 6-month personal trend
+    c.env.DB.prepare(`
+      SELECT strftime('%Y-%m', m.meeting_date) as month, COUNT(*) as count
+      ${baseFromMyMeetings}
+      WHERE m.meeting_date >= date('now',${KST},'-6 months')
+      GROUP BY month ORDER BY month ASC
+    `).bind(userId).all(),
+  ])
+
+  const cur = (myMeetings as any)?.c || 0
+  const prev = (myMeetingsPrev as any)?.c || 0
+  const change = prev > 0 ? Math.round(((cur - prev) / prev) * 100) : (cur > 0 ? 100 : 0)
+  const total = cur || 1
+  const successCount = (mySuccessful as any)?.c || 0
+  const conversionRate = Math.round((successCount / total) * 100)
+
+  // Activity score: visit=3, conference=3, online=2, phone=1.5, email=1
+  const weights: any = { visit: 3, conference: 3, online: 2, phone: 1.5, email: 1 }
+  let activityScore = 0
+  for (const row of (myByType.results || []) as any[]) {
+    activityScore += (weights[row.meeting_type] || 1) * (row.c || 0)
+  }
+  activityScore = Math.round(activityScore * 10) / 10
+
+  return c.json({ data: {
+    period,
+    myMeetings: cur,
+    myMeetingsPrev: prev,
+    change,
+    myNewHospitals: (myNewHospitals as any)?.c || 0,
+    myNewDoctors: (myNewDoctors as any)?.c || 0,
+    successCount,
+    conversionRate,
+    activityScore,
+    byType: myByType.results,
+    upcoming: myUpcoming.results,
+    monthlyTrend: monthlyMeetingsTrend.results,
+  }})
+})
+
+// ===== Personal KPI Target Management =====
+// GET /api/dashboard/kpi-target?year=YYYY&month=MM (defaults to current month)
+dashboard.get('/kpi-target', async (c) => {
+  const userId = (c as any).get('userId') as number
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401)
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  const year = parseInt(c.req.query('year') || String(now.getUTCFullYear()), 10)
+  const month = parseInt(c.req.query('month') || String(now.getUTCMonth() + 1), 10)
+
+  // Try to get user-specific target first; fall back to global (user_id IS NULL)
+  let target: any = null
+  try {
+    target = await c.env.DB.prepare(
+      'SELECT * FROM kpi_targets WHERE year=? AND month=? AND user_id=?'
+    ).bind(year, month, userId).first()
+  } catch (e) {}
+  if (!target) {
+    target = await c.env.DB.prepare(
+      'SELECT * FROM kpi_targets WHERE year=? AND month=? AND (user_id IS NULL OR user_id=0)'
+    ).bind(year, month).first().catch(() => null)
+  }
+
+  // Compute current achievement for the same month
+  const startOfMonth = `${year}-${String(month).padStart(2, '0')}-01`
+  // Last day: use SQLite to compute end of month
+  const endRow = await c.env.DB.prepare(
+    `SELECT date(?, '+1 month', '-1 day') as eom`
+  ).bind(startOfMonth).first<any>()
+  const endOfMonth = endRow?.eom || startOfMonth
+
+  const [meetingsCount, newHospCount, contractCount] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as c FROM meetings m
+       INNER JOIN meeting_users mu ON mu.meeting_id=m.id AND mu.user_id=?
+       WHERE m.meeting_date >= ? AND m.meeting_date <= ?`
+    ).bind(userId, startOfMonth, endOfMonth).first<any>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(DISTINCT m.hospital_id) as c FROM meetings m
+       INNER JOIN meeting_users mu ON mu.meeting_id=m.id AND mu.user_id=?
+       WHERE m.meeting_date >= ? AND m.meeting_date <= ?
+         AND m.hospital_id NOT IN (
+           SELECT DISTINCT m2.hospital_id FROM meetings m2
+           INNER JOIN meeting_users mu2 ON mu2.meeting_id=m2.id AND mu2.user_id=?
+           WHERE m2.meeting_date < ?
+         )`
+    ).bind(userId, startOfMonth, endOfMonth, userId, startOfMonth).first<any>(),
+    c.env.DB.prepare(
+      `SELECT COUNT(DISTINCT h.id) as c FROM hospitals h
+       INNER JOIN meetings m ON m.hospital_id=h.id
+       INNER JOIN meeting_users mu ON mu.meeting_id=m.id AND mu.user_id=?
+       WHERE h.pipeline_stage IN ('contract','active_customer')
+         AND m.meeting_date >= ? AND m.meeting_date <= ?`
+    ).bind(userId, startOfMonth, endOfMonth).first<any>(),
+  ])
+
+  const cur = {
+    meetings: (meetingsCount as any)?.c || 0,
+    new_hospitals: (newHospCount as any)?.c || 0,
+    contracts: (contractCount as any)?.c || 0
+  }
+
+  const tgt = target ? {
+    target_meetings: target.target_meetings || 0,
+    target_new_hospitals: target.target_new_hospitals || 0,
+    target_contracts: target.target_contracts || 0
+  } : { target_meetings: 0, target_new_hospitals: 0, target_contracts: 0 }
+
+  // 달성률 계산
+  const pct = (cur: number, tgt: number) => tgt > 0 ? Math.min(999, Math.round((cur / tgt) * 100)) : 0
+
+  return c.json({
+    data: {
+      year, month,
+      target: tgt,
+      current: cur,
+      achievement: {
+        meetings_pct: pct(cur.meetings, tgt.target_meetings),
+        new_hospitals_pct: pct(cur.new_hospitals, tgt.target_new_hospitals),
+        contracts_pct: pct(cur.contracts, tgt.target_contracts)
+      }
+    }
+  })
+})
+
+// POST /api/dashboard/kpi-target
+// Body: { year, month, target_meetings, target_new_hospitals, target_contracts }
+dashboard.post('/kpi-target', async (c) => {
+  const userId = (c as any).get('userId') as number
+  if (!userId) return c.json({ error: 'Unauthorized' }, 401)
+  const b = await c.req.json()
+  const year = parseInt(b.year, 10)
+  const month = parseInt(b.month, 10)
+  if (!year || !month) return c.json({ error: 'year, month는 필수입니다.' }, 400)
+  const tm = parseInt(b.target_meetings || 0, 10) || 0
+  const tn = parseInt(b.target_new_hospitals || 0, 10) || 0
+  const tc = parseInt(b.target_contracts || 0, 10) || 0
+
+  // Try with user_id column; gracefully fall back to global if column doesn't exist
+  let saved = false
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO kpi_targets (user_id, year, month, target_meetings, target_new_hospitals, target_contracts)
+       VALUES (?,?,?,?,?,?)
+       ON CONFLICT(user_id, year, month) DO UPDATE SET
+         target_meetings=excluded.target_meetings,
+         target_new_hospitals=excluded.target_new_hospitals,
+         target_contracts=excluded.target_contracts`
+    ).bind(userId, year, month, tm, tn, tc).run()
+    saved = true
+  } catch (e) {}
+  if (!saved) {
+    // Fallback: per-(year,month) global record
+    const existing = await c.env.DB.prepare(
+      'SELECT id FROM kpi_targets WHERE year=? AND month=?'
+    ).bind(year, month).first()
+    if (existing) {
+      await c.env.DB.prepare(
+        'UPDATE kpi_targets SET target_meetings=?, target_new_hospitals=?, target_contracts=? WHERE year=? AND month=?'
+      ).bind(tm, tn, tc, year, month).run()
+    } else {
+      await c.env.DB.prepare(
+        'INSERT INTO kpi_targets (year, month, target_meetings, target_new_hospitals, target_contracts) VALUES (?,?,?,?,?)'
+      ).bind(year, month, tm, tn, tc).run()
+    }
+  }
+
+  return c.json({ data: { year, month, target_meetings: tm, target_new_hospitals: tn, target_contracts: tc } })
+})
+
+// ===== Team Ranking: /api/dashboard/ranking =====
+// Returns activity score ranking among all users for a period
+dashboard.get('/ranking', async (c) => {
+  const period = c.req.query('period') || 'month'
+  let dateFilter = `date('now',${KST},'start of month')`
+  if (period === 'quarter') {
+    dateFilter = `date('now',${KST},'start of month','-2 months','start of month')`
+  } else if (period === 'year') {
+    dateFilter = `date('now',${KST},'start of year')`
+  }
+
+  const r = await c.env.DB.prepare(`
+    SELECT u.id as user_id, u.name as user_name, u.email,
+      COUNT(DISTINCT m.id) as meeting_count,
+      COUNT(DISTINCT m.hospital_id) as hospital_count,
+      SUM(CASE WHEN m.meeting_type='visit' THEN 3 ELSE 0 END) +
+      SUM(CASE WHEN m.meeting_type='conference' THEN 3 ELSE 0 END) +
+      SUM(CASE WHEN m.meeting_type='online' THEN 2 ELSE 0 END) +
+      SUM(CASE WHEN m.meeting_type='phone' THEN 1.5 ELSE 0 END) +
+      SUM(CASE WHEN m.meeting_type='email' THEN 1 ELSE 0 END) as activity_score,
+      SUM(CASE WHEN m.result IS NOT NULL AND m.result != '' THEN 1 ELSE 0 END) as success_count
+    FROM users u
+    LEFT JOIN meeting_users mu ON mu.user_id = u.id
+    LEFT JOIN meetings m ON m.id = mu.meeting_id AND m.meeting_date >= ${dateFilter}
+    GROUP BY u.id, u.name, u.email
+    ORDER BY activity_score DESC, meeting_count DESC
+    LIMIT 20
+  `).all()
+
+  const ranking = (r.results as any[]).map((row, idx) => ({
+    rank: idx + 1,
+    user_id: row.user_id,
+    user_name: row.user_name,
+    email: row.email,
+    meeting_count: row.meeting_count || 0,
+    hospital_count: row.hospital_count || 0,
+    activity_score: Math.round((row.activity_score || 0) * 10) / 10,
+    success_count: row.success_count || 0,
+  }))
+
+  return c.json({ data: { period, ranking } })
+})
+
+// ===== Auto report (weekly / monthly) =====
+// GET /api/dashboard/report?range=week|month|custom&from=YYYY-MM-DD&to=YYYY-MM-DD
+dashboard.get('/report', async (c) => {
+  const range = c.req.query('range') || 'week'
+  let from = c.req.query('from') || ''
+  let to = c.req.query('to') || ''
+
+  // Compute KST-based date range when not custom
+  if (!from || !to || range !== 'custom') {
+    if (range === 'week') {
+      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'-6 days') as f, date('now',${KST}) as t`).first<any>()
+      from = startSql?.f || ''
+      to = startSql?.t || ''
+    } else if (range === 'month') {
+      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'start of month') as f, date('now',${KST}) as t`).first<any>()
+      from = startSql?.f || ''
+      to = startSql?.t || ''
+    } else if (range === 'last_week') {
+      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'-13 days') as f, date('now',${KST},'-7 days') as t`).first<any>()
+      from = startSql?.f || ''
+      to = startSql?.t || ''
+    } else if (range === 'last_month') {
+      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'start of month','-1 month') as f, date('now',${KST},'start of month','-1 day') as t`).first<any>()
+      from = startSql?.f || ''
+      to = startSql?.t || ''
+    }
+  }
+
+  if (!from || !to) return c.json({ error: 'Invalid date range' }, 400)
+
+  // Compute previous period (same length) for comparison
+  const lenSql = await c.env.DB.prepare(`SELECT julianday(?) - julianday(?) as days`).bind(to, from).first<any>()
+  const days = Math.max(0, Math.round(Number(lenSql?.days || 0))) + 1
+  const prevFromSql = await c.env.DB.prepare(`SELECT date(?, '-' || ? || ' days') as pf, date(?, '-' || ? || ' days') as pt`).bind(from, days, to, days).first<any>()
+  const prevFrom = prevFromSql?.pf || ''
+  const prevTo = prevFromSql?.pt || ''
+
+  const [
+    totalMeetings, prevTotalMeetings,
+    typeBreakdownRaw,
+    topHospitalsRaw,
+    topUsersRaw,
+    pipelineMovesRaw,
+    newHospitalsRaw,
+    newDoctorsRaw,
+    upcomingNextActionsRaw,
+    dailyTrendRaw
+  ] = await Promise.all([
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(from, to).first<any>(),
+    c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(prevFrom, prevTo).first<any>(),
+    c.env.DB.prepare('SELECT meeting_type, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_type ORDER BY c DESC').bind(from, to).all(),
+    c.env.DB.prepare('SELECT h.id, h.name, h.region, h.grade, COUNT(m.id) as c FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id WHERE m.meeting_date >= ? AND m.meeting_date <= ? GROUP BY h.id ORDER BY c DESC LIMIT 10').bind(from, to).all(),
+    c.env.DB.prepare(`SELECT u.id, u.name, COUNT(DISTINCT mu.meeting_id) as c
+      FROM meeting_users mu
+      LEFT JOIN users u ON mu.user_id=u.id
+      LEFT JOIN meetings m ON mu.meeting_id=m.id
+      WHERE m.meeting_date >= ? AND m.meeting_date <= ? AND u.id IS NOT NULL
+      GROUP BY u.id ORDER BY c DESC LIMIT 10`).bind(from, to).all(),
+    c.env.DB.prepare(`SELECT pt.from_stage, pt.to_stage, COUNT(*) as c
+      FROM pipeline_transitions pt
+      WHERE DATE(pt.created_at) >= ? AND DATE(pt.created_at) <= ?
+      GROUP BY pt.from_stage, pt.to_stage ORDER BY c DESC`).bind(from, to).all().catch(() => ({ results: [] })),
+    c.env.DB.prepare('SELECT id, name, region, grade, created_at FROM hospitals WHERE DATE(created_at) >= ? AND DATE(created_at) <= ? ORDER BY created_at DESC LIMIT 20').bind(from, to).all(),
+    c.env.DB.prepare('SELECT d.id, d.name, d.position, h.name as hospital_name, d.created_at FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id WHERE DATE(d.created_at) >= ? AND DATE(d.created_at) <= ? ORDER BY d.created_at DESC LIMIT 20').bind(from, to).all(),
+    c.env.DB.prepare(`SELECT m.id, m.next_meeting_date, m.next_action, h.name as hospital_name
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
+        AND m.next_meeting_date >= date('now',${KST}) AND m.next_meeting_date <= date('now',${KST},'+14 days')
+      ORDER BY m.next_meeting_date ASC LIMIT 30`).all(),
+    c.env.DB.prepare('SELECT meeting_date as d, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date ORDER BY meeting_date ASC').bind(from, to).all()
+  ])
+
+  const total = Number(totalMeetings?.c || 0)
+  const prevTotal = Number(prevTotalMeetings?.c || 0)
+  const diffPct = prevTotal > 0 ? Math.round(((total - prevTotal) / prevTotal) * 100) : (total > 0 ? 100 : 0)
+
+  return c.json({
+    data: {
+      range,
+      from, to,
+      prevFrom, prevTo,
+      summary: {
+        totalMeetings: total,
+        prevTotalMeetings: prevTotal,
+        diffPct,
+        newHospitals: (newHospitalsRaw.results as any[]).length,
+        newDoctors: (newDoctorsRaw.results as any[]).length,
+        upcomingNextActions: (upcomingNextActionsRaw.results as any[]).length
+      },
+      typeBreakdown: typeBreakdownRaw.results,
+      topHospitals: topHospitalsRaw.results,
+      topUsers: topUsersRaw.results,
+      pipelineMoves: pipelineMovesRaw.results || [],
+      newHospitals: newHospitalsRaw.results,
+      newDoctors: newDoctorsRaw.results,
+      upcomingNextActions: upcomingNextActionsRaw.results,
+      dailyTrend: dailyTrendRaw.results
+    }
+  })
+})
+
+// ===== Pipeline conversion analytics =====
+// GET /api/dashboard/pipeline-analytics?from=&to=
+dashboard.get('/pipeline-analytics', async (c) => {
+  const from = c.req.query('from') || ''
+  const to = c.req.query('to') || ''
+  const where: string[] = []
+  const params: any[] = []
+  if (from) { where.push('DATE(pt.created_at) >= ?'); params.push(from) }
+  if (to) { where.push('DATE(pt.created_at) <= ?'); params.push(to) }
+  const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : ''
+
+  const [transitionsRaw, currentStagesRaw, dwellTimeRaw, churnRaw] = await Promise.all([
+    // All transitions in the window (or all-time if no filter)
+    c.env.DB.prepare(`SELECT from_stage, to_stage, COUNT(*) as c FROM pipeline_transitions pt${whereSql} GROUP BY from_stage, to_stage`).bind(...params).all().catch(() => ({ results: [] })),
+    // Current stage distribution
+    c.env.DB.prepare(`SELECT COALESCE(pipeline_stage, 'contact') as stage, COUNT(*) as c FROM hospitals WHERE status='active' GROUP BY stage`).all(),
+    // Average dwell time per stage (days between sequential transitions for same hospital)
+    c.env.DB.prepare(`SELECT pt1.from_stage as stage,
+      AVG(julianday(pt2.created_at) - julianday(pt1.created_at)) as avg_days,
+      COUNT(*) as samples
+      FROM pipeline_transitions pt1
+      JOIN pipeline_transitions pt2 ON pt2.hospital_id = pt1.hospital_id
+        AND pt2.created_at > pt1.created_at
+        AND pt2.from_stage = pt1.to_stage
+      GROUP BY pt1.from_stage`).all().catch(() => ({ results: [] })),
+    // Churn: transitions to 'lost' or 'inactive'
+    c.env.DB.prepare(`SELECT from_stage, COUNT(*) as c FROM pipeline_transitions pt
+      WHERE to_stage IN ('lost','inactive','closed_lost')${where.length ? ' AND ' + where.join(' AND ') : ''}
+      GROUP BY from_stage`).bind(...params).all().catch(() => ({ results: [] }))
+  ])
+
+  // Compute conversion rates: for each from_stage, the share of transitions going to each to_stage
+  const transitions = (transitionsRaw.results as any[]) || []
+  const fromTotals: Record<string, number> = {}
+  for (const t of transitions) { fromTotals[t.from_stage] = (fromTotals[t.from_stage] || 0) + Number(t.c || 0) }
+  const conversionRates = transitions.map(t => ({
+    from_stage: t.from_stage,
+    to_stage: t.to_stage,
+    count: Number(t.c || 0),
+    rate: fromTotals[t.from_stage] > 0 ? Math.round((Number(t.c || 0) / fromTotals[t.from_stage]) * 1000) / 10 : 0
+  }))
+
+  return c.json({
+    data: {
+      from: from || null, to: to || null,
+      currentDistribution: currentStagesRaw.results,
+      transitions,
+      conversionRates,
+      avgDwellDays: dwellTimeRaw.results,
+      churn: churnRaw.results
+    }
+  })
+})
+
 export default dashboard

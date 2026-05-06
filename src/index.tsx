@@ -14,9 +14,10 @@ import favorites from './routes/favorites'
 import templates from './routes/templates'
 import pipeline from './routes/pipeline'
 import schedule from './routes/schedule'
+import comments from './routes/comments'
 
 type Bindings = { DB: D1Database }
-type Variables = { userId: number }
+type Variables = { userId: number; user?: { id: number, name: string, email: string } }
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 app.use('/api/*', cors())
 
@@ -28,21 +29,30 @@ app.use('/api/*', async (c, next) => {
   // Skip auth check for /api/auth/* routes
   if (c.req.path.startsWith('/api/auth')) return next()
 
-  const sessionId = c.req.header('X-Session-Id') || ''
+  // Allow export endpoints to use ?sid= query param fallback (because window.open cannot set headers)
+  let sessionId = c.req.header('X-Session-Id') || ''
+  if (!sessionId && c.req.path.startsWith('/api/export')) {
+    sessionId = c.req.query('sid') || ''
+  }
   if (!sessionId) {
     return c.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
   }
 
   const session = await c.env.DB.prepare(
-    'SELECT user_id FROM sessions WHERE id=? AND expires_at > datetime("now")'
+    `SELECT s.user_id, u.id as uid, u.name as uname, u.email as uemail
+     FROM sessions s LEFT JOIN users u ON u.id = s.user_id
+     WHERE s.id=? AND s.expires_at > datetime("now")`
   ).bind(sessionId).first() as any
 
   if (!session) {
     return c.json({ error: 'Unauthorized', code: 'UNAUTHORIZED' }, 401)
   }
 
-  // Store user_id in header for downstream routes
+  // Store user_id and user info for downstream routes
   c.set('userId', session.user_id)
+  if (session.uid) {
+    c.set('user', { id: session.uid, name: session.uname, email: session.uemail })
+  }
   await next()
 })
 
@@ -60,6 +70,7 @@ app.route('/api/favorites', favorites)
 app.route('/api/templates', templates)
 app.route('/api/pipeline', pipeline)
 app.route('/api/schedule', schedule)
+app.route('/api/comments', comments)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
@@ -167,31 +178,31 @@ const HTML = `<!DOCTYPE html>
 <div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-40 hidden lg:hidden" style="backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)" onclick="toggleSidebar()"></div>
 
 <!-- Sidebar -->
-<aside id="sidebar" class="w-[250px] flex-col flex-shrink-0 select-none fixed lg:relative z-50 h-full -translate-x-full lg:translate-x-0 transition-transform duration-200 hidden lg:flex" style="background:linear-gradient(180deg, #0f172a 0%, #1e293b 100%)">
+<aside id="sidebar" role="complementary" aria-label="사이드 내비게이션" class="w-[250px] flex-col flex-shrink-0 select-none fixed lg:relative z-50 h-full -translate-x-full lg:translate-x-0 transition-transform duration-200 hidden lg:flex" style="background:linear-gradient(180deg, #0f172a 0%, #1e293b 100%)">
   <div class="px-5 py-5 flex items-center gap-3">
-    <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:linear-gradient(135deg,#3b7bf7,#2563eb);box-shadow:0 4px 12px rgba(37,99,235,.35)">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm-2 13H8V9h2v7zm4 0h-2V9h2v7z" fill="#fff"/></svg>
+    <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:linear-gradient(135deg,#3b7bf7,#2563eb);box-shadow:0 4px 12px rgba(37,99,235,.35)" aria-hidden="true">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3C7.03 3 3 7.03 3 12s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm-2 13H8V9h2v7zm4 0h-2V9h2v7z" fill="#fff"/></svg>
     </div>
     <div>
       <div class="text-white font-extrabold text-[15px] tracking-tight leading-tight">TODOC</div>
       <div class="text-[10px] tracking-[.18em] font-semibold" style="color:rgba(148,163,184,.6)">SALES CRM</div>
     </div>
-    <button class="lg:hidden ml-auto text-slate-400 hover:text-white transition" onclick="toggleSidebar()"><i class="fas fa-xmark text-lg"></i></button>
+    <button class="lg:hidden ml-auto text-slate-400 hover:text-white transition" aria-label="사이드바 닫기" onclick="toggleSidebar()"><i class="fas fa-xmark text-lg" aria-hidden="true"></i></button>
   </div>
-  <div class="h-px mx-5" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.15),transparent)"></div>
-  <nav class="flex-1 py-4 space-y-0.5 overflow-y-auto px-1">
-    <div class="px-4 mb-2"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Main</span></div>
-    <div onclick="nav('dashboard')" id="n-dashboard" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-pie"></i></span>대시보드</div>
-    <div onclick="nav('hospitals')" id="n-hospitals" class="nav-item"><span class="nav-icon"><i class="fas fa-hospital"></i></span>기관 관리</div>
-    <div onclick="nav('doctors')" id="n-doctors" class="nav-item"><span class="nav-icon"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
-    <div onclick="nav('meetings')" id="n-meetings" class="nav-item"><span class="nav-icon"><i class="fas fa-calendar-check"></i></span>미팅 관리</div>
-    <div onclick="nav('schedule')" id="n-schedule" class="nav-item"><span class="nav-icon"><i class="fas fa-route"></i></span>일정 플래너</div>
-    <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)"></div>
-    <div class="px-4 mb-2"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Analytics</span></div>
-    <div onclick="nav('cistats')" id="n-cistats" class="nav-item"><span class="nav-icon"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
-    <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)"></div>
-    <div class="px-4 mb-2"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">System</span></div>
-    <div onclick="nav('activity')" id="n-activity" class="nav-item"><span class="nav-icon"><i class="fas fa-clock-rotate-left"></i></span>활동 로그</div>
+  <div class="h-px mx-5" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.15),transparent)" aria-hidden="true"></div>
+  <nav class="flex-1 py-4 space-y-0.5 overflow-y-auto px-1" role="navigation" aria-label="주 메뉴">
+    <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Main</span></div>
+    <div onclick="nav('dashboard')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('dashboard')}" id="n-dashboard" class="nav-item" role="link" tabindex="0" aria-label="대시보드"><span class="nav-icon" aria-hidden="true"><i class="fas fa-chart-pie"></i></span>대시보드</div>
+    <div onclick="nav('hospitals')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('hospitals')}" id="n-hospitals" class="nav-item" role="link" tabindex="0" aria-label="기관 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-hospital"></i></span>기관 관리</div>
+    <div onclick="nav('doctors')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('doctors')}" id="n-doctors" class="nav-item" role="link" tabindex="0" aria-label="의료진 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
+    <div onclick="nav('meetings')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('meetings')}" id="n-meetings" class="nav-item" role="link" tabindex="0" aria-label="미팅 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-calendar-check"></i></span>미팅 관리</div>
+    <div onclick="nav('schedule')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('schedule')}" id="n-schedule" class="nav-item" role="link" tabindex="0" aria-label="일정 플래너"><span class="nav-icon" aria-hidden="true"><i class="fas fa-route"></i></span>일정 플래너</div>
+    <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
+    <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Analytics</span></div>
+    <div onclick="nav('cistats')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cistats')}" id="n-cistats" class="nav-item" role="link" tabindex="0" aria-label="인공와우 통계"><span class="nav-icon" aria-hidden="true"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
+    <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
+    <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">System</span></div>
+    <div onclick="nav('activity')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('activity')}" id="n-activity" class="nav-item" role="link" tabindex="0" aria-label="활동 로그"><span class="nav-icon" aria-hidden="true"><i class="fas fa-clock-rotate-left"></i></span>활동 로그</div>
   </nav>
   <div class="px-5 py-4" style="border-top:1px solid rgba(148,163,184,.1)">
     <div class="text-[10px] leading-relaxed font-medium" style="color:rgba(148,163,184,.35)">&copy; 2026 TODOC Inc.<br>Cochlear Implant Solutions</div>
@@ -200,83 +211,95 @@ const HTML = `<!DOCTYPE html>
 
 <!-- Main -->
 <main class="flex-1 flex flex-col overflow-hidden min-w-0" style="background:#f8f9fc">
-  <header id="app-header" class="h-[48px] lg:h-[60px] bg-white/90 flex items-center px-3 lg:px-7 flex-shrink-0 gap-1.5 lg:gap-3 safe-top" style="min-height:48px;border-bottom:1px solid #eef0f5;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
+  <a href="#content" class="skip-link">본문으로 건너뛰기</a>
+  <header id="app-header" role="banner" class="h-[48px] lg:h-[60px] bg-white/90 flex items-center px-3 lg:px-7 flex-shrink-0 gap-1.5 lg:gap-3 safe-top" style="min-height:48px;border-bottom:1px solid #eef0f5;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
     <div class="flex items-center gap-1.5 lg:gap-3 min-w-0 flex-1 overflow-hidden">
-      <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1 hidden" onclick="toggleSidebar()"><i class="fas fa-bars text-lg"></i></button>
+      <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1 hidden" aria-label="사이드바 토글" onclick="toggleSidebar()"><i class="fas fa-bars text-lg" aria-hidden="true"></i></button>
       <h2 id="page-title" class="text-[14px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate leading-none"></h2>
       <span id="page-subtitle" class="text-xs text-slate-400 font-medium hidden sm:inline"></span>
     </div>
     <!-- Mobile Search Button -->
-    <button id="mobile-search-btn" class="mobile-search-btn sm:hidden" onclick="toggleMobileSearch()"><i class="fas fa-search"></i></button>
+    <button id="mobile-search-btn" class="mobile-search-btn sm:hidden" aria-label="검색 열기" onclick="toggleMobileSearch()"><i class="fas fa-search" aria-hidden="true"></i></button>
     <!-- Global Search -->
-    <div id="search-wrap-outer" class="flex-1 max-w-md mx-2 hidden sm:block">
+    <div id="search-wrap-outer" class="flex-1 max-w-md mx-2 hidden sm:block" role="search">
       <div class="relative" id="search-wrap">
-        <i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>
-        <input id="global-search" type="text" placeholder="기관, 의료진, 미팅 검색... (Ctrl+K)" class="input pl-10 pr-3 py-2 text-sm w-full !border-gray-200 bg-gray-50/80 focus:bg-white" style="border-radius:10px" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off">
-        <div id="search-results" class="absolute top-full left-0 right-0 mt-1.5 bg-white border border-gray-100 z-50 hidden max-h-[70vh] overflow-y-auto" style="border-radius:14px;box-shadow:0 12px 32px -4px rgba(16,24,40,.12),0 0 0 1px rgba(0,0,0,.03)"></div>
+        <i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs" aria-hidden="true"></i>
+        <label for="global-search" class="sr-only">전역 검색</label>
+        <input id="global-search" type="text" placeholder="기관, 의료진, 미팅 검색... (Ctrl+K)" class="input pl-10 pr-3 py-2 text-sm w-full !border-gray-200 bg-gray-50/80 focus:bg-white" style="border-radius:10px" oninput="onGlobalSearch(this.value)" onfocus="showSearchResults()" autocomplete="off" aria-controls="search-results" aria-expanded="false">
+        <div id="search-results" role="listbox" aria-label="검색 결과" class="absolute top-full left-0 right-0 mt-1.5 bg-white border border-gray-100 z-50 hidden max-h-[70vh] overflow-y-auto" style="border-radius:14px;box-shadow:0 12px 32px -4px rgba(16,24,40,.12),0 0 0 1px rgba(0,0,0,.03)"></div>
       </div>
     </div>
-    <div id="header-actions" class="flex items-center gap-1 lg:gap-2 flex-shrink-0"></div>
-    <button id="theme-toggle" class="theme-toggle flex-shrink-0" onclick="toggleTheme()" aria-label="다크 모드 전환" title="테마 전환"><i class="fas fa-moon"></i></button>
-    <div class="h-5 w-px bg-gray-200 mx-1.5 hidden lg:block"></div>
+    <div id="header-actions" class="flex items-center gap-1 lg:gap-2 flex-shrink-0" role="toolbar" aria-label="페이지 액션"></div>
+    <button id="mention-bell" class="theme-toggle flex-shrink-0 relative" onclick="toggleMentionPanel(event)" aria-label="멘션 알림" title="멘션 알림" aria-haspopup="true" aria-expanded="false"><i class="fas fa-bell" aria-hidden="true"></i><span id="mention-badge" class="absolute -top-1 -right-1 hidden min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-[16px] text-center" aria-live="polite">0</span></button>
+    <div id="mention-panel" class="hidden absolute z-50 bg-white border border-gray-100 rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
+    <button id="theme-toggle" class="theme-toggle flex-shrink-0" onclick="toggleTheme()" aria-label="다크 모드 전환" title="테마 전환"><i class="fas fa-moon" aria-hidden="true"></i></button>
+    <div class="h-5 w-px bg-gray-200 mx-1.5 hidden lg:block" aria-hidden="true"></div>
     <div id="user-menu" class="relative flex-shrink-0"></div>
   </header>
-  <div id="content" class="flex-1 overflow-y-auto overflow-x-hidden" style="padding-bottom:calc(64px + env(safe-area-inset-bottom, 0px))"></div>
+  <div id="content" role="main" tabindex="-1" class="flex-1 overflow-y-auto overflow-x-hidden" style="padding-bottom:calc(64px + env(safe-area-inset-bottom, 0px))"></div>
   <style>@media(min-width:1024px){#content{padding-bottom:0!important}}</style>
 </main>
 </div><!-- /app-main -->
 
 <!-- Mobile Bottom Navigation -->
 <nav id="bottom-nav" class="btm-nav" role="navigation" aria-label="모바일 하단 메뉴">
-  <div onclick="nav('dashboard')" id="bn-dashboard" class="btm-nav-item" role="button" tabindex="0" aria-label="대시보드">
-    <div class="relative"><i class="fas fa-chart-pie"></i><span id="bn-reminder-badge" class="btm-badge hidden">0</span></div><span>대시보드</span>
+  <div onclick="nav('dashboard')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('dashboard')}" id="bn-dashboard" class="btm-nav-item" role="button" tabindex="0" aria-label="대시보드">
+    <div class="relative"><i class="fas fa-chart-pie" aria-hidden="true"></i><span id="bn-reminder-badge" class="btm-badge hidden" aria-live="polite">0</span></div><span>대시보드</span>
   </div>
-  <div onclick="nav('hospitals')" id="bn-hospitals" class="btm-nav-item" role="button" tabindex="0" aria-label="기관">
-    <i class="fas fa-hospital"></i><span>기관</span>
+  <div onclick="nav('hospitals')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('hospitals')}" id="bn-hospitals" class="btm-nav-item" role="button" tabindex="0" aria-label="기관">
+    <i class="fas fa-hospital" aria-hidden="true"></i><span>기관</span>
   </div>
-  <div onclick="nav('meetings')" id="bn-meetings" class="btm-nav-item" role="button" tabindex="0" aria-label="미팅">
-    <i class="fas fa-calendar-check"></i><span>미팅</span>
+  <div onclick="nav('meetings')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('meetings')}" id="bn-meetings" class="btm-nav-item" role="button" tabindex="0" aria-label="미팅">
+    <i class="fas fa-calendar-check" aria-hidden="true"></i><span>미팅</span>
   </div>
-  <div onclick="nav('schedule')" id="bn-schedule" class="btm-nav-item" role="button" tabindex="0" aria-label="일정 플래너">
-    <i class="fas fa-route"></i><span>일정</span>
+  <div onclick="nav('schedule')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('schedule')}" id="bn-schedule" class="btm-nav-item" role="button" tabindex="0" aria-label="일정 플래너">
+    <i class="fas fa-route" aria-hidden="true"></i><span>일정</span>
   </div>
-  <div onclick="openMobileSearchSheet()" id="bn-search" class="btm-nav-item" role="button" tabindex="0" aria-label="검색">
-    <i class="fas fa-search"></i><span>검색</span>
+  <div onclick="openMobileSearchSheet()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openMobileSearchSheet()}" id="bn-search" class="btm-nav-item" role="button" tabindex="0" aria-label="검색">
+    <i class="fas fa-search" aria-hidden="true"></i><span>검색</span>
   </div>
 </nav>
 
 <!-- Mobile FAB (Floating Action Button) -->
-<button id="mobile-fab" class="mobile-fab hidden" onclick="toggleFabMenu()">
-  <i class="fas fa-plus"></i>
+<button id="mobile-fab" class="mobile-fab hidden" onclick="toggleFabMenu()" aria-label="빠른 작업 메뉴" aria-expanded="false" aria-controls="fab-menu">
+  <i class="fas fa-plus" aria-hidden="true"></i>
 </button>
-<div id="fab-menu" class="fab-menu hidden">
-  <div class="fab-menu-bg" onclick="closeFabMenu()"></div>
+<div id="fab-menu" class="fab-menu hidden" role="menu" aria-label="빠른 작업">
+  <div class="fab-menu-bg" onclick="closeFabMenu()" aria-hidden="true"></div>
   <div class="fab-menu-items">
-    <div class="fab-menu-item" onclick="closeFabMenu();showNewMeetGlobal()">
+    <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();showNewMeetGlobal()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();showNewMeetGlobal()}">
       <span class="fab-menu-label">빠른 미팅</span>
-      <div class="fab-menu-icon bg-emerald-500"><i class="fas fa-calendar-plus"></i></div>
+      <div class="fab-menu-icon bg-emerald-500"><i class="fas fa-calendar-plus" aria-hidden="true"></i></div>
     </div>
-    <div class="fab-menu-item" onclick="closeFabMenu();showHospForm()">
+    <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();showHospForm()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();showHospForm()}">
       <span class="fab-menu-label">기관 추가</span>
-      <div class="fab-menu-icon bg-blue-500"><i class="fas fa-hospital"></i></div>
+      <div class="fab-menu-icon bg-blue-500"><i class="fas fa-hospital" aria-hidden="true"></i></div>
     </div>
-    <div class="fab-menu-item" onclick="closeFabMenu();nav('cistats')">
+    <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();showDocForm()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();showDocForm()}">
+      <span class="fab-menu-label">의료진 추가</span>
+      <div class="fab-menu-icon bg-purple-500"><i class="fas fa-user-doctor" aria-hidden="true"></i></div>
+    </div>
+    <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();showReportPreview()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();showReportPreview()}">
+      <span class="fab-menu-label">보고서</span>
+      <div class="fab-menu-icon bg-amber-500"><i class="fas fa-file-lines" aria-hidden="true"></i></div>
+    </div>
+    <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();nav('cistats')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();nav('cistats')}">
       <span class="fab-menu-label">CI 통계</span>
-      <div class="fab-menu-icon bg-violet-500"><i class="fas fa-chart-bar"></i></div>
+      <div class="fab-menu-icon bg-violet-500"><i class="fas fa-chart-bar" aria-hidden="true"></i></div>
     </div>
-    <div class="fab-menu-item" onclick="closeFabMenu();nav('activity')">
+    <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();nav('activity')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();nav('activity')}">
       <span class="fab-menu-label">활동 로그</span>
-      <div class="fab-menu-icon bg-slate-500"><i class="fas fa-clock-rotate-left"></i></div>
+      <div class="fab-menu-icon bg-slate-500"><i class="fas fa-clock-rotate-left" aria-hidden="true"></i></div>
     </div>
   </div>
 </div>
 
 <!-- Modal -->
-<div id="modal" class="fixed inset-0 modal-bg z-50 hidden items-end lg:items-center justify-center lg:p-4" onclick="if(event.target===this)tryCloseModal()">
-  <div id="modal-content" class="modal-box bg-white w-full max-w-lg overflow-y-auto" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)" onclick="event.stopPropagation()">
+<div id="modal" class="fixed inset-0 modal-bg z-50 hidden items-end lg:items-center justify-center lg:p-4" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true" onclick="if(event.target===this)tryCloseModal()">
+  <div id="modal-content" class="modal-box bg-white w-full max-w-lg overflow-y-auto" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)" tabindex="-1" onclick="event.stopPropagation()">
     <div class="flex items-center justify-between px-5 lg:px-6 py-3.5 lg:py-4 sticky top-0 bg-white z-10" style="border-bottom:1px solid #eef0f5;border-radius:20px 20px 0 0">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px] tracking-tight"></h3>
-      <button onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg"></i></button>
+      <button type="button" aria-label="모달 닫기" onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg" aria-hidden="true"></i></button>
     </div>
     <div id="modal-body" class="p-5 lg:p-6"></div>
   </div>

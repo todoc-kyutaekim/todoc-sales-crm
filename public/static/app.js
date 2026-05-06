@@ -74,11 +74,6 @@ function sortList(list, key, dir) {
     if (['meeting_count', 'total_meetings', 'doctor_count', 'score'].includes(key)) {
       va = Number(va) || 0; vb = Number(vb) || 0;
     }
-    // Grade sort: S > A > B > C > D
-    if (key === 'grade') {
-      var go = { S: 5, A: 4, B: 3, C: 2, D: 1 };
-      va = go[va] || 0; vb = go[vb] || 0;
-    }
     // Influence sort: high > medium > low
     if (key === 'influence_level') {
       var io = { high: 3, medium: 2, low: 1 };
@@ -121,6 +116,7 @@ function clearSession() {
   localStorage.removeItem('todoc_user');
   currentUser = null;
   delete API.defaults.headers.common['X-Session-Id'];
+  if (typeof stopMentionPolling === 'function') stopMentionPolling();
 }
 
 function clearAutoLogin() {
@@ -304,6 +300,8 @@ async function initAuth() {
     currentUser = data.data;
     localStorage.setItem('todoc_user', JSON.stringify(currentUser));
     showAppScreen();
+    preloadUsers();
+    startMentionPolling();
   } catch (e) {
     clearSession();
     showAuthScreen();
@@ -400,7 +398,13 @@ function toggleFabMenu() {
   } else {
     fm.classList.remove('hidden');
     fab.classList.add('fab-open');
+    if (fab) fab.setAttribute('aria-expanded', 'true');
     setTimeout(function() { fm.classList.add('fab-menu-show'); }, 10);
+    // Focus first item for keyboard a11y
+    setTimeout(function() {
+      var first = fm.querySelector('.fab-menu-item');
+      if (first && first.focus) first.focus();
+    }, 60);
   }
 }
 function closeFabMenu() {
@@ -408,7 +412,7 @@ function closeFabMenu() {
   var fab = document.getElementById('mobile-fab');
   if (!fm) return;
   fm.classList.remove('fab-menu-show');
-  if (fab) fab.classList.remove('fab-open');
+  if (fab) { fab.classList.remove('fab-open'); fab.setAttribute('aria-expanded', 'false'); }
   setTimeout(function() { fm.classList.add('hidden'); }, 200);
 }
 // Show/hide FAB based on screen size
@@ -425,7 +429,9 @@ function updateFabVisibility() {
 window.addEventListener('resize', updateFabVisibility);
 
 function openModal(t, h, wide) {
-  document.getElementById('modal-title').textContent = t;
+  // Use innerHTML for title to support icon markup, fallback escaping handled by callers
+  var titleEl = document.getElementById('modal-title');
+  if (typeof t === 'string' && /<[a-z][^>]*>/i.test(t)) titleEl.innerHTML = t; else titleEl.textContent = t;
   document.getElementById('modal-body').innerHTML = h;
   const mc = document.getElementById('modal-content');
   mc.className = 'modal-box bg-white w-full overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
@@ -433,8 +439,25 @@ function openModal(t, h, wide) {
   var mdl = document.getElementById('modal');
   mdl.classList.remove('hidden');
   mdl.style.display = 'flex';
+  mdl.setAttribute('aria-hidden', 'false');
+  // Save current focus for restoration
+  window._modalLastFocus = document.activeElement;
+  // Move focus into the modal (first focusable element, or content)
+  setTimeout(function(){
+    var firstFocusable = mc.querySelector('input:not([type=hidden]),textarea,select,button,[href],[tabindex]:not([tabindex="-1"])');
+    if (firstFocusable) firstFocusable.focus();
+    else mc.focus();
+  }, 30);
 }
-function closeModal() { var mdl = document.getElementById('modal'); mdl.classList.add('hidden'); mdl.style.display = ''; }
+function closeModal() {
+  var mdl = document.getElementById('modal');
+  mdl.classList.add('hidden');
+  mdl.style.display = '';
+  mdl.setAttribute('aria-hidden', 'true');
+  // Restore previous focus
+  try { if (window._modalLastFocus && window._modalLastFocus.focus) window._modalLastFocus.focus(); } catch(e) {}
+  window._modalLastFocus = null;
+}
 function tryCloseModal() {
   var form = document.querySelector('#modal-body form');
   if (form) {
@@ -457,7 +480,24 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     var modalEl = document.getElementById('modal');
     if (modalEl && !modalEl.classList.contains('hidden')) { tryCloseModal(); }
+    var fmEl = document.getElementById('fab-menu');
+    if (fmEl && !fmEl.classList.contains('hidden')) { closeFabMenu(); }
     confirmNo(); hideSearchResults();
+  }
+  // Focus trap for modal: cycle Tab / Shift+Tab inside modal-content
+  if (e.key === 'Tab') {
+    var modalEl2 = document.getElementById('modal');
+    if (modalEl2 && !modalEl2.classList.contains('hidden')) {
+      var mc = document.getElementById('modal-content');
+      if (mc) {
+        var focusables = mc.querySelectorAll('input:not([type=hidden]):not([disabled]),textarea:not([disabled]),select:not([disabled]),button:not([disabled]),[href],[tabindex]:not([tabindex="-1"])');
+        if (focusables.length) {
+          var first = focusables[0], last = focusables[focusables.length - 1];
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+      }
+    }
   }
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); document.getElementById('global-search')?.focus(); toggleMobileSearch(true); }
   if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
@@ -533,13 +573,42 @@ function hideSearchResults() { document.getElementById('search-results')?.classL
 document.addEventListener('click', e => { if (!document.getElementById('search-wrap')?.contains(e.target) && !document.getElementById('mobile-search-btn')?.contains(e.target)) { hideSearchResults(); } });
 
 // ===== Helpers =====
-function fmtDate(d) { if (!d) return '-'; return new Date(d + 'T00:00:00').toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }) }
-function fmtShort(d) { if (!d) return '-'; return new Date(d + 'T00:00:00').toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' }) }
+function _parseDateOrDateTime(d) {
+  if (!d) return null;
+  var s = String(d).trim();
+  if (!s) return null;
+  // datetime form: 'YYYY-MM-DD HH:MM:SS' or 'YYYY-MM-DDTHH:MM:SS(...)?
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s)) {
+    var iso = s.replace(' ', 'T');
+    var dt = new Date(iso);
+    if (!isNaN(dt.getTime())) return dt;
+    return null;
+  }
+  // date-only form: 'YYYY-MM-DD'
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    var dt2 = new Date(s + 'T00:00:00');
+    if (!isNaN(dt2.getTime())) return dt2;
+    return null;
+  }
+  // fallback
+  var dt3 = new Date(s);
+  return isNaN(dt3.getTime()) ? null : dt3;
+}
+function fmtDate(d) { var dt = _parseDateOrDateTime(d); if (!dt) return '-'; return dt.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }) }
+function fmtShort(d) {
+  var dt = _parseDateOrDateTime(d);
+  if (!dt) return '-';
+  var s = String(d).trim();
+  // Include time when datetime is given
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s)) {
+    return dt.toLocaleString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  return dt.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+}
 function fmtMonthLabel(m) { if (!m) return ''; const [y, mo] = m.split('-'); return parseInt(mo) + '월' }
 function daysAgo(d) { if (!d) return ''; var now = new Date(); var todayKST = new Date(now.getFullYear(), now.getMonth(), now.getDate()); var target = new Date(d + 'T00:00:00'); var diff = Math.round((todayKST.getTime() - target.getTime()) / 86400000); if (diff === 0) return '오늘'; if (diff < 0) return Math.abs(diff) + '일 후'; return diff + '일 전' }
 function daysUntil(d) { if (!d) return Infinity; var now = new Date(); var todayKST = new Date(now.getFullYear(), now.getMonth(), now.getDate()); var target = new Date(d + 'T00:00:00'); return Math.round((target.getTime() - todayKST.getTime()) / 86400000) }
 function daysClass(d) { if (!d) return ''; var now = new Date(); var todayKST = new Date(now.getFullYear(), now.getMonth(), now.getDate()); var target = new Date(d + 'T00:00:00'); var diff = Math.round((todayKST.getTime() - target.getTime()) / 86400000); if (diff > 30) return 'text-red-500'; if (diff > 14) return 'text-amber-500'; return 'text-slate-400' }
-function gradeBadge(g) { return '<span class="badge grade-' + g + '">' + g + '급</span>' }
 function statusDot(s) { return s === 'active' ? '<span class="inline-flex items-center gap-1.5 text-[11px] text-emerald-600 font-semibold px-2 py-0.5 bg-emerald-50 rounded-full"><i class="fas fa-check-circle text-[9px]"></i>코드등록</span>' : '<span class="inline-flex items-center gap-1.5 text-[11px] text-amber-600 font-semibold px-2 py-0.5 bg-amber-50 rounded-full"><i class="fas fa-clock text-[9px]"></i>미등록</span>' }
 function infBadge(l) { return { high: '<span class="inf-high"><i class="fas fa-fire text-[9px]"></i> 핵심</span>', medium: '<span class="inf-medium"><i class="fas fa-star text-[9px]"></i> 주요</span>', low: '<span class="inf-low">일반</span>' }[l] || l }
 function mtBadge(t) { const m = { visit: ['방문', 'mt-visit', 'fa-building'], phone: ['전화', 'mt-phone', 'fa-phone'], conference: ['학회', 'mt-conference', 'fa-users'], email: ['이메일', 'mt-email', 'fa-envelope'], online: ['온라인', 'mt-online', 'fa-video'] }; const v = m[t] || ['기타', 'mt-visit', 'fa-circle']; return '<span class="mt ' + v[1] + '"><i class="fas ' + v[2] + ' text-[9px]"></i>' + v[0] + '</span>' }
@@ -552,6 +621,112 @@ function vtBadge(vt) {
   };
   var v = map[vt]; if (!v) return '';
   return '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md" style="background:' + v.bg + ';color:' + v.fg + ';border:1px solid ' + v.bd + '"><i class="fas ' + v.icon + ' text-[8px]"></i>' + v.label + '</span>';
+}
+
+// ===== Team Calendar — User color mapping =====
+// Generates a stable color for a user based on their id (HSL palette, accessible)
+var USER_COLOR_PALETTE = [
+  { bg: '#dbeafe', fg: '#1e40af', dot: '#3b82f6' }, // blue
+  { bg: '#fce7f3', fg: '#9d174d', dot: '#ec4899' }, // pink
+  { bg: '#dcfce7', fg: '#166534', dot: '#22c55e' }, // green
+  { bg: '#fef3c7', fg: '#92400e', dot: '#f59e0b' }, // amber
+  { bg: '#ede9fe', fg: '#5b21b6', dot: '#8b5cf6' }, // violet
+  { bg: '#cffafe', fg: '#155e75', dot: '#06b6d4' }, // cyan
+  { bg: '#fee2e2', fg: '#991b1b', dot: '#ef4444' }, // red
+  { bg: '#e0e7ff', fg: '#3730a3', dot: '#6366f1' }, // indigo
+  { bg: '#d1fae5', fg: '#065f46', dot: '#10b981' }, // emerald
+  { bg: '#fed7aa', fg: '#9a3412', dot: '#f97316' }, // orange
+];
+function userColor(uid) {
+  if (uid == null) return { bg: '#f1f5f9', fg: '#475569', dot: '#94a3b8' };
+  var idx = Math.abs(Number(uid) || 0) % USER_COLOR_PALETTE.length;
+  return USER_COLOR_PALETTE[idx];
+}
+function userDots(users, max) {
+  if (!users || !users.length) return '';
+  max = max || 3;
+  var arr = users.slice(0, max);
+  var html = '<span class="inline-flex items-center -space-x-0.5">';
+  arr.forEach(function(u) {
+    var c = userColor(u.user_id || u.id);
+    var nm = (u.user_name || u.name || '?').charAt(0);
+    html += '<span class="inline-flex items-center justify-center rounded-full text-[7px] font-bold border border-white" style="width:13px;height:13px;background:' + c.dot + ';color:#fff" title="' + (u.user_name || u.name || '') + '" aria-label="' + (u.user_name || u.name || '') + '">' + nm + '</span>';
+  });
+  if (users.length > max) html += '<span class="inline-flex items-center justify-center rounded-full text-[7px] font-bold border border-white" style="width:13px;height:13px;background:#94a3b8;color:#fff">+' + (users.length - max) + '</span>';
+  html += '</span>';
+  return html;
+}
+// User filter state for team calendar
+window._calUserFilter = window._calUserFilter || 'all';
+
+// ===== Dashboard Widget Customization =====
+// Each widget has a stable id. Hidden ids are stored in localStorage.
+var DASH_WIDGETS = [
+  { id: 'todayTasks',     label: '오늘의 할 일',        icon: 'fa-bolt',           desc: '오늘 미팅 / 지연 액션 / 미작성 / 후속' },
+  { id: 'myKpi',          label: '나의 KPI / 팀 랭킹',  icon: 'fa-user-shield',    desc: '개인 활동 KPI 및 팀 랭킹' },
+  { id: 'reminders',      label: '미팅 리마인더',       icon: 'fa-bell',           desc: '7일 이내 예정된 미팅 알림' },
+  { id: 'stats',          label: '통계 요약 카드',      icon: 'fa-chart-simple',   desc: '관리 기관 / 코드 / 의료진 / 미팅 등 6개' },
+  { id: 'codeRegistration', label: '병원코드 등록률',   icon: 'fa-id-card',        desc: '코드 등록 진행률 미터' },
+  { id: 'pipelineSummary', label: '파이프라인 현황',    icon: 'fa-filter',         desc: '단계별 기관 수 카운트' },
+  { id: 'thisWeek',       label: '이번 주 일정',        icon: 'fa-calendar-week',  desc: '이번 주 예정 미팅 리스트' },
+  { id: 'longInactive',   label: '장기 미접촉 기관',    icon: 'fa-triangle-exclamation', desc: '30일+ 미팅 없는 기관' },
+  { id: 'kpiGauge',       label: 'KPI 달성률',          icon: 'fa-bullseye',       desc: '월간 KPI 게이지' },
+  { id: 'ciKpi',          label: 'CI 시장 현황',        icon: 'fa-chart-line',     desc: '인공와우 시장 KPI 배너' },
+  { id: 'recentHighlights', label: '최근 등록 기관/의료진', icon: 'fa-plus',         desc: '14일 이내 신규 등록' },
+  { id: 'monthlyTrend',   label: '월별 미팅 추이',      icon: 'fa-chart-bar',      desc: '최근 6개월 추이 차트' },
+  { id: 'recentMeetings', label: '최근 미팅',           icon: 'fa-clock',          desc: '최근 8건' },
+  { id: 'upcomingActions', label: '후속 액션',          icon: 'fa-list-check',     desc: '예정된 액션 리스트' },
+  { id: 'regionStats',    label: '지역별 현황',         icon: 'fa-map-location-dot', desc: '지역별 기관 분포' }
+];
+function getHiddenWidgets() {
+  try { return JSON.parse(localStorage.getItem('todoc_dash_hidden') || '[]') || []; }
+  catch(e) { return []; }
+}
+function setHiddenWidgets(arr) {
+  try { localStorage.setItem('todoc_dash_hidden', JSON.stringify(arr || [])); } catch(e) {}
+}
+function isWidgetHidden(id) { return getHiddenWidgets().indexOf(id) >= 0; }
+function widgetWrap(id, html) {
+  if (!html || isWidgetHidden(id)) return '';
+  return '<div data-widget="' + id + '">' + html + '</div>';
+}
+function showWidgetSettings() {
+  var hidden = getHiddenWidgets();
+  var rows = DASH_WIDGETS.map(function(w) {
+    var checked = hidden.indexOf(w.id) < 0 ? 'checked' : '';
+    return '<label class="flex items-start gap-3 px-3 py-2.5 rounded-lg hover:bg-slate-50 cursor-pointer border border-gray-100 transition" style="display:flex">' +
+      '<input type="checkbox" data-widget-id="' + w.id + '" ' + checked + ' class="mt-1 w-4 h-4 accent-blue-600">' +
+      '<div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#eef4ff"><i class="fas ' + w.icon + ' text-brand-600 text-[11px]"></i></div>' +
+      '<div class="flex-1 min-w-0"><div class="font-semibold text-[13px] text-slate-800">' + w.label + '</div><div class="text-[11px] text-slate-400 truncate">' + w.desc + '</div></div>' +
+      '</label>';
+  }).join('');
+  openModal('대시보드 위젯 설정',
+    '<div class="space-y-3">' +
+      '<div class="text-[11px] text-slate-500 leading-relaxed bg-blue-50 px-3 py-2 rounded-lg border border-blue-100"><i class="fas fa-info-circle text-blue-500 mr-1"></i>표시할 위젯을 선택하세요. 설정은 이 브라우저에 저장됩니다.</div>' +
+      '<div id="widget-settings-list" class="space-y-1.5 max-h-[60vh] overflow-y-auto pr-1">' + rows + '</div>' +
+      '<div class="flex justify-between items-center gap-2 pt-3 border-t border-gray-100">' +
+        '<button type="button" class="btn btn-ghost btn-sm" onclick="resetWidgetSettings()"><i class="fas fa-rotate-left text-xs mr-1"></i>모두 표시</button>' +
+        '<div class="flex gap-2"><button type="button" class="btn btn-outline" onclick="closeModal()">취소</button><button type="button" class="btn btn-primary" onclick="saveWidgetSettings()">저장</button></div>' +
+      '</div>' +
+    '</div>'
+  );
+}
+function saveWidgetSettings() {
+  var inputs = document.querySelectorAll('#widget-settings-list input[type="checkbox"]');
+  var hidden = [];
+  inputs.forEach(function(inp) {
+    if (!inp.checked) hidden.push(inp.getAttribute('data-widget-id'));
+  });
+  setHiddenWidgets(hidden);
+  toast('대시보드 설정 저장됨');
+  closeModal();
+  if (typeof loadDash === 'function') loadDash();
+}
+function resetWidgetSettings() {
+  setHiddenWidgets([]);
+  var inputs = document.querySelectorAll('#widget-settings-list input[type="checkbox"]');
+  inputs.forEach(function(inp) { inp.checked = true; });
+  toast('모든 위젯 표시로 초기화');
 }
 
 // ===== Quick Action Bar — Today's Tasks =====
@@ -636,16 +811,34 @@ function fmtNum(n) { return n.toLocaleString('ko-KR') }
 function infoRow(label, val) { return '<div class="flex items-center justify-between py-1"><span class="text-[12px] text-slate-400">' + label + '</span><span class="text-[13px] font-medium text-slate-700">' + (val || '-') + '</span></div>' }
 
 // ===== CSV/XLSX Download =====
-function downloadCSV(type) { window.open('/api/export/' + type, '_blank'); }
-function downloadXLSX(type) { window.open('/api/export/xlsx/' + type, '_blank'); }
+function _withSid(qs) {
+  var sid = localStorage.getItem('todoc_session') || '';
+  var pair = sid ? ('sid=' + encodeURIComponent(sid)) : '';
+  if (!pair) return qs || '';
+  return qs ? (qs + '&' + pair) : pair;
+}
+function downloadCSV(type, qs) {
+  var q = _withSid(qs);
+  window.open('/api/export/' + type + (q ? ('?' + q) : ''), '_blank');
+}
+function downloadXLSX(type, qs) {
+  var q = _withSid(qs);
+  window.open('/api/export/xlsx/' + type + (q ? ('?' + q) : ''), '_blank');
+}
+function downloadFullReport() {
+  var q = _withSid('');
+  window.open('/api/export/report/full' + (q ? ('?' + q) : ''), '_blank');
+}
 function exportMenu(type, label) {
   // Returns HTML for a unified export dropdown button
   const id = 'expmenu_' + type + '_' + Math.random().toString(36).slice(2,7);
   return '<div class="relative inline-block" id="' + id + '">'
-    + '<button class="btn btn-outline btn-sm" onclick="(function(e){e.stopPropagation();var m=document.getElementById(\''+id+'\').querySelector(\'.exp-menu\');var open=!m.classList.contains(\'hidden\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')});if(!open)m.classList.remove(\'hidden\');})(event)" aria-label="' + (label || '내보내기') + ' 내보내기"><i class="fas fa-file-export text-xs"></i><span class="hidden sm:inline">내보내기</span></button>'
-    + '<div class="exp-menu hidden absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50" style="min-width:140px">'
-    + '<button class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadXLSX(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-excel text-emerald-600"></i>Excel (.xls)</button>'
-    + '<button class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadCSV(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-csv text-slate-600"></i>CSV (.csv)</button>'
+    + '<button class="btn btn-outline btn-sm" onclick="(function(e){e.stopPropagation();var m=document.getElementById(\''+id+'\').querySelector(\'.exp-menu\');var open=!m.classList.contains(\'hidden\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')});if(!open)m.classList.remove(\'hidden\');})(event)" aria-label="' + (label || '내보내기') + ' 내보내기"><i class="fas fa-file-export text-xs" aria-hidden="true"></i><span class="hidden sm:inline">내보내기</span></button>'
+    + '<div class="exp-menu hidden absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50" style="min-width:180px" role="menu">'
+    + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadXLSX(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-excel text-emerald-600" aria-hidden="true"></i>Excel (.xls)</button>'
+    + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadCSV(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-csv text-slate-600" aria-hidden="true"></i>CSV (.csv)</button>'
+    + '<div class="border-t border-slate-100 my-1"></div>'
+    + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadFullReport();document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})" title="요약 + 기관/의료진/미팅/활동로그를 포함한 통합 보고서"><i class="fas fa-file-invoice text-brand-500" aria-hidden="true"></i>통합 보고서</button>'
     + '</div></div>';
 }
 document.addEventListener('click', function() { document.querySelectorAll('.exp-menu').forEach(function(x){x.classList.add('hidden')}); });
@@ -659,9 +852,12 @@ async function loadDash() {
   document.getElementById('page-title').textContent = '대시보드';
   document.getElementById('page-subtitle').textContent = '';
   document.getElementById('header-actions').innerHTML = 
-    '<select id="dash-period" class="input !py-1.5 !text-xs !w-auto !pr-7" onchange="_dashPeriod=this.value;loadDash()" style="max-width:110px;border-radius:8px"><option value="month"' + (_dashPeriod==='month'?' selected':'') + '>이번 달</option><option value="quarter"' + (_dashPeriod==='quarter'?' selected':'') + '>이번 분기</option><option value="year"' + (_dashPeriod==='year'?' selected':'') + '>올해</option></select>' +
-    '<button class="btn btn-outline btn-sm" onclick="showPipelineView()"><i class="fas fa-columns text-xs"></i><span class="hidden sm:inline">파이프라인</span></button>' +
-    '<button class="btn btn-success btn-sm" onclick="showNewMeetGlobal()"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">빠른 미팅</span></button>';
+    '<select id="dash-period" class="input !py-1.5 !text-xs !w-auto !pr-7" onchange="_dashPeriod=this.value;loadDash()" style="max-width:110px;border-radius:8px" aria-label="기간 선택"><option value="month"' + (_dashPeriod==='month'?' selected':'') + '>이번 달</option><option value="quarter"' + (_dashPeriod==='quarter'?' selected':'') + '>이번 분기</option><option value="year"' + (_dashPeriod==='year'?' selected':'') + '>올해</option></select>' +
+    '<button class="btn btn-outline btn-sm" onclick="showReportPreview()" title="주/월간 보고서"><i class="fas fa-file-lines text-xs" aria-hidden="true"></i><span class="hidden sm:inline">보고서</span></button>' +
+    '<button class="btn btn-outline btn-sm" onclick="showPipelineAnalytics()" title="파이프라인 전환 분석"><i class="fas fa-diagram-project text-xs" aria-hidden="true"></i><span class="hidden sm:inline">전환 분석</span></button>' +
+    '<button class="btn btn-outline btn-sm" onclick="showPipelineView()"><i class="fas fa-columns text-xs" aria-hidden="true"></i><span class="hidden sm:inline">파이프라인</span></button>' +
+    '<button class="btn btn-ghost btn-sm" onclick="showWidgetSettings()" title="대시보드 위젯 설정" aria-label="대시보드 위젯 설정"><i class="fas fa-sliders text-xs" aria-hidden="true"></i><span class="hidden sm:inline">위젯</span></button>' +
+    '<button class="btn btn-success btn-sm" onclick="showNewMeetGlobal()"><i class="fas fa-calendar-plus text-xs" aria-hidden="true"></i><span class="hidden sm:inline">빠른 미팅</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 space-y-6"><div class="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4">' + Array(4).fill('<div class="sc"><div class="flex items-center gap-3"><div class="skeleton" style="width:42px;height:42px;border-radius:10px"></div><div class="flex-1 space-y-2"><div class="skeleton" style="height:10px;width:50px;border-radius:4px"></div><div class="skeleton" style="height:20px;width:64px;border-radius:4px"></div></div></div></div>').join('') + '</div><div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div class="card-flat p-5"><div class="skeleton" style="height:14px;width:120px;border-radius:4px;margin-bottom:12px"></div><div class="skeleton" style="height:10px;width:100%;border-radius:6px"></div></div><div class="card-flat p-5"><div class="skeleton" style="height:14px;width:120px;border-radius:4px;margin-bottom:12px"></div><div class="flex gap-2">' + Array(4).fill('<div class="skeleton flex-1" style="height:48px;border-radius:8px"></div>').join('') + '</div></div></div></div>';
   try {
     const { data: d } = await API.get('/dashboard?period=' + _dashPeriod); const s = d.data;
@@ -678,9 +874,14 @@ async function loadDash() {
 
     C.innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-5">' +
       // ===== Quick Action Bar (오늘의 할 일) =====
-      renderTodayTasks(s.todayTasks) +
+      widgetWrap('todayTasks', renderTodayTasks(s.todayTasks)) +
+      // ===== Personal KPI + Team Ranking =====
+      widgetWrap('myKpi', '<div id="my-kpi-section" class="grid grid-cols-1 lg:grid-cols-3 gap-4">' +
+        '<div id="my-kpi-card" class="lg:col-span-2 card-flat p-5"><div class="skeleton" style="height:14px;width:140px;border-radius:4px;margin-bottom:12px"></div><div class="grid grid-cols-2 sm:grid-cols-4 gap-3">' + Array(4).fill('<div class="skeleton" style="height:60px;border-radius:10px"></div>').join('') + '</div></div>' +
+        '<div id="team-rank-card" class="card-flat p-5"><div class="skeleton" style="height:14px;width:120px;border-radius:4px;margin-bottom:12px"></div>' + Array(4).fill('<div class="skeleton" style="height:36px;border-radius:8px;margin-bottom:6px"></div>').join('') + '</div>' +
+      '</div>') +
       // Reminder banner
-      (s.reminders?.length ? '<div class="reminder-banner"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:rgba(255,255,255,.12)"><i class="fas fa-bell text-white text-lg animate-bounce-gentle"></i></div><div class="flex-1 min-w-0"><div class="font-bold text-white text-sm mb-0.5">미팅 리마인더</div><div class="text-white/70 text-xs">앞으로 7일 이내 예정된 미팅이 <strong class="text-white">' + s.reminders.length + '건</strong> 있습니다</div></div></div>' +
+      (s.reminders?.length && !isWidgetHidden('reminders') ? '<div class="reminder-banner" data-widget="reminders"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:rgba(255,255,255,.12)"><i class="fas fa-bell text-white text-lg animate-bounce-gentle"></i></div><div class="flex-1 min-w-0"><div class="font-bold text-white text-sm mb-0.5">미팅 리마인더</div><div class="text-white/70 text-xs">앞으로 7일 이내 예정된 미팅이 <strong class="text-white">' + s.reminders.length + '건</strong> 있습니다</div></div></div>' +
         '<div class="mt-3 space-y-2">' + s.reminders.map(r => {
           const rdate = r.reminder_type === 'scheduled' ? r.meeting_date : r.next_meeting_date;
           const du = daysUntil(rdate);
@@ -694,7 +895,7 @@ async function loadDash() {
         }).join('') + '</div></div>' : '') +
 
       // ===== Stats overview row =====
-      '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">' +
+      widgetWrap('stats', '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">' +
       sc('관리 기관', s.stats.hospitalsAll || s.stats.hospitals, '개', 'fa-hospital', '#2563eb', '#eef4ff', 'hospitals') +
       sc('코드 등록', s.stats.codeRegistered || 0, '개', 'fa-check-circle', '#059669', '#ecfdf5', 'hospitals') +
       sc('등록 의료진', s.stats.doctors, '명', 'fa-user-doctor', '#7c3aed', '#f5f3ff', 'doctors') +
@@ -706,38 +907,38 @@ async function loadDash() {
           '<div><p class="text-[11px] text-slate-400 font-medium mb-0.5">전월 대비</p>' +
             '<div class="flex items-baseline gap-1">' + monthDiffText + '</div>' +
           '</div></div></div>' +
-      '</div>' +
+      '</div>') +
 
       // ===== Hospital Code Registration + Pipeline Summary =====
-      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' +
-      // Hospital code registration meter
-      '<div class="card-flat p-5">' +
-        '<div class="flex items-center gap-2.5 mb-4"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)"><i class="fas fa-id-card text-emerald-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">병원코드 등록 현황</span></div>' +
-        (function() {
-          var reg = s.stats.codeRegistered || 0, unreg = s.stats.codeUnregistered || 0, total = reg + unreg;
-          var pct = total > 0 ? Math.round(reg / total * 100) : 0;
-          return '<div class="flex items-center gap-4 mb-3"><div class="flex-1"><div class="flex justify-between text-[11px] mb-1.5"><span class="text-slate-500 font-medium">등록완료 <strong class="text-emerald-600">' + reg + '</strong></span><span class="text-slate-500 font-medium">미등록 <strong class="text-amber-600">' + unreg + '</strong></span></div><div class="w-full bg-gray-100 rounded-full h-3.5 overflow-hidden"><div class="h-3.5 rounded-full transition-all duration-700" style="width:' + pct + '%;background:linear-gradient(90deg,#10b981,#059669)"></div></div></div><div class="text-right pl-2"><span class="text-2xl font-extrabold text-emerald-600 tracking-tight">' + pct + '</span><span class="text-[11px] text-emerald-600 font-bold">%</span></div></div>';
-        })() +
-      '</div>' +
-      // Pipeline summary
-      '<div class="card-flat p-5">' +
-        '<div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe)"><i class="fas fa-filter text-violet-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">파이프라인 현황</span></div><button class="text-[11px] text-brand-500 font-bold hover:text-brand-600 transition" onclick="showPipelineView()">상세보기 <i class="fas fa-chevron-right text-[8px] ml-0.5"></i></button></div>' +
-        '<div class="flex gap-2 flex-wrap">' + (function() {
-          var pipeOrder = ['contact','meeting','demo','proposal','contract','active_customer'];
-          var pipeMap = {};
-          (s.pipelineSummary || []).forEach(function(p) { pipeMap[p.pipeline_stage] = p.count; });
-          return pipeOrder.map(function(stage) {
-            var label = pipeLabels[stage] || stage;
-            var color = pipeColors[stage] || '#94a3b8';
-            var count = pipeMap[stage] || 0;
-            return '<div class="flex-1 min-w-[60px] text-center p-2 rounded-xl" style="background:' + color + '10"><div class="text-lg font-extrabold" style="color:' + color + '">' + count + '</div><div class="text-[10px] text-slate-500 font-medium mt-0.5">' + label + '</div></div>';
-          }).join('');
-        })() + '</div>' +
-      '</div>' +
-      '</div>' +
+      (function() {
+        var codeHtml = widgetWrap('codeRegistration', '<div class="card-flat p-5">' +
+          '<div class="flex items-center gap-2.5 mb-4"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)"><i class="fas fa-id-card text-emerald-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">병원코드 등록 현황</span></div>' +
+          (function() {
+            var reg = s.stats.codeRegistered || 0, unreg = s.stats.codeUnregistered || 0, total = reg + unreg;
+            var pct = total > 0 ? Math.round(reg / total * 100) : 0;
+            return '<div class="flex items-center gap-4 mb-3"><div class="flex-1"><div class="flex justify-between text-[11px] mb-1.5"><span class="text-slate-500 font-medium">등록완료 <strong class="text-emerald-600">' + reg + '</strong></span><span class="text-slate-500 font-medium">미등록 <strong class="text-amber-600">' + unreg + '</strong></span></div><div class="w-full bg-gray-100 rounded-full h-3.5 overflow-hidden"><div class="h-3.5 rounded-full transition-all duration-700" style="width:' + pct + '%;background:linear-gradient(90deg,#10b981,#059669)"></div></div></div><div class="text-right pl-2"><span class="text-2xl font-extrabold text-emerald-600 tracking-tight">' + pct + '</span><span class="text-[11px] text-emerald-600 font-bold">%</span></div></div>';
+          })() +
+        '</div>');
+        var pipeHtml = widgetWrap('pipelineSummary', '<div class="card-flat p-5">' +
+          '<div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe)"><i class="fas fa-filter text-violet-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">파이프라인 현황</span></div><button class="text-[11px] text-brand-500 font-bold hover:text-brand-600 transition" onclick="showPipelineView()">상세보기 <i class="fas fa-chevron-right text-[8px] ml-0.5"></i></button></div>' +
+          '<div class="flex gap-2 flex-wrap">' + (function() {
+            var pipeOrder = ['contact','meeting','demo','proposal','contract','active_customer'];
+            var pipeMap = {};
+            (s.pipelineSummary || []).forEach(function(p) { pipeMap[p.pipeline_stage] = p.count; });
+            return pipeOrder.map(function(stage) {
+              var label = pipeLabels[stage] || stage;
+              var color = pipeColors[stage] || '#94a3b8';
+              var count = pipeMap[stage] || 0;
+              return '<div class="flex-1 min-w-[60px] text-center p-2 rounded-xl" style="background:' + color + '10"><div class="text-lg font-extrabold" style="color:' + color + '">' + count + '</div><div class="text-[10px] text-slate-500 font-medium mt-0.5">' + label + '</div></div>';
+            }).join('');
+          })() + '</div>' +
+        '</div>');
+        if (!codeHtml && !pipeHtml) return '';
+        return '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' + codeHtml + pipeHtml + '</div>';
+      })() +
 
       // ===== This Week's Tasks =====
-      (s.thisWeekMeetings?.length ? '<div class="card-flat p-0 overflow-hidden">' +
+      (s.thisWeekMeetings?.length && !isWidgetHidden('thisWeek') ? '<div class="card-flat p-0 overflow-hidden" data-widget="thisWeek">' +
         '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="background:linear-gradient(135deg,#eff6ff 0%,#eef2ff 100%);border-bottom:1px solid #e0e7ff"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#dbeafe,#c7d2fe)"><i class="fas fa-calendar-week text-blue-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">이번 주 일정</span><span class="text-[10px] px-2.5 py-0.5 rounded-full font-bold" style="background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff">' + s.thisWeekMeetings.length + '건</span></div></div>' +
         '<div class="border-t border-gray-50 divide-y divide-gray-50">' + s.thisWeekMeetings.slice(0, 6).map(function(m) {
           var mDate = m.next_meeting_date || m.meeting_date;
@@ -750,7 +951,7 @@ async function loadDash() {
         }).join('') + '</div></div>' : '') +
 
       // ===== Long-inactive hospitals alert =====
-      (s.longInactive?.length ? '<div class="card-flat p-0 overflow-hidden" style="border-left:3px solid #fca5a5">' +
+      (s.longInactive?.length && !isWidgetHidden('longInactive') ? '<div class="card-flat p-0 overflow-hidden" data-widget="longInactive" style="border-left:3px solid #fca5a5">' +
         '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="background:linear-gradient(135deg,#fef2f2 0%,#fff1f2 100%);border-bottom:1px solid #fecaca"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fee2e2,#fecaca)"><i class="fas fa-exclamation-triangle text-red-500 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">장기 미접촉 기관</span><span class="text-[10px] text-red-500 font-bold">30일+ 미팅 없음</span></div></div>' +
         '<div class="border-t border-gray-50 divide-y divide-gray-50">' + s.longInactive.slice(0, 5).map(function(h) {
           return '<div class="px-4 lg:px-6 py-3 flex items-center gap-3 tr cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
@@ -761,14 +962,14 @@ async function loadDash() {
         }).join('') + '</div></div>' : '') +
 
       // KPI gauge (if target set)
-      (s.kpiTarget && s.kpiTarget.target_meetings > 0 ? '<div class="card-flat p-5"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef4ff,#dbeafe)"><i class="fas fa-bullseye text-brand-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">KPI 달성률</span></div><button class="btn btn-ghost btn-sm text-xs" onclick="showKPISettings()"><i class="fas fa-cog text-xs"></i> 설정</button></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-4">' + kpiGaugeCard('미팅', s.stats.monthMeetings, s.kpiTarget.target_meetings, 'fa-handshake', '#2563eb') + '</div></div>' :
-        '<div class="card-flat p-4 flex items-center justify-between"><div class="flex items-center gap-2 text-sm text-slate-400"><i class="fas fa-bullseye text-slate-300"></i>KPI 목표가 설정되지 않았습니다</div><button class="btn btn-outline btn-sm" onclick="showKPISettings()"><i class="fas fa-plus text-xs mr-1"></i>설정</button></div>') +
+      widgetWrap('kpiGauge', (s.kpiTarget && s.kpiTarget.target_meetings > 0 ? '<div class="card-flat p-5"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef4ff,#dbeafe)"><i class="fas fa-bullseye text-brand-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">KPI 달성률</span></div><button class="btn btn-ghost btn-sm text-xs" onclick="showKPISettings()"><i class="fas fa-cog text-xs"></i> 설정</button></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-4">' + kpiGaugeCard('미팅', s.stats.monthMeetings, s.kpiTarget.target_meetings, 'fa-handshake', '#2563eb') + '</div></div>' :
+        '<div class="card-flat p-4 flex items-center justify-between"><div class="flex items-center gap-2 text-sm text-slate-400"><i class="fas fa-bullseye text-slate-300"></i>KPI 목표가 설정되지 않았습니다</div><button class="btn btn-outline btn-sm" onclick="showKPISettings()"><i class="fas fa-plus text-xs mr-1"></i>설정</button></div>')) +
       // CI KPI banner
-      (s.ciKpi ? '<div class="card-flat p-4 lg:p-5 flex flex-wrap items-center gap-4 lg:gap-8"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-line text-indigo-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">인공와우 시장 현황 (' + s.ciKpi.year + '년)</div><div class="text-sm font-bold text-slate-800">환자 ' + fmtNum(s.ciKpi.patients) + '명</div></div></div><div class="flex gap-4 lg:gap-6 text-center flex-wrap"><div><div class="text-[10px] text-slate-400">시술건수</div><div class="text-sm font-bold text-brand-600">' + fmtNum(s.ciKpi.usage) + '</div></div><div><div class="text-[10px] text-slate-400">진료금액</div><div class="text-sm font-bold text-emerald-600">' + fmtAmount(s.ciKpi.amount) + '</div></div><div><div class="text-[10px] text-slate-400">환자 증가율</div><div class="text-sm font-bold ' + (parseFloat(s.ciKpi.growth_patients) > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (parseFloat(s.ciKpi.growth_patients) > 0 ? '+' : '') + s.ciKpi.growth_patients + '%</div></div></div><button class="btn btn-outline btn-sm ml-auto" onclick="nav(\'cistats\')">통계 상세 <i class="fas fa-arrow-right text-[10px]"></i></button></div>' : '') +
+      (s.ciKpi && !isWidgetHidden('ciKpi') ? '<div class="card-flat p-4 lg:p-5 flex flex-wrap items-center gap-4 lg:gap-8" data-widget="ciKpi"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-line text-indigo-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">인공와우 시장 현황 (' + s.ciKpi.year + '년)</div><div class="text-sm font-bold text-slate-800">환자 ' + fmtNum(s.ciKpi.patients) + '명</div></div></div><div class="flex gap-4 lg:gap-6 text-center flex-wrap"><div><div class="text-[10px] text-slate-400">시술건수</div><div class="text-sm font-bold text-brand-600">' + fmtNum(s.ciKpi.usage) + '</div></div><div><div class="text-[10px] text-slate-400">진료금액</div><div class="text-sm font-bold text-emerald-600">' + fmtAmount(s.ciKpi.amount) + '</div></div><div><div class="text-[10px] text-slate-400">환자 증가율</div><div class="text-sm font-bold ' + (parseFloat(s.ciKpi.growth_patients) > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (parseFloat(s.ciKpi.growth_patients) > 0 ? '+' : '') + s.ciKpi.growth_patients + '%</div></div></div><button class="btn btn-outline btn-sm ml-auto" onclick="nav(\'cistats\')">통계 상세 <i class="fas fa-arrow-right text-[10px]"></i></button></div>' : '') +
 
       // ===== Recently added highlights =====
-      ((s.recentHospitals?.length || s.recentDoctors?.length) ?
-      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' +
+      ((s.recentHospitals?.length || s.recentDoctors?.length) && !isWidgetHidden('recentHighlights') ?
+      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4" data-widget="recentHighlights">' +
       (s.recentHospitals?.length ? '<div class="card-flat p-0 overflow-hidden"><div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="background:linear-gradient(135deg,#ecfdf5 0%,#f0fdfa 100%);border-bottom:1px solid #a7f3d0"><div class="w-7 h-7 rounded-md flex items-center justify-center" style="background:linear-gradient(135deg,#6ee7b7,#34d399)"><i class="fas fa-plus text-white text-[9px]"></i></div><span class="font-bold text-[13px] text-slate-800">최근 등록 기관</span><span class="text-[10px] text-emerald-600 font-medium">14일 이내</span></div><div class="divide-y divide-gray-50">' +
         s.recentHospitals.map(function(h) {
           return '<div class="px-4 lg:px-6 py-2.5 flex items-center gap-3 tr cursor-pointer" onclick="viewHosp(' + h.id + ')"><div class="flex-1 min-w-0"><span class="text-[13px] font-semibold text-slate-800 truncate">' + h.name + '</span><span class="text-[10px] text-slate-400 ml-2">' + (h.region || '') + '</span></div>' + statusDot(h.status) + '</div>';
@@ -780,32 +981,25 @@ async function loadDash() {
       '</div>' : '') +
 
       // Monthly trend chart + right column
-      '<div class="grid grid-cols-1 lg:grid-cols-5 gap-4">' +
-      '<div class="lg:col-span-3 space-y-4">' +
-      // Monthly trend chart
-      (s.monthlyTrend?.length ? '<div class="card-flat p-5 lg:p-6"><div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef2ff,#e0e7ff)"><i class="fas fa-chart-bar text-indigo-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">월별 미팅 추이</span></div><span class="text-[11px] text-slate-300 font-medium">최근 6개월</span></div><div style="height:200px"><canvas id="chart-monthly"></canvas></div></div>' : '') +
-      // Recent meetings
-      '<div class="card-flat p-0 overflow-hidden">' +
-      '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="border-bottom:1px solid #eef0f5"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eff6ff,#dbeafe)"><i class="fas fa-clock text-blue-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">최근 미팅</span></div><span class="text-[11px] text-slate-300 font-medium">최근 8건</span></div>' +
-      '<div class="border-t border-gray-50">' + (s.recentMeetings.length ? s.recentMeetings.map(m =>
-        '<div class="px-4 lg:px-6 py-3 tr flex items-center gap-3 cursor-pointer border-b border-gray-50 last:border-0" onclick="viewHosp(' + m.hospital_id + ')">' +
-        '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:14px') + '</div>' +
-        '<div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 mb-0.5 flex-wrap"><span class="font-semibold text-[13px] text-slate-800 truncate">' + meetDoctorNames(m) + '</span>' + mtBadge(m.meeting_type) + vtBadge(m.visit_time) + '</div><div class="text-[11px] text-slate-400 truncate">' + m.hospital_name + (m.purpose ? ' · ' + m.purpose : '') + '</div></div>' +
-        '<div class="text-right flex-shrink-0"><div class="text-[11px] font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div></div>'
-      ).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="text-sm">아직 미팅이 없습니다</p></div>') + '</div></div>' +
-      '</div>' +
-      '<div class="lg:col-span-2 space-y-4">' +
-      // Upcoming actions
-      '<div class="card-flat p-0 overflow-hidden">' +
-      '<div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="border-bottom:1px solid #eef0f5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fffbeb,#fef3c7)"><i class="fas fa-list-check text-amber-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">후속 액션</span></div>' +
-      '<div class="border-t border-gray-50">' + (s.upcomingActions.length ? s.upcomingActions.map(m =>
-        '<div class="px-4 lg:px-6 py-3 tr border-b border-gray-50 last:border-0"><div class="flex items-center justify-between mb-1"><span class="text-[13px] font-semibold text-slate-700 truncate">' + (m.doctor_name || '-') + '</span>' + (m.next_meeting_date ? '<span class="text-[10px] font-bold ' + daysClass(m.next_meeting_date) + ' bg-gray-50 px-2 py-0.5 rounded-full">' + fmtShort(m.next_meeting_date) + '</span>' : '') + '</div><p class="text-[11px] text-slate-400 leading-relaxed truncate"><i class="fas fa-arrow-right text-amber-300 mr-1"></i>' + m.next_action + '</p></div>'
-      ).join('') : '<div class="empty py-8"><div class="empty-icon"><i class="fas fa-check-circle"></i></div><p class="text-sm">완료할 액션이 없습니다</p></div>') + '</div></div>' +
-      // Region stats
-      '<div class="card-flat p-0 overflow-hidden">' +
-      '<div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="border-bottom:1px solid #eef0f5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)"><i class="fas fa-map-location-dot text-emerald-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">지역별 현황</span></div>' +
-      '<div class="border-t border-gray-50 p-4 lg:p-5 space-y-3">' + (s.regionStats.length ? s.regionStats.map(r => { const mx = Math.max(...s.regionStats.map(x => x.count)); return '<div class="flex items-center gap-3"><span class="text-[11px] font-semibold text-slate-500 w-10 text-right">' + r.region + '</span><div class="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden"><div class="h-full rounded-full flex items-center px-2.5 transition-all duration-700" style="width:' + Math.max(r.count / mx * 100, 22) + '%;background:linear-gradient(90deg,#3b82f6,#2563eb)"><span class="text-[10px] font-bold text-white">' + r.count + '개</span></div></div></div>' }).join('') : '<div class="text-center text-sm text-slate-300 py-4">데이터 없음</div>') + '</div></div>' +
-      '</div></div></div>';
+      (function() {
+        var trendHtml = (s.monthlyTrend?.length ? widgetWrap('monthlyTrend', '<div class="card-flat p-5 lg:p-6"><div class="flex items-center justify-between mb-5"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef2ff,#e0e7ff)"><i class="fas fa-chart-bar text-indigo-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">월별 미팅 추이</span></div><span class="text-[11px] text-slate-300 font-medium">최근 6개월</span></div><div style="height:200px"><canvas id="chart-monthly"></canvas></div></div>') : '');
+        var recentHtml = widgetWrap('recentMeetings', '<div class="card-flat p-0 overflow-hidden">' +
+          '<div class="px-5 lg:px-6 py-4 flex items-center justify-between" style="border-bottom:1px solid #eef0f5"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eff6ff,#dbeafe)"><i class="fas fa-clock text-blue-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">최근 미팅</span></div><span class="text-[11px] text-slate-300 font-medium">최근 8건</span></div>' +
+          '<div class="border-t border-gray-50">' + (s.recentMeetings.length ? s.recentMeetings.map(function(m){ return '<div class="px-4 lg:px-6 py-3 tr flex items-center gap-3 cursor-pointer border-b border-gray-50 last:border-0" onclick="viewHosp(' + m.hospital_id + ')">' +
+            '<div class="hidden sm:block">' + meetDoctorAvatars(m, 'width:36px;height:36px;border-radius:10px;font-size:14px') + '</div>' +
+            '<div class="flex-1 min-w-0"><div class="flex items-center gap-1.5 mb-0.5 flex-wrap"><span class="font-semibold text-[13px] text-slate-800 truncate">' + meetDoctorNames(m) + '</span>' + mtBadge(m.meeting_type) + vtBadge(m.visit_time) + '</div><div class="text-[11px] text-slate-400 truncate">' + m.hospital_name + (m.purpose ? ' · ' + m.purpose : '') + '</div></div>' +
+            '<div class="text-right flex-shrink-0"><div class="text-[11px] font-medium text-slate-500">' + fmtShort(m.meeting_date) + '</div><div class="text-[10px] ' + daysClass(m.meeting_date) + '">' + daysAgo(m.meeting_date) + '</div></div></div>' }).join('') : '<div class="empty"><div class="empty-icon"><i class="fas fa-calendar-xmark"></i></div><p class="text-sm">아직 미팅이 없습니다</p></div>') + '</div></div>');
+        var upHtml = widgetWrap('upcomingActions', '<div class="card-flat p-0 overflow-hidden">' +
+          '<div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="border-bottom:1px solid #eef0f5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fffbeb,#fef3c7)"><i class="fas fa-list-check text-amber-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">후속 액션</span></div>' +
+          '<div class="border-t border-gray-50">' + (s.upcomingActions.length ? s.upcomingActions.map(function(m){ return '<div class="px-4 lg:px-6 py-3 tr border-b border-gray-50 last:border-0"><div class="flex items-center justify-between mb-1"><span class="text-[13px] font-semibold text-slate-700 truncate">' + (m.doctor_name || '-') + '</span>' + (m.next_meeting_date ? '<span class="text-[10px] font-bold ' + daysClass(m.next_meeting_date) + ' bg-gray-50 px-2 py-0.5 rounded-full">' + fmtShort(m.next_meeting_date) + '</span>' : '') + '</div><p class="text-[11px] text-slate-400 leading-relaxed truncate"><i class="fas fa-arrow-right text-amber-300 mr-1"></i>' + m.next_action + '</p></div>' }).join('') : '<div class="empty py-8"><div class="empty-icon"><i class="fas fa-check-circle"></i></div><p class="text-sm">완료할 액션이 없습니다</p></div>') + '</div></div>');
+        var regHtml = widgetWrap('regionStats', '<div class="card-flat p-0 overflow-hidden">' +
+          '<div class="px-5 lg:px-6 py-4 flex items-center gap-2.5" style="border-bottom:1px solid #eef0f5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)"><i class="fas fa-map-location-dot text-emerald-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">지역별 현황</span></div>' +
+          '<div class="border-t border-gray-50 p-4 lg:p-5 space-y-3">' + (s.regionStats.length ? s.regionStats.map(function(r){ var mx = Math.max.apply(null, s.regionStats.map(function(x){return x.count;})); return '<div class="flex items-center gap-3"><span class="text-[11px] font-semibold text-slate-500 w-10 text-right">' + r.region + '</span><div class="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden"><div class="h-full rounded-full flex items-center px-2.5 transition-all duration-700" style="width:' + Math.max(r.count / mx * 100, 22) + '%;background:linear-gradient(90deg,#3b82f6,#2563eb)"><span class="text-[10px] font-bold text-white">' + r.count + '개</span></div></div></div>' }).join('') : '<div class="text-center text-sm text-slate-300 py-4">데이터 없음</div>') + '</div></div>');
+        var leftCol = (trendHtml || recentHtml) ? '<div class="lg:col-span-3 space-y-4">' + trendHtml + recentHtml + '</div>' : '';
+        var rightCol = (upHtml || regHtml) ? '<div class="lg:col-span-2 space-y-4">' + upHtml + regHtml + '</div>' : '';
+        if (!leftCol && !rightCol) return '';
+        return '<div class="grid grid-cols-1 lg:grid-cols-5 gap-4">' + leftCol + rightCol + '</div>';
+      })() + '</div>';
     
     // Render monthly trend chart
     if (s.monthlyTrend?.length) {
@@ -833,7 +1027,158 @@ async function loadDash() {
         }));
       }, 150);
     }
+    // Load personal KPI + team ranking asynchronously
+    loadMyKpi(_dashPeriod);
+    loadTeamRanking(_dashPeriod);
   } catch (e) { console.error(e); document.getElementById('content').innerHTML = '<div class="p-7"><div class="card-flat p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle text-2xl mb-2 block"></i>데이터를 불러올 수 없습니다</div></div>' }
+}
+
+// ===== Personal KPI Card =====
+async function loadMyKpi(period) {
+  var el = document.getElementById('my-kpi-card');
+  if (!el) return;
+  try {
+    var r = await API.get('/dashboard/me?period=' + (period || 'month'));
+    var d = r.data && r.data.data;
+    if (!d) { el.innerHTML = '<div class="text-xs text-slate-300 text-center py-4">데이터 없음</div>'; return; }
+    var changeText = d.change > 0 ? '<span class="text-emerald-500 font-bold">+' + d.change + '%</span>'
+      : (d.change < 0 ? '<span class="text-red-500 font-bold">' + d.change + '%</span>'
+      : '<span class="text-slate-400">변동없음</span>');
+    var nm = (currentUser && currentUser.name) ? currentUser.name : '나';
+
+    // Try to load personal KPI target (only meaningful for monthly view)
+    var targetData = null;
+    try {
+      var tr = await API.get('/dashboard/kpi-target');
+      targetData = tr.data && tr.data.data;
+    } catch (e) {}
+
+    // Activity badge (motivational)
+    var badge = activityBadge(d.activityScore || 0);
+
+    el.innerHTML = '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
+        '<div class="flex items-center gap-2.5">' +
+          '<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"><i class="fas fa-user-shield text-amber-600 text-xs"></i></div>' +
+          '<span class="font-bold text-[14px] text-slate-800 tracking-tight">' + nm + '님의 활동</span>' +
+          '<span class="text-[10px] text-slate-400">' + (period === 'year' ? '올해' : period === 'quarter' ? '이번 분기' : '이번 달') + '</span>' +
+          (badge ? '<span class="text-[10px] px-2 py-0.5 rounded-full font-bold" style="background:' + badge.bg + ';color:' + badge.color + '" title="' + badge.tooltip + '"><i class="fas ' + badge.icon + ' mr-0.5"></i>' + badge.label + '</span>' : '') +
+        '</div>' +
+        '<div class="flex items-center gap-2">' +
+          '<span class="text-[11px] text-slate-400">전기 대비 ' + changeText + '</span>' +
+          '<button onclick="showKPISettings()" class="text-[10px] px-2 py-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold" title="목표 설정"><i class="fas fa-bullseye mr-0.5"></i>목표</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3">' +
+        '<div class="rounded-xl p-3 text-center" style="background:linear-gradient(135deg,#eef4ff,#dbeafe)">' +
+          '<div class="text-[10px] text-slate-500 font-semibold mb-1">미팅 수</div>' +
+          '<div class="text-2xl font-extrabold text-brand-600 tracking-tight">' + d.myMeetings + '</div>' +
+          '<div class="text-[10px] text-slate-400 mt-0.5">전기 ' + d.myMeetingsPrev + '건</div>' +
+        '</div>' +
+        '<div class="rounded-xl p-3 text-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)">' +
+          '<div class="text-[10px] text-slate-500 font-semibold mb-1">신규 기관</div>' +
+          '<div class="text-2xl font-extrabold text-emerald-600 tracking-tight">' + d.myNewHospitals + '</div>' +
+          '<div class="text-[10px] text-slate-400 mt-0.5">개</div>' +
+        '</div>' +
+        '<div class="rounded-xl p-3 text-center" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe)">' +
+          '<div class="text-[10px] text-slate-500 font-semibold mb-1">전환율</div>' +
+          '<div class="text-2xl font-extrabold text-violet-600 tracking-tight">' + d.conversionRate + '<span class="text-sm">%</span></div>' +
+          '<div class="text-[10px] text-slate-400 mt-0.5">결과 작성 ' + d.successCount + '건</div>' +
+        '</div>' +
+        '<div class="rounded-xl p-3 text-center" style="background:linear-gradient(135deg,#fff7ed,#fed7aa)">' +
+          '<div class="text-[10px] text-slate-500 font-semibold mb-1">활동 점수</div>' +
+          '<div class="text-2xl font-extrabold text-orange-600 tracking-tight">' + d.activityScore + '</div>' +
+          '<div class="text-[10px] text-slate-400 mt-0.5">pt</div>' +
+        '</div>' +
+      '</div>' +
+      // Goal achievement section
+      renderGoalProgress(targetData);
+  } catch (e) {
+    el.innerHTML = '<div class="text-xs text-red-400 text-center py-4">개인 KPI를 불러올 수 없습니다</div>';
+  }
+}
+
+// Achievement badge based on activity score (gamification)
+function activityBadge(score) {
+  if (score >= 90) return { label: '레전드', icon: 'fa-crown', color: '#7c2d12', bg: 'linear-gradient(135deg,#fef3c7,#fcd34d)', tooltip: '활동 점수 90+ : 최고 성과' };
+  if (score >= 60) return { label: '에이스', icon: 'fa-fire', color: '#b91c1c', bg: 'linear-gradient(135deg,#fee2e2,#fecaca)', tooltip: '활동 점수 60+ : 우수 성과' };
+  if (score >= 30) return { label: '러너', icon: 'fa-bolt', color: '#1d4ed8', bg: 'linear-gradient(135deg,#dbeafe,#bfdbfe)', tooltip: '활동 점수 30+ : 안정 성과' };
+  if (score >= 10) return { label: '스타터', icon: 'fa-seedling', color: '#15803d', bg: 'linear-gradient(135deg,#d1fae5,#a7f3d0)', tooltip: '활동 점수 10+ : 시작 단계' };
+  return null;
+}
+
+function renderGoalProgress(td) {
+  if (!td) return '';
+  var t = td.target || {}, c = td.current || {}, a = td.achievement || {};
+  var hasAny = (t.target_meetings || t.target_new_hospitals || t.target_contracts);
+  if (!hasAny) {
+    return '<div class="mt-3 flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2 text-[11px] text-slate-500">' +
+      '<span><i class="fas fa-bullseye text-amber-400 mr-1"></i>아직 월간 목표가 설정되지 않았습니다.</span>' +
+      '<button onclick="showKPISettings()" class="text-[10px] font-bold text-brand-600 hover:underline">목표 설정 →</button>' +
+    '</div>';
+  }
+  function bar(label, cur, tgt, pct, color) {
+    if (!tgt) return '';
+    var w = Math.min(pct, 100);
+    var barBg = pct >= 100 ? 'linear-gradient(90deg,#10b981,#059669)' : pct >= 70 ? 'linear-gradient(90deg,#3b82f6,#2563eb)' : pct >= 40 ? 'linear-gradient(90deg,#fbbf24,#d97706)' : 'linear-gradient(90deg,#f87171,#ef4444)';
+    var pctColor = pct >= 100 ? '#059669' : pct >= 70 ? '#2563eb' : pct >= 40 ? '#d97706' : '#ef4444';
+    return '<div class="flex-1 min-w-[150px]">' +
+      '<div class="flex items-center justify-between mb-1">' +
+        '<span class="text-[10px] font-semibold text-slate-600">' + label + '</span>' +
+        '<span class="text-[10px] font-bold" style="color:' + pctColor + '">' + pct + '%</span>' +
+      '</div>' +
+      '<div class="w-full bg-gray-100 rounded-full h-2 overflow-hidden"><div class="h-2 rounded-full transition-all duration-700" style="width:' + w + '%;background:' + barBg + '"></div></div>' +
+      '<div class="text-[9px] text-slate-400 mt-0.5">' + cur + ' / ' + tgt + '</div>' +
+    '</div>';
+  }
+  return '<div class="mt-3 bg-slate-50 rounded-xl p-3">' +
+    '<div class="flex items-center justify-between mb-2">' +
+      '<span class="text-[11px] font-bold text-slate-700"><i class="fas fa-bullseye text-amber-500 mr-1"></i>' + (td.year || '') + '년 ' + (td.month || '') + '월 목표 달성률</span>' +
+      '<button onclick="showKPISettings()" class="text-[10px] text-slate-500 hover:text-brand-600"><i class="fas fa-pen mr-0.5"></i>편집</button>' +
+    '</div>' +
+    '<div class="flex flex-wrap gap-3">' +
+      bar('미팅', c.meetings || 0, t.target_meetings || 0, a.meetings_pct || 0, '#2563eb') +
+      bar('신규 기관', c.new_hospitals || 0, t.target_new_hospitals || 0, a.new_hospitals_pct || 0, '#059669') +
+      bar('계약', c.contracts || 0, t.target_contracts || 0, a.contracts_pct || 0, '#7c3aed') +
+    '</div>' +
+  '</div>';
+}
+
+// ===== Team Ranking Widget =====
+async function loadTeamRanking(period) {
+  var el = document.getElementById('team-rank-card');
+  if (!el) return;
+  try {
+    var r = await API.get('/dashboard/ranking?period=' + (period || 'month'));
+    var list = (r.data && r.data.data && r.data.data.ranking) || [];
+    var top = list.slice(0, 5);
+    var medal = ['fa-trophy text-amber-400', 'fa-medal text-slate-400', 'fa-medal text-orange-400'];
+    var myId = currentUser ? currentUser.id : null;
+    if (!top.length) {
+      el.innerHTML = '<div class="flex items-center gap-2.5 mb-3"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"><i class="fas fa-ranking-star text-amber-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">팀 랭킹</span></div><div class="text-xs text-slate-300 text-center py-4">데이터 없음</div>';
+      return;
+    }
+    el.innerHTML = '<div class="flex items-center gap-2.5 mb-3">' +
+        '<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"><i class="fas fa-ranking-star text-amber-600 text-xs"></i></div>' +
+        '<span class="font-bold text-[14px] text-slate-800 tracking-tight">팀 랭킹</span>' +
+        '<span class="text-[10px] text-slate-400 ml-auto">' + (period === 'year' ? '올해' : period === 'quarter' ? '이번 분기' : '이번 달') + '</span>' +
+      '</div>' +
+      '<div class="space-y-1.5">' +
+      top.map(function(u) {
+        var iconHtml = u.rank <= 3 ? '<i class="fas ' + medal[u.rank - 1] + ' text-sm"></i>' : '<span class="text-[11px] font-bold text-slate-400">' + u.rank + '</span>';
+        var mine = myId && u.user_id === myId;
+        var bg = mine ? 'background:linear-gradient(90deg,#eef4ff,#fff);border:1px solid #c7d2fe' : '';
+        return '<div class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg" style="' + bg + '">' +
+          '<div class="w-6 text-center flex-shrink-0">' + iconHtml + '</div>' +
+          avatar(null, u.user_name || '?', 'width:24px;height:24px;border-radius:6px;font-size:10px') +
+          '<div class="flex-1 min-w-0"><div class="text-[12px] font-semibold text-slate-700 truncate">' + (u.user_name || '익명') + (mine ? ' <span class="text-[9px] text-brand-500 font-bold">나</span>' : '') + '</div>' +
+          '<div class="text-[10px] text-slate-400">미팅 ' + u.meeting_count + '건 · 기관 ' + u.hospital_count + '개</div></div>' +
+          '<div class="text-right flex-shrink-0"><div class="text-[13px] font-extrabold text-amber-600">' + u.activity_score + '</div><div class="text-[9px] text-slate-400">pt</div></div>' +
+        '</div>';
+      }).join('') +
+      '</div>';
+  } catch (e) {
+    el.innerHTML = '<div class="text-xs text-red-400 text-center py-4">랭킹을 불러올 수 없습니다</div>';
+  }
 }
 function sc(label, val, unit, icon, color, bg, link) {
   return '<div class="sc cursor-pointer" onclick="' + (link ? "nav('" + link + "')" : '') + '">' +
@@ -853,34 +1198,430 @@ function kpiGaugeCard(label, actual, target, icon, color) {
   return '<div class="flex items-center gap-3"><div class="flex-1"><div class="flex items-center justify-between mb-1.5"><span class="text-xs font-semibold text-slate-600"><i class="fas ' + icon + ' mr-1" style="color:' + color + '"></i>' + label + '</span><span class="text-xs font-bold" style="color:' + barColor + '">' + pct + '%</span></div><div class="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden"><div class="h-2.5 rounded-full transition-all duration-700" style="width:' + pct + '%;background:' + barBg + '"></div></div><div class="text-[10px] text-slate-400 mt-1 font-medium">' + actual + ' / ' + target + ' ' + (label === '미팅' ? '건' : '개') + '</div></div></div>';
 }
 
-// ===== KPI Settings Modal =====
+// ===== KPI Settings Modal (Personal) =====
 async function showKPISettings() {
   var now = new Date();
   var y = now.getFullYear(), m = now.getMonth() + 1;
-  openModal('KPI 목표 설정',
+  openModal('<i class="fas fa-bullseye text-brand-500 mr-1.5"></i>나의 월간 KPI 목표',
     '<form id="fm" class="space-y-4">' +
-    '<div class="grid grid-cols-2 gap-4"><div><label class="input-label">연도</label><input type="number" name="year" value="' + y + '" class="input"></div><div><label class="input-label">월</label><input type="number" name="month" value="' + m + '" class="input" min="1" max="12"></div></div>' +
-    '<div><label class="input-label">월간 미팅 목표 (건)</label><input type="number" name="target_meetings" value="0" class="input" min="0"></div>' +
-    '<div class="flex justify-end gap-2 pt-3 border-t border-gray-50"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">저장</button></div></form>');
+      '<div class="bg-blue-50 border border-blue-100 rounded-xl p-3 text-[11px] text-blue-700"><i class="fas fa-info-circle mr-1"></i>개인별 목표를 설정하면 대시보드에서 달성률이 게이지로 표시됩니다.</div>' +
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div><label class="input-label">연도</label><input type="number" name="year" value="' + y + '" class="input"></div>' +
+        '<div><label class="input-label">월</label><input type="number" name="month" value="' + m + '" class="input" min="1" max="12"></div>' +
+      '</div>' +
+      '<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">' +
+        '<div><label class="input-label"><i class="fas fa-handshake text-blue-500 mr-1"></i>미팅 (건)</label><input type="number" name="target_meetings" value="0" class="input" min="0" placeholder="예: 30"></div>' +
+        '<div><label class="input-label"><i class="fas fa-hospital text-emerald-500 mr-1"></i>신규 기관 (개)</label><input type="number" name="target_new_hospitals" value="0" class="input" min="0" placeholder="예: 5"></div>' +
+        '<div><label class="input-label"><i class="fas fa-file-signature text-violet-500 mr-1"></i>계약 (건)</label><input type="number" name="target_contracts" value="0" class="input" min="0" placeholder="예: 3"></div>' +
+      '</div>' +
+      '<div class="flex justify-end gap-2 pt-3 border-t border-gray-50"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary"><i class="fas fa-save mr-1"></i>저장</button></div>' +
+    '</form>');
   // Load existing target
   try {
-    var r = await API.get('/pipeline/kpi-targets?year=' + y + '&month=' + m);
-    var t = r.data.data.target;
-    if (t) { document.querySelector('#fm input[name="target_meetings"]').value = t.target_meetings || 0; }
+    var r = await API.get('/dashboard/kpi-target?year=' + y + '&month=' + m);
+    var t = r.data && r.data.data && r.data.data.target;
+    if (t) {
+      document.querySelector('#fm input[name="target_meetings"]').value = t.target_meetings || 0;
+      var nh = document.querySelector('#fm input[name="target_new_hospitals"]'); if (nh) nh.value = t.target_new_hospitals || 0;
+      var cn = document.querySelector('#fm input[name="target_contracts"]'); if (cn) cn.value = t.target_contracts || 0;
+    }
   } catch(e) {}
   document.getElementById('fm').onsubmit = async function(e) {
     e.preventDefault();
     var f = Object.fromEntries(new FormData(e.target));
     try {
-      await API.post('/pipeline/kpi-targets', f);
-      toast('KPI 목표가 저장되었습니다'); closeModal(); loadDash();
+      await API.post('/dashboard/kpi-target', f);
+      toast('KPI 목표가 저장되었습니다'); closeModal();
+      if (typeof loadMyKpi === 'function') loadMyKpi(_dashPeriod);
+      if (typeof loadDash === 'function') loadDash();
     } catch(e) { toast('저장 실패', 'err'); }
   };
 }
 
 // ===== Pipeline View =====
+var _pipelineTab = 'board';
+var _pipelinePeriod = 90;
+
+// ===== Auto Report Preview =====
+var _reportRange = 'week';
+async function showReportPreview() {
+  openModal('<i class="fas fa-file-lines text-brand-500 mr-2" aria-hidden="true"></i>주/월간 자동 보고서',
+    '<div class="space-y-3">' +
+      '<div class="flex flex-wrap gap-2 items-center">' +
+        '<span class="text-[11px] text-slate-400 font-bold">기간:</span>' +
+        '<div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="보고서 기간">' +
+          ['week','last_week','month','last_month'].map(function(r){
+            var lbl = ({week:'이번 주', last_week:'지난 주', month:'이번 달', last_month:'지난 달'})[r];
+            return '<button role="tab" aria-selected="' + (_reportRange===r) + '" class="px-3 py-1.5 text-[11px] font-bold rounded-md transition ' + (_reportRange===r?'bg-white text-brand-600 shadow-sm':'text-slate-500 hover:text-slate-700') + '" onclick="_reportRange=\'' + r + '\';showReportPreview()">' + lbl + '</button>';
+          }).join('') +
+        '</div>' +
+        '<div class="ml-auto flex gap-2">' +
+          '<button class="btn btn-outline btn-sm" onclick="printReport()" title="보고서 인쇄/PDF"><i class="fas fa-print text-xs" aria-hidden="true"></i><span class="hidden sm:inline">인쇄</span></button>' +
+          '<button class="btn btn-primary btn-sm" onclick="window.open(\'/api/export/report/full\',\'_blank\')"><i class="fas fa-file-excel text-xs" aria-hidden="true"></i><span class="hidden sm:inline">엑셀</span></button>' +
+        '</div>' +
+      '</div>' +
+      '<div id="report-body" class="text-sm"><div class="text-center py-8 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div></div>' +
+    '</div>', 'wide');
+  try {
+    var r = await API.get('/dashboard/report?range=' + _reportRange);
+    var d = r.data.data;
+    renderReportBody(d);
+  } catch (e) {
+    document.getElementById('report-body').innerHTML = '<div class="text-center py-8 text-red-400"><i class="fas fa-circle-exclamation mr-1"></i>보고서를 불러올 수 없습니다</div>';
+  }
+}
+function renderReportBody(d) {
+  var typeLabels = { visit:'방문', phone:'전화', conference:'학회', email:'이메일', online:'온라인' };
+  var stageLabels = { contact:'접촉', meeting:'미팅', proposal:'제안', negotiation:'협상', closed_won:'성사', closed_lost:'실패', lost:'이탈', inactive:'휴면' };
+  var diffSign = d.summary.diffPct > 0 ? '+' : '';
+  var diffColor = d.summary.diffPct > 0 ? 'text-emerald-600' : (d.summary.diffPct < 0 ? 'text-red-500' : 'text-slate-400');
+  var diffIcon = d.summary.diffPct > 0 ? 'fa-arrow-trend-up' : (d.summary.diffPct < 0 ? 'fa-arrow-trend-down' : 'fa-minus');
+
+  var html = '<div id="report-print-target" class="space-y-4">';
+  // Title block
+  html += '<div class="card-flat p-4">' +
+    '<div class="flex items-center justify-between flex-wrap gap-2">' +
+      '<div><div class="font-extrabold text-slate-800 text-base">TODOC CRM 활동 보고서</div>' +
+        '<div class="text-xs text-slate-500 mt-0.5">' + d.from + ' ~ ' + d.to + ' (이전 기간: ' + (d.prevFrom || '-') + ' ~ ' + (d.prevTo || '-') + ')</div>' +
+      '</div>' +
+    '</div></div>';
+  // Summary KPIs
+  html += '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3">' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">총 미팅</div><div class="text-lg font-extrabold text-slate-800">' + d.summary.totalMeetings + '<span class="text-[10px] text-slate-400 ml-0.5">건</span></div><div class="text-[10px] ' + diffColor + ' mt-0.5"><i class="fas ' + diffIcon + ' mr-0.5"></i>' + diffSign + d.summary.diffPct + '% (이전 ' + d.summary.prevTotalMeetings + '건)</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">신규 기관</div><div class="text-lg font-extrabold text-blue-600">' + d.summary.newHospitals + '<span class="text-[10px] text-slate-400 ml-0.5">곳</span></div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">신규 의료진</div><div class="text-lg font-extrabold text-purple-600">' + d.summary.newDoctors + '<span class="text-[10px] text-slate-400 ml-0.5">명</span></div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">2주내 후속 액션</div><div class="text-lg font-extrabold text-amber-600">' + d.summary.upcomingNextActions + '<span class="text-[10px] text-slate-400 ml-0.5">건</span></div></div>' +
+    '</div>';
+  // Two-column body
+  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">';
+  // Meeting type breakdown
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-chart-pie text-brand-500 mr-1.5"></i>미팅 유형별</div>';
+  if (!d.typeBreakdown.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  else {
+    var maxC = Math.max.apply(null, d.typeBreakdown.map(function(t){return t.c}));
+    html += '<div class="space-y-1.5">' + d.typeBreakdown.map(function(t){
+      var w = Math.round((t.c / maxC) * 100);
+      return '<div class="flex items-center gap-2"><span class="text-[11px] text-slate-600 w-12 flex-shrink-0">' + (typeLabels[t.meeting_type] || t.meeting_type) + '</span><div class="flex-1 bg-slate-100 rounded h-3 relative overflow-hidden"><div class="bg-brand-400 h-full" style="width:' + w + '%"></div></div><span class="text-[11px] font-bold text-slate-700 w-8 text-right">' + t.c + '</span></div>';
+    }).join('') + '</div>';
+  }
+  html += '</div>';
+  // Top hospitals
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-trophy text-amber-500 mr-1.5"></i>활동 상위 기관</div>';
+  if (!d.topHospitals.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  else html += '<div class="space-y-1">' + d.topHospitals.slice(0,8).map(function(h, i){
+    return '<div class="flex items-center gap-2 py-0.5"><span class="text-[11px] font-bold text-slate-400 w-5 text-center">' + (i+1) + '</span><span class="text-[12px] font-semibold text-slate-700 flex-1 truncate cursor-pointer hover:text-brand-500" onclick="closeModal();viewHosp(' + h.id + ')">' + (h.name || '-') + '</span><span class="text-[10px] text-slate-400">' + (h.region || '') + '</span><span class="text-[11px] font-bold text-brand-600 w-10 text-right">' + h.c + '회</span></div>';
+  }).join('') + '</div>';
+  html += '</div>';
+  // Top users
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-medal text-purple-500 mr-1.5"></i>담당자별 미팅</div>';
+  if (!d.topUsers.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  else html += '<div class="space-y-1">' + d.topUsers.map(function(u, i){
+    return '<div class="flex items-center gap-2 py-0.5"><span class="text-[11px] font-bold text-slate-400 w-5 text-center">' + (i+1) + '</span><span class="text-[12px] font-semibold text-slate-700 flex-1 truncate">' + (u.name || '-') + '</span><span class="text-[11px] font-bold text-purple-600 w-10 text-right">' + u.c + '회</span></div>';
+  }).join('') + '</div>';
+  html += '</div>';
+  // Pipeline moves
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-arrows-turn-to-dots text-emerald-500 mr-1.5"></i>파이프라인 이동</div>';
+  if (!d.pipelineMoves || !d.pipelineMoves.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  else html += '<div class="space-y-1">' + d.pipelineMoves.slice(0,8).map(function(p){
+    return '<div class="flex items-center gap-2 text-[11px] py-0.5"><span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">' + (stageLabels[p.from_stage] || p.from_stage || '-') + '</span><i class="fas fa-arrow-right text-slate-300 text-[9px]"></i><span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">' + (stageLabels[p.to_stage] || p.to_stage || '-') + '</span><span class="ml-auto font-bold text-slate-700">' + p.c + '건</span></div>';
+  }).join('') + '</div>';
+  html += '</div>';
+  html += '</div>';
+  // New hospitals & doctors lists
+  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">';
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-hospital text-blue-500 mr-1.5"></i>신규 기관 (' + d.newHospitals.length + ')</div>';
+  if (!d.newHospitals.length) html += '<div class="text-xs text-slate-400">없음</div>';
+  else html += '<div class="space-y-0.5 max-h-40 overflow-y-auto">' + d.newHospitals.slice(0,15).map(function(h){
+    return '<div class="text-[11px] text-slate-600 cursor-pointer hover:text-brand-500" onclick="closeModal();viewHosp(' + h.id + ')">• ' + h.name + ' <span class="text-slate-400">(' + (h.region || '-') + ')</span></div>';
+  }).join('') + '</div>';
+  html += '</div>';
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-user-doctor text-purple-500 mr-1.5"></i>신규 의료진 (' + d.newDoctors.length + ')</div>';
+  if (!d.newDoctors.length) html += '<div class="text-xs text-slate-400">없음</div>';
+  else html += '<div class="space-y-0.5 max-h-40 overflow-y-auto">' + d.newDoctors.slice(0,15).map(function(dc){
+    return '<div class="text-[11px] text-slate-600 cursor-pointer hover:text-brand-500" onclick="closeModal();viewDocProfile(' + dc.id + ')">• ' + dc.name + ' <span class="text-slate-400">' + (dc.position || '') + ' / ' + (dc.hospital_name || '-') + '</span></div>';
+  }).join('') + '</div>';
+  html += '</div>';
+  html += '</div>';
+  // Upcoming next actions
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-flag-checkered text-amber-500 mr-1.5"></i>2주 이내 예정 후속 액션 (' + d.upcomingNextActions.length + ')</div>';
+  if (!d.upcomingNextActions.length) html += '<div class="text-xs text-slate-400">없음</div>';
+  else html += '<div class="space-y-1 max-h-44 overflow-y-auto">' + d.upcomingNextActions.slice(0,20).map(function(n){
+    return '<div class="flex items-start gap-2 text-[11px] py-1 border-b border-slate-50 last:border-0"><span class="font-bold text-amber-600 w-20 flex-shrink-0">' + (n.next_meeting_date || '') + '</span><span class="font-semibold text-slate-700 w-32 truncate flex-shrink-0">' + (n.hospital_name || '-') + '</span><span class="text-slate-500 flex-1">' + (n.next_action || '-') + '</span></div>';
+  }).join('') + '</div>';
+  html += '</div>';
+  // Daily trend chart
+  if (d.dailyTrend && d.dailyTrend.length) {
+    html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-chart-line text-brand-500 mr-1.5"></i>일별 미팅 추이</div>' +
+      '<div style="position:relative;height:180px"><canvas id="report-daily-chart"></canvas></div></div>';
+  }
+  html += '</div>';
+
+  document.getElementById('report-body').innerHTML = html;
+
+  // Initialize daily trend chart after DOM injection
+  if (d.dailyTrend && d.dailyTrend.length && window.Chart) {
+    try {
+      var ctx = document.getElementById('report-daily-chart');
+      if (ctx) {
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: d.dailyTrend.map(function(x){ return (x.d || '').slice(5); }),
+            datasets: [{
+              label: '미팅 건수',
+              data: d.dailyTrend.map(function(x){ return Number(x.c||0); }),
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,.15)',
+              borderWidth: 2,
+              tension: 0.3,
+              fill: true,
+              pointRadius: 3,
+              pointBackgroundColor: '#3b82f6'
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { ticks: { font: { size: 10 }, color: '#94a3b8' }, grid: { display: false } },
+              y: { beginAtZero: true, ticks: { font: { size: 10 }, color: '#94a3b8', precision: 0 }, grid: { color: 'rgba(148,163,184,.1)' } }
+            }
+          }
+        });
+      }
+    } catch (e) { /* ignore chart errors */ }
+  }
+}
+function printReport() {
+  var src = document.getElementById('report-print-target');
+  if (!src) return;
+  try {
+    var content = document.getElementById('content');
+    var modal = document.getElementById('modal');
+    var origModalDisplay = modal ? modal.style.display : '';
+    if (modal) modal.style.display = 'none';
+    var origContentClasses = content ? content.className : '';
+    if (content) content.classList.add('not-print-target');
+    document.body.classList.add('print-mode');
+    var wrap = document.createElement('div');
+    wrap.className = 'print-target';
+    wrap.id = 'print-target-temp';
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    var userName = (window._me && window._me.name) ? window._me.name : '';
+    var header = '<div class="print-header"><div class="print-title">TODOC CRM 활동 보고서</div><div class="print-meta">출력일 ' + dateStr + (userName ? ' · ' + userName : '') + '</div></div>';
+    var footer = '<div class="print-footer">TODOC CRM · ' + dateStr + '</div>';
+    wrap.innerHTML = header + src.outerHTML + footer;
+    document.body.appendChild(wrap);
+    var cleanup = function(){
+      document.body.classList.remove('print-mode');
+      if (content) content.className = origContentClasses;
+      if (modal) modal.style.display = origModalDisplay;
+      var t = document.getElementById('print-target-temp');
+      if (t && t.parentNode) t.parentNode.removeChild(t);
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(function(){ window.print(); }, 50);
+    setTimeout(function(){ if (document.getElementById('print-target-temp')) cleanup(); }, 10000);
+  } catch (e) { toast('인쇄 준비 중 오류', 'err'); }
+}
+
+// ===== Pipeline Conversion Analytics =====
+var _plaCharts = [];
+function destroyPlaCharts() { _plaCharts.forEach(function(c){ try { c.destroy(); } catch(e) {} }); _plaCharts = []; }
+var _plaPeriod = 90;
+async function showPipelineAnalytics() {
+  _plaPeriod = 90;
+  openModal('<i class="fas fa-diagram-project text-emerald-500 mr-2" aria-hidden="true"></i>파이프라인 전환 분석',
+    '<div id="pl-analytics-body"><div class="text-center py-8 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div></div>', 'wide');
+  loadPipelineAnalytics();
+}
+async function loadPipelineAnalytics() {
+  destroyPlaCharts();
+  var box = document.getElementById('pl-analytics-body');
+  if (!box) return;
+  box.innerHTML = '<div class="text-center py-8 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div>';
+  try {
+    // Use the richer /pipeline/analytics endpoint with period filter
+    var r = await API.get('/pipeline/analytics?period=' + _plaPeriod);
+    renderPipelineAnalyticsRich(r.data.data);
+  } catch (e) {
+    if (box) box.innerHTML = '<div class="text-center py-8 text-red-400"><i class="fas fa-circle-exclamation mr-1"></i>분석 데이터를 불러올 수 없습니다</div>';
+  }
+}
+function renderPipelineAnalyticsRich(d) {
+  var stageColors = { contact:'#94a3b8', meeting:'#3b82f6', demo:'#8b5cf6', proposal:'#f59e0b', contract:'#059669', active_customer:'#2563eb' };
+  var stageLabels = { contact:'첫 접촉', meeting:'미팅 진행', demo:'데모/시연', proposal:'제안/협의', contract:'계약', active_customer:'활성 거래처' };
+  var funnel = d.funnel || [];
+  var totalActive = funnel.reduce(function(s,x){ return s + Number(x.current||0); }, 0);
+  var totalEntries = funnel.reduce(function(s,x){ return s + Number(x.entries||0); }, 0);
+  var totalProgressed = funnel.reduce(function(s,x){ return s + Number(x.progressed||0); }, 0);
+  var overallConv = totalEntries > 0 ? Math.round(totalProgressed / totalEntries * 100) : 0;
+
+  var html = '<div class="space-y-4">';
+
+  // Period selector + KPI summary cards
+  html += '<div class="flex flex-wrap items-center justify-between gap-3">' +
+    '<div class="flex items-center gap-2">' +
+      '<span class="text-xs text-slate-400 font-semibold">분석 기간</span>' +
+      '<select class="input !py-1.5 !text-xs !w-auto !pr-7" style="border-radius:8px" onchange="_plaPeriod=Number(this.value);loadPipelineAnalytics()">' +
+        ['30','90','180','365'].map(function(v){ return '<option value="'+v+'"'+(Number(v)===_plaPeriod?' selected':'')+'>'+(v==='365'?'최근 1년':'최근 '+v+'일')+'</option>'; }).join('') +
+      '</select>' +
+    '</div>' +
+    '<button class="btn btn-outline btn-sm" onclick="loadPipelineAnalytics()" aria-label="새로고침"><i class="fas fa-arrows-rotate text-xs"></i><span class="hidden sm:inline">새로고침</span></button>' +
+  '</div>';
+
+  // Top KPI summary (4 cards)
+  html += '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3">' +
+    '<div class="card-flat p-4"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:#eef4ff"><i class="fas fa-users text-brand-600"></i></div><div><div class="text-[10px] text-slate-400 font-medium">활성 기관</div><div class="text-xl font-extrabold text-slate-800">'+totalActive+'<span class="text-[11px] text-slate-400 ml-1">개</span></div></div></div></div>' +
+    '<div class="card-flat p-4"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:#ecfdf5"><i class="fas fa-arrows-turn-to-dots text-emerald-600"></i></div><div><div class="text-[10px] text-slate-400 font-medium">기간 내 진입</div><div class="text-xl font-extrabold text-slate-800">'+totalEntries+'<span class="text-[11px] text-slate-400 ml-1">건</span></div></div></div></div>' +
+    '<div class="card-flat p-4"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:#f5f3ff"><i class="fas fa-percent text-violet-600"></i></div><div><div class="text-[10px] text-slate-400 font-medium">평균 전환율</div><div class="text-xl font-extrabold text-slate-800">'+overallConv+'<span class="text-[11px] text-slate-400 ml-1">%</span></div></div></div></div>' +
+    '<div class="card-flat p-4"><div class="flex items-center gap-2.5"><div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:#fff7ed"><i class="fas fa-hourglass-half text-amber-600"></i></div><div><div class="text-[10px] text-slate-400 font-medium">병목 단계</div><div class="text-sm font-extrabold text-slate-800 truncate">'+(d.bottleneck ? d.bottleneck.label : '-')+'</div><div class="text-[10px] text-amber-600 font-semibold">'+(d.bottleneck ? d.bottleneck.avg_dwell_days+'일 체류' : '데이터 부족')+'</div></div></div></div>' +
+  '</div>';
+
+  // Funnel visualization (visual + chart)
+  var maxCurrent = Math.max.apply(null, funnel.map(function(s){return s.current;})) || 1;
+  html += '<div class="card-flat p-5">' +
+    '<div class="flex items-center gap-2.5 mb-4"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef4ff,#dbeafe)"><i class="fas fa-filter text-brand-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">단계별 깔때기</span><span class="ml-auto text-[10px] text-slate-400">현재 분포 + 단계 간 전환율</span></div>' +
+    '<div class="space-y-2.5">' +
+    funnel.map(function(s, i){
+      var pct = Math.max(8, Math.round((s.current / maxCurrent) * 100));
+      var color = stageColors[s.stage] || '#94a3b8';
+      var arrow = i < funnel.length - 1 ? '<div class="flex items-center justify-center text-[10px] text-slate-400 my-0.5"><i class="fas fa-chevron-down"></i> 전환율 <strong class="text-slate-600 mx-1">' + s.conversion_rate + '%</strong> (' + s.progressed + '/' + s.entries + ')</div>' : '';
+      var convBadge = s.conversion_rate >= 70 ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">우수</span>' : (s.conversion_rate >= 40 ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">양호</span>' : (s.entries > 0 ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700">개선 필요</span>' : ''));
+      return '<div>' +
+        '<div class="flex items-center gap-3">' +
+          '<div class="w-20 text-right text-[11px] font-semibold text-slate-600 flex-shrink-0">' + (stageLabels[s.stage] || s.label) + '</div>' +
+          '<div class="flex-1 h-9 rounded-lg flex items-center px-3 transition-all duration-700" style="width:' + pct + '%;background:linear-gradient(90deg,' + color + 'cc,' + color + ')">' +
+            '<span class="text-white font-bold text-sm">' + s.current + '</span>' +
+            '<span class="text-white/80 text-[10px] ml-2">개 기관</span>' +
+            '<span class="ml-auto">' + convBadge + '</span>' +
+          '</div>' +
+          '<div class="w-24 text-right flex-shrink-0"><div class="text-[10px] text-slate-400">평균 체류</div><div class="text-[13px] font-extrabold text-slate-700">' + s.avg_dwell_days + '<span class="text-[10px] text-slate-400 ml-0.5">일</span></div></div>' +
+        '</div>' +
+        arrow +
+      '</div>';
+    }).join('') +
+    '</div>' +
+  '</div>';
+
+  // Charts row: conversion rate bar + dwell days bar
+  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' +
+    '<div class="card-flat p-5">' +
+      '<div class="flex items-center gap-2.5 mb-3"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#ecfdf5,#d1fae5)"><i class="fas fa-chart-column text-emerald-600 text-xs"></i></div><span class="font-bold text-[13px] text-slate-800">단계별 전환율</span></div>' +
+      '<div style="height:180px"><canvas id="pla-chart-conv"></canvas></div>' +
+    '</div>' +
+    '<div class="card-flat p-5">' +
+      '<div class="flex items-center gap-2.5 mb-3"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fff7ed,#fed7aa)"><i class="fas fa-clock text-amber-600 text-xs"></i></div><span class="font-bold text-[13px] text-slate-800">단계별 평균 체류 일수</span></div>' +
+      '<div style="height:180px"><canvas id="pla-chart-dwell"></canvas></div>' +
+    '</div>' +
+  '</div>';
+
+  // Bottleneck warning + Recent transitions timeline
+  if (d.bottleneck) {
+    html += '<div class="card-flat p-4" style="border-left:3px solid #f59e0b;background:linear-gradient(90deg,#fff7ed 0%,transparent 100%)">' +
+      '<div class="flex items-start gap-3"><div class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#fed7aa"><i class="fas fa-triangle-exclamation text-amber-700"></i></div>' +
+      '<div class="flex-1"><div class="font-bold text-[13px] text-slate-800 mb-0.5">병목 단계: ' + d.bottleneck.label + '</div>' +
+      '<div class="text-[12px] text-slate-600">현재 <strong class="text-amber-700">' + d.bottleneck.current + '개 기관</strong>이 평균 <strong class="text-amber-700">' + d.bottleneck.avg_dwell_days + '일</strong> 체류 중이며, 기간 내 전환율 <strong class="text-amber-700">' + d.bottleneck.conversion_rate + '%</strong>로 다른 단계 대비 정체되어 있습니다.</div>' +
+      '</div></div>' +
+    '</div>';
+  }
+
+  // Recent transitions
+  html += '<div class="card-flat p-5">' +
+    '<div class="flex items-center gap-2.5 mb-3"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe)"><i class="fas fa-clock-rotate-left text-violet-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">최근 단계 변경</span><span class="ml-auto text-[10px] text-slate-400">최근 15건</span></div>' +
+    ((d.recent_changes && d.recent_changes.length) ?
+      '<div class="space-y-2 max-h-[280px] overflow-y-auto pr-1">' + d.recent_changes.map(function(c){
+        var fc = stageColors[c.from_stage] || '#94a3b8';
+        var tc = stageColors[c.to_stage] || '#94a3b8';
+        return '<div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-50 cursor-pointer hover:bg-gray-100 transition" onclick="closeModal();viewHosp(' + c.hospital_id + ')">' +
+          '<div class="flex-1 min-w-0"><div class="text-[13px] font-semibold text-slate-700 truncate">' + (c.hospital_name || '') + '</div>' +
+          '<div class="flex items-center gap-1.5 mt-0.5 text-[10px]">' +
+            '<span class="px-1.5 py-0.5 rounded" style="background:' + fc + '20;color:' + fc + '">' + (stageLabels[c.from_stage] || c.from_stage || '-') + '</span>' +
+            '<i class="fas fa-arrow-right text-slate-300 text-[8px]"></i>' +
+            '<span class="px-1.5 py-0.5 rounded font-bold" style="background:' + tc + '20;color:' + tc + '">' + (stageLabels[c.to_stage] || c.to_stage) + '</span>' +
+            (c.changed_by_name ? '<span class="text-slate-400 ml-1">· ' + c.changed_by_name + '</span>' : '') +
+          '</div></div>' +
+          '<div class="text-[10px] text-slate-400 flex-shrink-0">' + fmtShort(c.changed_at) + '</div>' +
+        '</div>';
+      }).join('') + '</div>' :
+      '<div class="text-xs text-slate-300 text-center py-4">최근 단계 변경 이력이 없습니다</div>'
+    ) +
+  '</div>';
+
+  html += '</div>';
+  document.getElementById('pl-analytics-body').innerHTML = html;
+
+  // Render charts
+  setTimeout(function() {
+    try {
+      var convEl = document.getElementById('pla-chart-conv');
+      var dwellEl = document.getElementById('pla-chart-dwell');
+      if (convEl && window.Chart) {
+        Chart.defaults.font.family = 'Pretendard,sans-serif';
+        var convChart = new Chart(convEl, {
+          type: 'bar',
+          data: {
+            labels: funnel.map(function(s){ return stageLabels[s.stage] || s.label; }),
+            datasets: [{
+              label: '전환율(%)',
+              data: funnel.map(function(s){ return s.conversion_rate; }),
+              backgroundColor: funnel.map(function(s){ return stageColors[s.stage] || '#94a3b8'; }),
+              borderRadius: 6, barPercentage: 0.6
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx){ var s=funnel[ctx.dataIndex]; return s.conversion_rate+'% ('+s.progressed+'/'+s.entries+')'; } } } },
+            scales: { y: { beginAtZero: true, max: 100, grid: { color: '#eef0f5' }, ticks: { font: { size: 10 }, callback: function(v){ return v+'%'; } } }, x: { grid: { display: false }, ticks: { font: { size: 10, weight: '600' } } } }
+          }
+        });
+        _plaCharts.push(convChart);
+      }
+      if (dwellEl && window.Chart) {
+        var dwellChart = new Chart(dwellEl, {
+          type: 'bar',
+          data: {
+            labels: funnel.map(function(s){ return stageLabels[s.stage] || s.label; }),
+            datasets: [{
+              label: '평균 체류(일)',
+              data: funnel.map(function(s){ return s.avg_dwell_days; }),
+              backgroundColor: funnel.map(function(s){ return (stageColors[s.stage] || '#94a3b8')+'aa'; }),
+              borderColor: funnel.map(function(s){ return stageColors[s.stage] || '#94a3b8'; }),
+              borderWidth: 1, borderRadius: 6, barPercentage: 0.6
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: function(ctx){ return ctx.parsed.y + '일'; } } } },
+            scales: { y: { beginAtZero: true, grid: { color: '#eef0f5' }, ticks: { font: { size: 10 }, callback: function(v){ return v+'일'; } } }, x: { grid: { display: false }, ticks: { font: { size: 10, weight: '600' } } } }
+          }
+        });
+        _plaCharts.push(dwellChart);
+      }
+    } catch(e) { console.error(e); }
+  }, 100);
+}
+
 async function showPipelineView() {
+  _pipelineTab = 'board';
   openModal('영업 파이프라인', '<div class="text-center py-6"><i class="fas fa-spinner fa-spin text-xl text-slate-300"></i></div>', 'wide');
+  renderPipelineShell();
+}
+
+function renderPipelineShell() {
+  var tabs = '<div class="flex items-center gap-1 mb-4 border-b border-gray-100">' +
+    '<button class="px-4 py-2 text-sm font-semibold transition ' + (_pipelineTab === 'board' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600') + '" onclick="_pipelineTab=\'board\';renderPipelineShell()"><i class="fas fa-columns mr-1.5 text-xs"></i>보드</button>' +
+    '<button class="px-4 py-2 text-sm font-semibold transition ' + (_pipelineTab === 'analytics' ? 'text-brand-600 border-b-2 border-brand-500' : 'text-slate-400 hover:text-slate-600') + '" onclick="_pipelineTab=\'analytics\';renderPipelineShell()"><i class="fas fa-chart-line mr-1.5 text-xs"></i>전환 분석</button>' +
+  '</div>';
+  document.getElementById('modal-body').innerHTML = tabs + '<div id="pipeline-tab-content"><div class="text-center py-6"><i class="fas fa-spinner fa-spin text-xl text-slate-300"></i></div></div>';
+  if (_pipelineTab === 'board') renderPipelineBoard();
+  else renderPipelineAnalytics();
+}
+
+async function renderPipelineBoard() {
   try {
     var r = await API.get('/pipeline');
     var stages = r.data.data.stages;
@@ -901,8 +1642,89 @@ async function showPipelineView() {
     });
     html += '</div></div>';
     html += '<div class="text-[10px] text-slate-400 mt-2"><i class="fas fa-info-circle mr-1"></i>기관 상세에서 파이프라인 단계를 변경할 수 있습니다</div>';
-    document.getElementById('modal-body').innerHTML = html;
-  } catch(e) { document.getElementById('modal-body').innerHTML = '<div class="text-center text-red-400 py-4">파이프라인 데이터를 불러올 수 없습니다</div>'; }
+    document.getElementById('pipeline-tab-content').innerHTML = html;
+  } catch(e) { document.getElementById('pipeline-tab-content').innerHTML = '<div class="text-center text-red-400 py-4">파이프라인 데이터를 불러올 수 없습니다</div>'; }
+}
+
+async function renderPipelineAnalytics() {
+  try {
+    var r = await API.get('/pipeline/analytics?period=' + _pipelinePeriod);
+    var d = r.data.data;
+    var stageColors = { contact: '#94a3b8', meeting: '#3b82f6', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#059669', active_customer: '#2563eb' };
+    var maxCurrent = Math.max.apply(null, d.funnel.map(function(s) { return s.current; })) || 1;
+
+    // Period selector
+    var periodSel = '<div class="flex items-center justify-between mb-4 flex-wrap gap-2">' +
+      '<div class="flex items-center gap-2">' +
+        '<span class="text-xs text-slate-400 font-semibold">분석 기간</span>' +
+        '<select class="input !py-1.5 !text-xs !w-auto !pr-7" style="border-radius:8px" onchange="_pipelinePeriod=Number(this.value);renderPipelineAnalytics()">' +
+          ['30','90','180','365'].map(function(v) {
+            return '<option value="' + v + '"' + (Number(v) === _pipelinePeriod ? ' selected' : '') + '>' + (v === '365' ? '최근 1년' : '최근 ' + v + '일') + '</option>';
+          }).join('') +
+        '</select>' +
+      '</div>' +
+    '</div>';
+
+    // Funnel visualization
+    var funnel = '<div class="card-flat p-5 mb-4">' +
+      '<div class="flex items-center gap-2.5 mb-4"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef4ff,#dbeafe)"><i class="fas fa-filter text-brand-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">단계별 깔때기</span></div>' +
+      '<div class="space-y-2.5">' +
+      d.funnel.map(function(s, i) {
+        var pct = Math.max(8, Math.round((s.current / maxCurrent) * 100));
+        var color = stageColors[s.stage] || '#94a3b8';
+        var arrow = i < d.funnel.length - 1 ? '<div class="flex items-center justify-center text-[10px] text-slate-400 my-0.5"><i class="fas fa-chevron-down"></i> 전환율 <strong class="text-slate-600 mx-1">' + s.conversion_rate + '%</strong> (' + s.progressed + '/' + s.entries + ')</div>' : '';
+        return '<div>' +
+          '<div class="flex items-center gap-3">' +
+            '<div class="w-20 text-right text-[11px] font-semibold text-slate-600 flex-shrink-0">' + s.label + '</div>' +
+            '<div class="flex-1 h-9 rounded-lg flex items-center px-3 transition-all duration-700" style="width:' + pct + '%;background:linear-gradient(90deg,' + color + 'cc,' + color + ')">' +
+              '<span class="text-white font-bold text-sm">' + s.current + '</span>' +
+              '<span class="text-white/80 text-[10px] ml-2">개 기관</span>' +
+            '</div>' +
+            '<div class="w-24 text-right flex-shrink-0"><div class="text-[10px] text-slate-400">평균 체류</div><div class="text-[13px] font-extrabold text-slate-700">' + s.avg_dwell_days + '<span class="text-[10px] text-slate-400 ml-0.5">일</span></div></div>' +
+          '</div>' +
+          arrow +
+        '</div>';
+      }).join('') +
+      '</div>' +
+    '</div>';
+
+    // Bottleneck card
+    var bottleneck = '';
+    if (d.bottleneck) {
+      bottleneck = '<div class="card-flat p-5 mb-4" style="border-left:3px solid #f59e0b">' +
+        '<div class="flex items-center gap-2.5 mb-2"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fff7ed,#fed7aa)"><i class="fas fa-hourglass-half text-amber-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">병목 단계</span></div>' +
+        '<div class="text-sm text-slate-600">현재 <strong class="text-amber-600">' + d.bottleneck.label + '</strong> 단계에서 평균 <strong class="text-amber-600">' + d.bottleneck.avg_dwell_days + '일</strong> 체류 중이며, ' + d.bottleneck.current + '개 기관이 정체되어 있습니다.</div>' +
+        (d.bottleneck.entries > 0 ? '<div class="text-[11px] text-slate-400 mt-1">기간 내 전환율: ' + d.bottleneck.conversion_rate + '% (' + d.bottleneck.progressed + '/' + d.bottleneck.entries + ')</div>' : '') +
+      '</div>';
+    }
+
+    // Recent stage changes timeline
+    var recent = '<div class="card-flat p-5">' +
+      '<div class="flex items-center gap-2.5 mb-3"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#f5f3ff,#ede9fe)"><i class="fas fa-clock-rotate-left text-violet-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">최근 단계 변경</span></div>' +
+      ((d.recent_changes && d.recent_changes.length) ?
+        '<div class="space-y-2">' + d.recent_changes.map(function(c) {
+          var fc = stageColors[c.from_stage] || '#94a3b8';
+          var tc = stageColors[c.to_stage] || '#94a3b8';
+          var fl = ({ contact: '첫 접촉', meeting: '미팅 진행', demo: '데모/시연', proposal: '제안/협의', contract: '계약', active_customer: '활성 거래처' });
+          return '<div class="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-50 cursor-pointer hover:bg-gray-100 transition" onclick="closeModal();viewHosp(' + c.hospital_id + ')">' +
+            '<div class="flex-1 min-w-0"><div class="text-[13px] font-semibold text-slate-700 truncate">' + (c.hospital_name || '') + '</div>' +
+            '<div class="flex items-center gap-1.5 mt-0.5 text-[10px]">' +
+              '<span class="px-1.5 py-0.5 rounded" style="background:' + fc + '20;color:' + fc + '">' + (fl[c.from_stage] || c.from_stage || '-') + '</span>' +
+              '<i class="fas fa-arrow-right text-slate-300 text-[8px]"></i>' +
+              '<span class="px-1.5 py-0.5 rounded font-bold" style="background:' + tc + '20;color:' + tc + '">' + (fl[c.to_stage] || c.to_stage) + '</span>' +
+              (c.changed_by_name ? '<span class="text-slate-400 ml-1">· ' + c.changed_by_name + '</span>' : '') +
+            '</div></div>' +
+            '<div class="text-[10px] text-slate-400 flex-shrink-0">' + fmtShort(c.changed_at) + '</div>' +
+          '</div>';
+        }).join('') + '</div>' :
+        '<div class="text-xs text-slate-300 text-center py-4">최근 단계 변경 이력이 없습니다</div>'
+      ) +
+    '</div>';
+
+    document.getElementById('pipeline-tab-content').innerHTML = periodSel + funnel + bottleneck + recent;
+  } catch (e) {
+    document.getElementById('pipeline-tab-content').innerHTML = '<div class="text-center text-red-400 py-4">전환 분석 데이터를 불러올 수 없습니다</div>';
+  }
 }
 
 // ===== HOSPITALS =====
@@ -1048,8 +1870,7 @@ function renderHMap(el, list) {
   list.forEach(function(h) {
     var r = h.region || '미지정';
     regionCounts[r] = (regionCounts[r] || 0) + 1;
-    if (!regionGrades[r]) regionGrades[r] = { S: 0, A: 0, B: 0, C: 0, total: 0, ci: 0, meetings: 0, names: [] };
-    regionGrades[r][h.grade || 'C']++;
+    if (!regionGrades[r]) regionGrades[r] = { total: 0, ci: 0, meetings: 0, names: [] };
     regionGrades[r].total++;
     regionGrades[r].ci += (h.ci_referrals || 0);
     regionGrades[r].meetings += (h.meeting_count || 0);
@@ -1075,11 +1896,7 @@ function renderHMap(el, list) {
     html += '<div class="card-flat p-3 cursor-pointer hover:shadow-md transition" onclick="document.getElementById(\'h-region\').value=\'' + r + '\';setHospView(\'card\');filterH()">' +
       '<div class="flex items-center justify-between mb-1"><span class="font-bold text-[13px] text-slate-800"><i class="fas fa-location-dot text-brand-400 mr-1.5"></i>' + r + '</span><span class="text-[12px] font-extrabold text-brand-600">' + rg.total + '개</span></div>' +
       '<div class="flex gap-2 text-[10px] text-slate-400">' +
-      (rg.S ? '<span class="text-amber-600 font-bold">S:' + rg.S + '</span>' : '') +
-      (rg.A ? '<span class="text-blue-600 font-bold">A:' + rg.A + '</span>' : '') +
-      (rg.B ? '<span class="text-emerald-600">B:' + rg.B + '</span>' : '') +
-      (rg.C ? '<span class="text-gray-400">C:' + rg.C + '</span>' : '') +
-      '<span class="ml-auto"><i class="fas fa-handshake mr-0.5"></i>' + rg.meetings + '</span>' +
+      '<span><i class="fas fa-handshake mr-0.5"></i>' + rg.meetings + '</span>' +
       (rg.ci > 0 ? '<span class="text-violet-600 font-bold"><i class="fas fa-microchip mr-0.5"></i>' + rg.ci + '</span>' : '') +
       '</div>' +
       '<div class="text-[10px] text-slate-300 mt-1 truncate">' + rg.names.join(', ') + (rg.total > 3 ? ' 외 ' + (rg.total - 3) + '곳' : '') + '</div>' +
@@ -1205,6 +2022,7 @@ async function viewHosp(id) {
       '<button class="btn btn-primary btn-sm" onclick="showDocForm(' + h.id + ')"><i class="fas fa-user-plus text-xs"></i><span class="hidden sm:inline">인원</span></button>' +
       '<button class="btn btn-success btn-sm" onclick="showMeetForm(' + h.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>' +
       '<button class="btn btn-outline btn-sm" onclick="showHospForm(' + h.id + ')"><i class="fas fa-pen text-xs"></i></button>' +
+      '<button class="btn btn-outline btn-sm" title="PDF 저장 / 인쇄" onclick="printHospDetail(' + h.id + ')"><i class="fas fa-file-pdf text-xs"></i><span class="hidden sm:inline">PDF</span></button>' +
       '<button class="btn btn-ghost text-red-400 hover:text-red-600 hover:bg-red-50 btn-sm" onclick="delHosp(' + h.id + ')"><i class="fas fa-trash text-xs"></i></button>';
     window._hospDetail = { h, docs, meets }; detailTab = 'doctors';
     renderDetail();
@@ -1285,12 +2103,208 @@ function renderDetail() {
       return html;
     })() +
     '</div>' +
+    // Score trend chart
+    '<div id="hosp-score-card" class="card-flat p-5">' +
+      '<div class="flex items-center justify-between mb-3"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#fef3c7,#fde68a)"><i class="fas fa-chart-line text-amber-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">기관 점수 추이</span><span class="text-[10px] text-slate-400">미팅 · 파이프라인 가중 합산</span></div>' +
+        '<select id="hosp-score-months" class="input !py-1 !text-[11px] !w-auto !pr-7" style="border-radius:8px" onchange="loadHospScore(' + h.id + ', Number(this.value))">' +
+          '<option value="6">최근 6개월</option><option value="12" selected>최근 12개월</option><option value="24">최근 24개월</option>' +
+        '</select>' +
+      '</div>' +
+      '<div style="height:200px"><canvas id="hosp-score-chart"></canvas></div>' +
+      '<div id="hosp-score-meta" class="mt-3 text-[11px] text-slate-400"></div>' +
+    '</div>' +
     '<div class="flex border-b border-gray-100 px-1 overflow-x-auto">' +
     '<div class="tab ' + (detailTab === 'doctors' ? 'active' : '') + '" onclick="detailTab=\'doctors\';renderDetail()"><i class="fas fa-user-doctor text-xs"></i>인원 (' + docs.length + ')</div>' +
     '<div class="tab ' + (detailTab === 'meetings' ? 'active' : '') + '" onclick="detailTab=\'meetings\';renderDetail()"><i class="fas fa-calendar-check text-xs"></i>미팅 (' + meets.length + ')</div>' +
+    '<div class="tab ' + (detailTab === 'timeline' ? 'active' : '') + '" onclick="detailTab=\'timeline\';renderDetail()"><i class="fas fa-stream text-xs"></i>타임라인</div>' +
     '</div>' +
-    (detailTab === 'doctors' ? renderDoctorsTab(h, docs) : renderMeetingsTab(h, meets)) +
+    (detailTab === 'doctors' ? renderDoctorsTab(h, docs)
+      : detailTab === 'timeline' ? renderTimelineTab(h)
+      : renderMeetingsTab(h, meets)) +
     '</div>';
+  // Async load score chart
+  loadHospScore(h.id, 12);
+  // Async load timeline if active
+  if (detailTab === 'timeline') loadHospTimeline(h.id);
+}
+
+// ===== Print / PDF: Hospital detail =====
+function printHospDetail(hospitalId) {
+  try {
+    var hd = window._hospDetail;
+    if (!hd || !hd.h || hd.h.id !== hospitalId) {
+      toast('상세 정보를 먼저 불러와야 합니다', 'err');
+      return;
+    }
+    var h = hd.h, docs = hd.docs || [], meets = hd.meets || [];
+    var content = document.getElementById('content');
+    if (!content) return;
+
+    // Build print container
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    var userName = (window._me && window._me.name) ? window._me.name : '';
+
+    // Header
+    var header = '<div class="print-header">' +
+      '<div class="print-title">' + (h.name || '기관 상세') + '</div>' +
+      '<div class="print-meta">' +
+        '지역: ' + (h.region || '-') + ' · 주소: ' + (h.address || '-') + ' · ' +
+        '소속 인원 ' + docs.length + '명 · 총 미팅 ' + meets.length + '건' +
+        ' · 출력일 ' + dateStr + (userName ? ' · ' + userName : '') +
+      '</div>' +
+    '</div>';
+
+    // Doctors section
+    var docsRows = docs.map(function(d){
+      return '<tr>' +
+        '<td>' + (d.name || '') + '</td>' +
+        '<td>' + (d.position || '-') + '</td>' +
+        '<td>' + (d.department || '-') + '</td>' +
+        '<td>' + (d.specialty || '-') + '</td>' +
+        '<td style="text-align:right">' + (d.meeting_count || 0) + '</td>' +
+        '<td>' + (d.last_meeting_date || '-') + '</td>' +
+      '</tr>';
+    }).join('');
+    var docsTable = '<h2 style="margin:6mm 0 2mm 0;font-size:13pt;">소속 인원 (' + docs.length + ')</h2>' +
+      (docs.length === 0 ? '<div style="color:#6b7280">등록된 인원이 없습니다.</div>' :
+        '<table><thead><tr><th>이름</th><th>직책</th><th>진료과</th><th>전문분야</th><th>미팅수</th><th>최근미팅</th></tr></thead><tbody>' + docsRows + '</tbody></table>');
+
+    // Meetings section
+    var meetsSorted = meets.slice().sort(function(a,b){ return (b.meeting_date || '').localeCompare(a.meeting_date || ''); });
+    var typeLabel = function(t){ return ({visit:'방문', phone:'전화', conference:'학회', email:'이메일', online:'온라인'})[t] || t || '-'; };
+    var vtLabel = function(v){ return ({am:'오전', pm:'오후', full:'종일'})[v] || '미지정'; };
+    var meetsRows = meetsSorted.map(function(m){
+      var range = (m.start_time && m.end_time) ? (m.start_time + '~' + m.end_time) : vtLabel(m.visit_time);
+      return '<tr>' +
+        '<td>' + (m.meeting_date || '') + '</td>' +
+        '<td>' + range + '</td>' +
+        '<td>' + typeLabel(m.type) + '</td>' +
+        '<td>' + (m.doctor_name || '-') + '</td>' +
+        '<td>' + (m.purpose || '-') + '</td>' +
+        '<td>' + ((m.result || '') + (m.next_action ? ' / 후속: ' + m.next_action : '')) + '</td>' +
+      '</tr>';
+    }).join('');
+    var meetsTable = '<h2 style="margin:8mm 0 2mm 0;font-size:13pt;" class="print-page-break">미팅 이력 (' + meets.length + ')</h2>' +
+      (meets.length === 0 ? '<div style="color:#6b7280">등록된 미팅이 없습니다.</div>' :
+        '<table><thead><tr><th>날짜</th><th>시간</th><th>유형</th><th>담당자</th><th>목적</th><th>결과/후속</th></tr></thead><tbody>' + meetsRows + '</tbody></table>');
+
+    // Footer
+    var footer = '<div class="print-footer">TODOC CRM · ' + (h.name || '') + ' · ' + dateStr + '</div>';
+
+    // Build temporary print container
+    var wrap = document.createElement('div');
+    wrap.className = 'print-target';
+    wrap.id = 'print-target-temp';
+    wrap.innerHTML = header + docsTable + meetsTable + footer;
+
+    // Mark existing content as not-print-target and append temp wrap
+    document.body.classList.add('print-mode');
+    var origClasses = content.className;
+    content.classList.add('not-print-target');
+    document.body.appendChild(wrap);
+
+    // Trigger print, then cleanup
+    var cleanup = function(){
+      document.body.classList.remove('print-mode');
+      content.className = origClasses;
+      var t = document.getElementById('print-target-temp');
+      if (t && t.parentNode) t.parentNode.removeChild(t);
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(function(){ window.print(); }, 50);
+    // Safety cleanup in case afterprint isn't fired (some browsers)
+    setTimeout(function(){ if (document.getElementById('print-target-temp')) cleanup(); }, 10000);
+  } catch (e) {
+    toast('PDF 저장 준비 중 오류가 발생했습니다', 'err');
+  }
+}
+
+async function loadHospScore(hospitalId, months) {
+  var canvas = document.getElementById('hosp-score-chart');
+  if (!canvas) return;
+  // Destroy any existing chart on this canvas
+  try { if (window._hospScoreChart) window._hospScoreChart.destroy(); } catch(e) {}
+  try {
+    var r = await API.get('/hospitals/' + hospitalId + '/score-history?months=' + (months || 12));
+    var d = r.data.data;
+    var labels = d.series.map(function(s) { return fmtMonthLabel(s.month); });
+    var scores = d.series.map(function(s) { return s.score; });
+    var meets = d.series.map(function(s) { return s.meeting_count; });
+    var grades = d.series.map(function(s) { return s.grade; });
+    var pipes = d.series.map(function(s) { return s.pipeline_stage; });
+
+    Chart.defaults.font.family = 'Pretendard,sans-serif';
+    Chart.defaults.font.size = 11;
+    Chart.defaults.color = '#9aa1b4';
+    window._hospScoreChart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            type: 'line',
+            label: '점수',
+            data: scores,
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245,158,11,.15)',
+            tension: 0.35,
+            fill: true,
+            yAxisID: 'y',
+            pointRadius: 4,
+            pointBackgroundColor: '#f59e0b',
+          },
+          {
+            type: 'bar',
+            label: '월 미팅 수',
+            data: meets,
+            backgroundColor: 'rgba(59,130,246,.4)',
+            borderRadius: 6,
+            yAxisID: 'y1',
+            barPercentage: 0.5,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { position: 'top', labels: { boxWidth: 8, boxHeight: 8, padding: 12, font: { size: 10, weight: '600' }, usePointStyle: true } },
+          tooltip: {
+            callbacks: {
+              afterBody: function(items) {
+                if (!items || !items.length) return '';
+                var idx = items[0].dataIndex;
+                return ['단계: ' + (pipes[idx] || '-')];
+              }
+            }
+          }
+        },
+        scales: {
+          y: { position: 'left', beginAtZero: true, grid: { color: '#eef0f5', drawBorder: false }, ticks: { font: { size: 10 } }, border: { display: false }, title: { display: true, text: '점수', font: { size: 10 }, color: '#9aa1b4' } },
+          y1: { position: 'right', beginAtZero: true, grid: { display: false }, ticks: { font: { size: 10 }, stepSize: 1 }, border: { display: false }, title: { display: true, text: '미팅', font: { size: 10 }, color: '#9aa1b4' } },
+          x: { grid: { display: false }, ticks: { font: { size: 10, weight: '600' } }, border: { display: false } }
+        }
+      }
+    });
+
+    // Meta summary
+    var meta = document.getElementById('hosp-score-meta');
+    if (meta) {
+      var firstScore = scores.length ? scores[0] : 0;
+      var lastScore = scores.length ? scores[scores.length - 1] : 0;
+      var diff = lastScore - firstScore;
+      var diffText = diff > 0 ? '<span class="text-emerald-500 font-bold">+' + diff + '</span>' : (diff < 0 ? '<span class="text-red-500 font-bold">' + diff + '</span>' : '<span class="text-slate-400">변동없음</span>');
+      var totalMeets = meets.reduce(function(a,b){ return a+b; }, 0);
+      var pChanges = (d.pipeline_changes || []).filter(function(p){ return p.from_stage; }).length;
+      meta.innerHTML = '<i class="fas fa-info-circle mr-1"></i>현재 점수 <strong class="text-amber-600">' + lastScore + '</strong> · 시작 대비 ' + diffText + ' · 누적 미팅 <strong class="text-blue-600">' + totalMeets + '</strong>건 · 단계 이동 ' + pChanges + '회';
+    }
+  } catch (e) {
+    var meta = document.getElementById('hosp-score-meta');
+    if (meta) meta.innerHTML = '<span class="text-red-400">점수 추이를 불러올 수 없습니다</span>';
+  }
 }
 function renderDoctorsTab(h, docs) {
   if (!docs.length) return '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-user-plus"></i></div><p class="font-medium text-slate-500 mb-1">소속 의료진이 없습니다</p><p class="text-xs text-slate-400 mb-4">의료진을 수동으로 추가해주세요</p><button class="btn btn-primary btn-sm" onclick="showDocForm(' + h.id + ')"><i class="fas fa-plus mr-1.5 text-xs"></i>의료진 추가</button></div></div>';
@@ -1356,6 +2370,8 @@ function renderMeetingsTab(h, meets) {
           if (v === '순환진료') return 'bg-amber-400 text-white';
           return 'bg-blue-400 text-white';
         };
+        // 빈 값은 휴진으로 정규화
+        var normSlot = function(v) { return (v == null || String(v).trim() === '') ? '휴진' : String(v); };
         return '<div class="bg-gray-50 rounded-xl p-3">' +
           '<div class="flex items-center gap-2 mb-2"><span class="text-[12px] font-bold text-slate-700">' + d.name + '</span>' +
           '<span class="text-[10px] text-slate-400">' + (d.position || '') + '</span>' +
@@ -1363,9 +2379,9 @@ function renderMeetingsTab(h, meets) {
           '<div class="grid grid-cols-7 gap-1">' +
           '<div></div>' + DAYS_KR.map(function(dk, i) { return '<div class="text-[9px] font-bold text-center ' + (i===5?'text-blue-500':'text-slate-500') + '">' + dk + '</div>'; }).join('') +
           '<div class="text-[8px] text-amber-500 font-bold text-center flex items-center justify-center">AM</div>' +
-          DAYS_KEY.map(function(k) { var v = ch[k+'_am']||''; return '<div class="text-center"><div class="rounded text-[9px] font-bold py-0.5 px-0.5 ' + (v ? slotBg(v) : 'text-slate-200') + '">' + (v||'-') + '</div></div>'; }).join('') +
+          DAYS_KEY.map(function(k) { var v = normSlot(ch[k+'_am']); return '<div class="text-center"><div class="rounded text-[9px] font-bold py-0.5 px-0.5 ' + slotBg(v) + '">' + v + '</div></div>'; }).join('') +
           '<div class="text-[8px] text-indigo-500 font-bold text-center flex items-center justify-center">PM</div>' +
-          DAYS_KEY.map(function(k) { var v = ch[k+'_pm']||''; return '<div class="text-center"><div class="rounded text-[9px] font-bold py-0.5 px-0.5 ' + (v ? slotBg(v) : 'text-slate-200') + '">' + (v||'-') + '</div></div>'; }).join('') +
+          DAYS_KEY.map(function(k) { var v = normSlot(ch[k+'_pm']); return '<div class="text-center"><div class="rounded text-[9px] font-bold py-0.5 px-0.5 ' + slotBg(v) + '">' + v + '</div></div>'; }).join('') +
           '</div>' +
           (ch.notes ? '<div class="text-[10px] text-amber-600 mt-1.5"><i class="fas fa-exclamation-circle mr-0.5"></i>' + ch.notes + '</div>' : '') +
           '</div>';
@@ -1419,6 +2435,140 @@ function renderMeetingsTab(h, meets) {
   }).join('') + '</div>';
 }
 
+// ===== Hospital Integrated Timeline Tab =====
+window._hospTlFilter = window._hospTlFilter || 'all'; // all|meeting|grade|pipeline|doctor_activity|hospital_activity|comment
+function setHospTlFilter(f) {
+  window._hospTlFilter = f;
+  var hid = window._hospDetail && window._hospDetail.h && window._hospDetail.h.id;
+  if (hid) loadHospTimeline(hid);
+}
+function renderTimelineTab(h) {
+  return '<div class="card-flat p-4 lg:p-6">' +
+    '<div class="flex items-center gap-2 mb-3 flex-wrap">' +
+      '<div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-stream text-violet-500 text-xs"></i></div>' +
+      '<span class="font-bold text-sm text-slate-800">통합 타임라인</span>' +
+      '<span class="text-[11px] text-slate-400">미팅 · 파이프라인 · 의료진 · 댓글 변경 이력</span>' +
+    '</div>' +
+    '<div id="hosp-tl-filters" class="flex items-center gap-1 mb-4 overflow-x-auto pb-1"></div>' +
+    '<div id="hosp-tl-body"><div class="text-center py-10 text-slate-300"><i class="fas fa-spinner fa-spin text-xl"></i></div></div>' +
+  '</div>';
+}
+async function loadHospTimeline(hospitalId) {
+  var bodyEl = document.getElementById('hosp-tl-body');
+  var filtersEl = document.getElementById('hosp-tl-filters');
+  if (!bodyEl) return;
+  try {
+    var r = await API.get('/hospitals/' + hospitalId + '/timeline?limit=200');
+    var data = r.data.data;
+    var events = data.events || [];
+    var counts = data.counts || {};
+    var f = window._hospTlFilter || 'all';
+
+    // Filter buttons
+    var fb = function(key, label, icon, color, count) {
+      var active = f === key;
+      var cls = active
+        ? 'bg-' + color + '-500 text-white shadow'
+        : 'bg-' + color + '-50 text-' + color + '-700 hover:bg-' + color + '-100';
+      return '<button class="text-[11px] font-bold px-2.5 py-1 rounded-full transition flex-shrink-0 flex items-center gap-1 ' + cls + '" onclick="setHospTlFilter(\'' + key + '\')"><i class="fas ' + icon + ' text-[9px]"></i>' + label + ' (' + (count || 0) + ')</button>';
+    };
+    var allActive = f === 'all';
+    filtersEl.innerHTML =
+      '<button class="text-[11px] font-bold px-2.5 py-1 rounded-full transition flex-shrink-0 ' + (allActive ? 'bg-slate-700 text-white shadow' : 'bg-slate-100 text-slate-600 hover:bg-slate-200') + '" onclick="setHospTlFilter(\'all\')"><i class="fas fa-list text-[9px] mr-1"></i>전체 (' + (counts.total || 0) + ')</button>' +
+      fb('meeting', '미팅', 'fa-calendar-check', 'blue', counts.meeting) +
+      fb('pipeline', '파이프라인', 'fa-arrows-turn-right', 'violet', counts.pipeline) +
+      fb('doctor_activity', '의료진', 'fa-user-doctor', 'emerald', counts.doctor) +
+      fb('hospital_activity', '기관', 'fa-hospital', 'sky', counts.hospital) +
+      fb('comment', '댓글', 'fa-comment', 'rose', counts.comment);
+
+    // Apply filter
+    var filtered = (f === 'all') ? events : events.filter(function(e) { return e.type === f; });
+    if (!filtered.length) {
+      bodyEl.innerHTML = '<div class="text-center py-10 text-slate-300"><i class="fas fa-inbox text-2xl mb-2 block"></i><div class="text-sm">표시할 이력이 없습니다</div></div>';
+      return;
+    }
+
+    // Group by year-month for nicer reading
+    var grouped = {};
+    filtered.forEach(function(ev) {
+      var ts = (ev.sortTs || ev.ts || '').substring(0, 10);
+      var ym = ts.substring(0, 7) || '미상';
+      if (!grouped[ym]) grouped[ym] = [];
+      grouped[ym].push(ev);
+    });
+    var ymKeys = Object.keys(grouped).sort(function(a, b) { return b.localeCompare(a); });
+
+    var typeMeta = {
+      meeting: { icon: 'fa-calendar-check', color: 'blue', label: '미팅' },
+      pipeline: { icon: 'fa-arrows-turn-right', color: 'violet', label: '파이프라인' },
+      doctor_activity: { icon: 'fa-user-doctor', color: 'emerald', label: '의료진' },
+      hospital_activity: { icon: 'fa-hospital', color: 'sky', label: '기관' },
+      comment: { icon: 'fa-comment', color: 'rose', label: '댓글' },
+    };
+    var meetTypeIcon = { visit:'fa-hospital', phone:'fa-phone', conference:'fa-chalkboard-user', email:'fa-envelope', online:'fa-video' };
+    var meetTypeLabel = { visit:'방문', phone:'전화', conference:'학회', email:'이메일', online:'온라인' };
+
+    var html = '<div class="relative pl-6">' +
+      '<div class="absolute left-2.5 top-2 bottom-2 w-px bg-slate-200" aria-hidden="true"></div>';
+    ymKeys.forEach(function(ym) {
+      html += '<div class="relative mb-1 mt-3 first:mt-0">' +
+        '<div class="text-[11px] font-extrabold text-slate-500 sticky top-0 bg-white py-1 pl-1">' + ym + '</div>' +
+      '</div>';
+      grouped[ym].forEach(function(ev) {
+        var meta = typeMeta[ev.type] || { icon: 'fa-circle', color: 'slate', label: ev.type };
+        var dotBg = 'bg-' + meta.color + '-500';
+        var pillBg = 'bg-' + meta.color + '-50 text-' + meta.color + '-700';
+        var dateLabel = (ev.sortTs || ev.ts || '').substring(0, 16).replace('T', ' ');
+        var actorBadge = '';
+        if (ev.meta && ev.meta.user_name) actorBadge = '<span class="text-[10px] text-slate-400"><i class="fas fa-user-tie mr-0.5"></i>' + ev.meta.user_name + '</span>';
+        else if (ev.meta && ev.meta.changed_by) actorBadge = '<span class="text-[10px] text-slate-400"><i class="fas fa-user-pen mr-0.5"></i>' + ev.meta.changed_by + '</span>';
+
+        var extra = '';
+        if (ev.type === 'meeting') {
+          var mt = ev.meta && ev.meta.meeting_type;
+          var mtIcon = meetTypeIcon[mt] || 'fa-calendar';
+          var mtLabel = meetTypeLabel[mt] || mt || '';
+          var timeStr = '';
+          if (ev.meta && ev.meta.start_time) {
+            timeStr = ev.meta.start_time + (ev.meta.end_time ? '~' + ev.meta.end_time : '');
+          }
+          extra = '<div class="flex items-center gap-1.5 mb-1 flex-wrap">' +
+            '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-600"><i class="fas ' + mtIcon + ' mr-0.5 text-[8px]"></i>' + mtLabel + '</span>' +
+            (timeStr ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-50 text-slate-600"><i class="fas fa-clock mr-0.5 text-[8px]"></i>' + timeStr + '</span>' : '') +
+            (ev.meta && ev.meta.next_action ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-600"><i class="fas fa-arrow-right mr-0.5 text-[8px]"></i>후속</span>' : '') +
+          '</div>';
+        }
+        var clickAttr = '';
+        if (ev.type === 'meeting' && ev.meta && ev.meta.meeting_id) {
+          clickAttr = ' onclick="var m=(window._hospDetail&&window._hospDetail.meets||[]).find(function(x){return x.id===' + ev.meta.meeting_id + '});if(m)showMeetDetail(m)" style="cursor:pointer"';
+        } else if (ev.type === 'comment' && ev.meta && ev.meta.meeting_id) {
+          clickAttr = ' onclick="var m=(window._hospDetail&&window._hospDetail.meets||[]).find(function(x){return x.id===' + ev.meta.meeting_id + '});if(m)showMeetDetail(m)" style="cursor:pointer"';
+        } else if (ev.type === 'doctor_activity' && ev.meta && ev.meta.doctor_id && ev.meta.action !== 'delete') {
+          clickAttr = ' onclick="viewDocProfile(' + ev.meta.doctor_id + ')" style="cursor:pointer"';
+        }
+
+        html += '<div class="relative mb-3"' + clickAttr + '>' +
+          '<div class="absolute -left-[18px] top-2 w-3 h-3 rounded-full ' + dotBg + ' ring-2 ring-white shadow"></div>' +
+          '<div class="card-flat p-3 hover:shadow-sm transition border border-slate-100">' +
+            '<div class="flex items-center gap-2 mb-1 flex-wrap">' +
+              '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ' + pillBg + '"><i class="fas ' + meta.icon + ' mr-0.5 text-[8px]"></i>' + meta.label + '</span>' +
+              '<span class="text-[10px] text-slate-400">' + dateLabel + '</span>' +
+              (actorBadge ? '<span class="ml-auto">' + actorBadge + '</span>' : '') +
+            '</div>' +
+            extra +
+            '<div class="text-[13px] font-semibold text-slate-700 mb-0.5">' + (ev.title || '') + '</div>' +
+            (ev.body ? '<div class="text-xs text-slate-500 leading-relaxed line-clamp-2">' + ev.body + '</div>' : '') +
+          '</div>' +
+        '</div>';
+      });
+    });
+    html += '</div>';
+    bodyEl.innerHTML = html;
+  } catch (e) {
+    bodyEl.innerHTML = '<div class="text-center py-10 text-red-400"><i class="fas fa-exclamation-triangle mr-1"></i>타임라인을 불러올 수 없습니다</div>';
+  }
+}
+
 // ===== DOCTORS PAGE =====
 async function loadDoc() {
   document.getElementById('page-title').textContent = '의료진 관리';
@@ -1428,41 +2578,179 @@ async function loadDoc() {
     const [dr, deptR] = await Promise.all([API.get('/doctors'), API.get('/doctors/departments')]);
     docList = dr.data.data;
     const depts = deptR.data.data || [];
+    var docViewMode = localStorage.getItem('docViewMode') || 'table';
+    window._docViewMode = docViewMode;
+    var viewToggle = '<div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">' +
+      '<button class="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ' + (docViewMode === 'table' ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700') + '" onclick="setDocViewMode(\'table\')"><i class="fas fa-list mr-1"></i>목록</button>' +
+      '<button class="px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ' + (docViewMode === 'grid' ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700') + '" onclick="setDocViewMode(\'grid\')"><i class="fas fa-table-cells mr-1"></i>주간 그리드</button>' +
+    '</div>';
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
-      '<div class="filter-row">' +
+      '<div class="filter-row">' + viewToggle +
       '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="d-search" oninput="filterD()" placeholder="의료진명/병원명" class="input pl-10"></div>' +
 
       '<select id="d-dept" onchange="filterD()" class="input filter-select"><option value="">전체 진료과</option>' + depts.map(dp => '<option>' + dp + '</option>').join('') + '</select>' +
       '<select id="d-visit" onchange="filterD()" class="input filter-select"><option value="">전체 방문</option><option value="30">30일+ 미방문</option><option value="60">60일+ 미방문</option><option value="90">90일+ 미방문</option></select>' +
       '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="d-fav-only" onchange="filterD()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
       '<span id="d-count" class="text-xs text-slate-300 font-medium"></span></div>' +
-      '<div class="card-flat overflow-hidden"><div class="table-wrap"><table class="w-full"><thead id="d-thead"></thead>' +
-      '<tbody id="d-tbody" class="divide-y divide-gray-50"></tbody></table></div></div></div>';
+      '<div id="d-table-view" class="card-flat overflow-hidden ' + (docViewMode === 'grid' ? 'hidden' : '') + '"><div class="table-wrap"><table class="w-full"><thead id="d-thead"></thead>' +
+      '<tbody id="d-tbody" class="divide-y divide-gray-50"></tbody></table></div></div>' +
+      '<div id="d-grid-view" class="' + (docViewMode === 'table' ? 'hidden' : '') + '"></div>' +
+      '</div>';
     renderDR(docList);
   } catch (e) { toast('의료진 목록을 불러올 수 없습니다', 'err') }
 }
+function setDocViewMode(mode) {
+  window._docViewMode = mode;
+  localStorage.setItem('docViewMode', mode);
+  // Toggle visibility
+  var tableEl = document.getElementById('d-table-view');
+  var gridEl = document.getElementById('d-grid-view');
+  if (tableEl) tableEl.classList.toggle('hidden', mode !== 'table');
+  if (gridEl) gridEl.classList.toggle('hidden', mode !== 'grid');
+  // Refresh toggle buttons
+  filterD();
+  // Update toggle buttons style
+  var toggleBtns = document.querySelectorAll('.filter-row > div:first-child button');
+  toggleBtns.forEach(function(btn, i) {
+    var isActive = (i === 0 && mode === 'table') || (i === 1 && mode === 'grid');
+    btn.className = 'px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ' +
+      (isActive ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700');
+  });
+}
 function renderDR(list) {
   document.getElementById('d-count').textContent = list.length + '명';
-  // Sortable table header
+  var mode = window._docViewMode || 'table';
+
+  // ===== Table view =====
   var thCls = 'cursor-pointer select-none hover:text-brand-500 transition';
-  document.getElementById('d-thead').innerHTML = '<tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
-    '<th class="px-4 lg:px-6 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'name\',filterD)">의료진' + sortIcon('name', _docSort) + '</th>' +
-    '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'hospital_name\',filterD)">소속 병원' + sortIcon('hospital_name', _docSort) + '</th>' +
-    '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'department\',filterD)">진료과' + sortIcon('department', _docSort) + '</th>' +
-    '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'specialty\',filterD)">전문분야' + sortIcon('specialty', _docSort) + '</th>' +
+  var theadEl = document.getElementById('d-thead');
+  if (theadEl) {
+    theadEl.innerHTML = '<tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold uppercase tracking-wider border-b border-gray-100">' +
+      '<th class="px-4 lg:px-6 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'name\',filterD)">의료진' + sortIcon('name', _docSort) + '</th>' +
+      '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'hospital_name\',filterD)">소속 병원' + sortIcon('hospital_name', _docSort) + '</th>' +
+      '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'department\',filterD)">진료과' + sortIcon('department', _docSort) + '</th>' +
+      '<th class="px-4 py-3.5 text-left hide-mobile ' + thCls + '" onclick="toggleSort(_docSort,\'specialty\',filterD)">전문분야' + sortIcon('specialty', _docSort) + '</th>' +
+      '<th class="px-4 py-3.5 text-center ' + thCls + '" onclick="toggleSort(_docSort,\'meeting_count\',filterD)">미팅' + sortIcon('meeting_count', _docSort) + '</th>' +
+      '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'last_meeting\',filterD)">최근' + sortIcon('last_meeting', _docSort) + '</th></tr>';
+  }
+  var tbodyEl = document.getElementById('d-tbody');
+  if (tbodyEl) {
+    tbodyEl.innerHTML = list.map(function(d) {
+      return '<tr class="tr cursor-pointer" onclick="viewDocProfile(' + d.id + ')">' +
+        '<td class="px-4 lg:px-6 py-3.5"><div class="flex items-center gap-3">' + avatar(d.photo, d.name) + '<div><div class="font-semibold text-[13px] text-slate-800">' + d.name + '</div><div class="text-[11px] text-slate-400">' + (d.position || '') + '</div></div></div></td>' +
+        '<td class="px-4 py-3.5 text-[13px] text-slate-600">' + (d.hospital_name || '-') + '</td>' +
+        '<td class="px-4 py-3.5 text-[13px] text-slate-500 hide-mobile">' + (d.department || '-') + '</td>' +
+        '<td class="px-4 py-3.5 text-[13px] text-slate-500 hide-mobile">' + (d.specialty || '-') + '</td>' +
+        '<td class="px-4 py-3.5 text-center text-[13px] font-bold text-slate-700">' + (d.meeting_count || 0) + '</td>' +
+        '<td class="px-4 py-3.5"><div class="text-[13px] text-slate-600">' + (d.last_meeting ? fmtShort(d.last_meeting) : '-') + '</div>' + (d.last_meeting ? '<div class="text-[10px] ' + daysClass(d.last_meeting) + '">' + daysAgo(d.last_meeting) + '</div>' : '') + '</td></tr>';
+    }).join('');
+  }
 
-    '<th class="px-4 py-3.5 text-center ' + thCls + '" onclick="toggleSort(_docSort,\'meeting_count\',filterD)">미팅' + sortIcon('meeting_count', _docSort) + '</th>' +
-    '<th class="px-4 py-3.5 text-left ' + thCls + '" onclick="toggleSort(_docSort,\'last_meeting\',filterD)">최근' + sortIcon('last_meeting', _docSort) + '</th></tr>';
-  document.getElementById('d-tbody').innerHTML = list.map(d =>
-    '<tr class="tr cursor-pointer" onclick="viewDocProfile(' + d.id + ')">' +
-    '<td class="px-4 lg:px-6 py-3.5"><div class="flex items-center gap-3">' + avatar(d.photo, d.name) + '<div><div class="font-semibold text-[13px] text-slate-800">' + d.name + '</div><div class="text-[11px] text-slate-400">' + (d.position || '') + '</div></div></div></td>' +
-    '<td class="px-4 py-3.5 text-[13px] text-slate-600">' + (d.hospital_name || '-') + '</td>' +
-    '<td class="px-4 py-3.5 text-[13px] text-slate-500 hide-mobile">' + (d.department || '-') + '</td>' +
-    '<td class="px-4 py-3.5 text-[13px] text-slate-500 hide-mobile">' + (d.specialty || '-') + '</td>' +
+  // ===== Grid (weekly schedule) view =====
+  var gridEl = document.getElementById('d-grid-view');
+  if (gridEl) {
+    if (!list.length) {
+      gridEl.innerHTML = '<div class="card-flat"><div class="empty"><div class="empty-icon"><i class="fas fa-user-doctor"></i></div><p class="font-medium text-slate-500 mb-1">표시할 의료진이 없습니다</p></div></div>';
+    } else {
+      gridEl.innerHTML = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">' +
+        list.map(function(d) { return docWeeklyGridCard(d); }).join('') +
+      '</div>';
+    }
+  }
+}
 
-    '<td class="px-4 py-3.5 text-center text-[13px] font-bold text-slate-700">' + (d.meeting_count || 0) + '</td>' +
-    '<td class="px-4 py-3.5"><div class="text-[13px] text-slate-600">' + (d.last_meeting ? fmtShort(d.last_meeting) : '-') + '</div>' + (d.last_meeting ? '<div class="text-[10px] ' + daysClass(d.last_meeting) + '">' + daysAgo(d.last_meeting) + '</div>' : '') + '</td></tr>'
-  ).join('');
+// Reusable 7-day × AM/PM weekly schedule card for a doctor
+function docWeeklyGridCard(d) {
+  var ch = parseClinicHours(d.clinic_hours);
+  // Backward compat: old format { mon: "09-12" }
+  var isOld = ch.mon && !ch.mon_am && typeof ch.mon === 'string';
+  if (isOld) { var m2 = {}; DAYS_KEY.forEach(function(k){ if(ch[k]) m2[k+'_am']=ch[k]; }); m2.notes=ch.notes||''; ch=m2; }
+
+  var hasAnyDay = DAYS_KEY.some(function(k) { return ch[k + '_am'] || ch[k + '_pm']; });
+
+  // 빈 값은 휴진으로 정규화
+  var normSlot = function(v) { return (v == null || String(v).trim() === '') ? '휴진' : String(v); };
+
+  var slotInfo = function(v) {
+    if (!v) return { bg: 'bg-gray-100', fg: 'text-gray-400 line-through', icon: '<i class="fas fa-ban text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '✕' };
+    if (v === '진료') return { bg: 'bg-cyan-100', fg: 'text-cyan-700', icon: '<i class="fas fa-stethoscope text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '●' };
+    if (v === '수술') return { bg: 'bg-rose-100', fg: 'text-rose-700', icon: '<i class="fas fa-scissors text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '◆' };
+    if (v === '휴진') return { bg: 'bg-gray-100', fg: 'text-gray-400 line-through', icon: '<i class="fas fa-ban text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '✕' };
+    if (v === '순환진료') return { bg: 'bg-amber-100', fg: 'text-amber-700', icon: '<i class="fas fa-rotate text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '↻' };
+    if (v === '오전진료' || v === '오후진료') return { bg: 'bg-cyan-50', fg: 'text-cyan-600', icon: '<i class="fas fa-sun text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '◐' };
+    if (v.indexOf('검사') !== -1) return { bg: 'bg-purple-100', fg: 'text-purple-700', icon: '<i class="fas fa-microscope text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '▲' };
+    if (v.indexOf('학회') !== -1) return { bg: 'bg-indigo-100', fg: 'text-indigo-700', icon: '<i class="fas fa-chalkboard-user text-[8px] mr-0.5" aria-hidden="true"></i>', dot: '★' };
+    return { bg: 'bg-blue-50', fg: 'text-blue-600', icon: '', dot: '·' };
+  };
+
+  // Best-time hint: find days with 진료 in AM or PM
+  var bestSlots = [];
+  DAYS_KEY.forEach(function(k, i) {
+    if ((ch[k + '_am'] || '') === '진료') bestSlots.push(DAYS_KR[i] + '오전');
+    if ((ch[k + '_pm'] || '') === '진료') bestSlots.push(DAYS_KR[i] + '오후');
+  });
+  var bestHint = bestSlots.length ? bestSlots.slice(0, 4).join(', ') + (bestSlots.length > 4 ? ' …' : '') : '';
+
+  // Header section
+  var lastClass = d.last_meeting ? daysClass(d.last_meeting) : 'text-slate-300';
+  var lastLabel = d.last_meeting ? daysAgo(d.last_meeting) : '미방문';
+
+  var html = '<div class="card-flat p-4 lg:p-5 cursor-pointer hover:shadow-md transition" onclick="viewDocProfile(' + d.id + ')">' +
+    // Header
+    '<div class="flex items-start gap-3 mb-3">' +
+      avatar(d.photo, d.name, 'width:44px;height:44px;border-radius:12px;font-size:16px') +
+      '<div class="flex-1 min-w-0">' +
+        '<div class="flex items-center gap-1.5 mb-0.5 flex-wrap">' +
+          '<span class="font-extrabold text-[14px] text-slate-800 truncate">' + d.name + '</span>' +
+          (d.position ? '<span class="text-[11px] text-slate-400">' + d.position + '</span>' : '') +
+        '</div>' +
+        '<div class="text-[11px] text-slate-500 truncate"><i class="fas fa-hospital text-brand-400 mr-1 text-[10px]" aria-hidden="true"></i>' + (d.hospital_name || '-') + (d.department ? ' · ' + d.department : '') + '</div>' +
+      '</div>' +
+      '<div class="text-right flex-shrink-0">' +
+        '<div class="text-[11px] font-bold text-slate-700"><i class="fas fa-handshake text-blue-400 mr-1 text-[10px]" aria-hidden="true"></i>' + (d.meeting_count || 0) + '회</div>' +
+        '<div class="text-[10px] ' + lastClass + ' mt-0.5">' + lastLabel + '</div>' +
+      '</div>' +
+    '</div>';
+
+  // Weekly grid
+  if (hasAnyDay) {
+    html += '<div class="border border-slate-100 rounded-lg overflow-hidden">' +
+      // Day header
+      '<div class="grid grid-cols-8 bg-slate-50 text-[10px] font-bold">' +
+        '<div class="p-1.5 text-center text-slate-400"></div>' +
+        DAYS_KR.map(function(dk, i) { return '<div class="p-1.5 text-center ' + (i === 5 ? 'text-blue-500' : 'text-slate-600') + '">' + dk + '</div>'; }).join('') +
+      '</div>' +
+      // AM row
+      '<div class="grid grid-cols-8 border-t border-slate-100">' +
+        '<div class="p-1.5 text-[9px] font-bold text-amber-600 text-center bg-amber-50/40 flex items-center justify-center"><i class="fas fa-sun text-[10px] mr-0.5" aria-hidden="true"></i>AM</div>' +
+        DAYS_KEY.map(function(k) {
+          var v = normSlot(ch[k + '_am']);
+          var s = slotInfo(v);
+          return '<div class="p-0.5"><div class="' + s.bg + ' ' + s.fg + ' rounded text-center text-[10px] font-semibold py-1.5 leading-none" title="' + v + '" aria-label="' + v + '">' + s.icon + (v.length > 3 ? v.substring(0, 2) : v) + '</div></div>';
+        }).join('') +
+      '</div>' +
+      // PM row
+      '<div class="grid grid-cols-8 border-t border-slate-100">' +
+        '<div class="p-1.5 text-[9px] font-bold text-indigo-600 text-center bg-indigo-50/40 flex items-center justify-center"><i class="fas fa-moon text-[10px] mr-0.5" aria-hidden="true"></i>PM</div>' +
+        DAYS_KEY.map(function(k) {
+          var v = normSlot(ch[k + '_pm']);
+          var s = slotInfo(v);
+          return '<div class="p-0.5"><div class="' + s.bg + ' ' + s.fg + ' rounded text-center text-[10px] font-semibold py-1.5 leading-none" title="' + v + '" aria-label="' + v + '">' + s.icon + (v.length > 3 ? v.substring(0, 2) : v) + '</div></div>';
+        }).join('') +
+      '</div>' +
+    '</div>';
+    if (bestHint) {
+      html += '<div class="text-[10px] text-emerald-600 mt-2 bg-emerald-50/60 rounded-md px-2 py-1.5"><i class="fas fa-thumbs-up mr-1 text-[9px]" aria-hidden="true"></i><strong>방문 추천:</strong> ' + bestHint + '</div>';
+    }
+    if (ch.notes) {
+      html += '<div class="text-[10px] text-amber-700 mt-1.5 bg-amber-50/70 rounded-md px-2 py-1.5"><i class="fas fa-exclamation-circle mr-1 text-[9px]" aria-hidden="true"></i>' + ch.notes + '</div>';
+    }
+  } else {
+    html += '<div class="text-[11px] text-slate-300 text-center py-6 border border-dashed border-slate-200 rounded-lg"><i class="fas fa-calendar-xmark text-lg mb-1 block" aria-hidden="true"></i>외래 시간이 등록되지 않았습니다</div>';
+  }
+
+  html += '</div>';
+  return html;
 }
 function filterD() {
   const q = (document.getElementById('d-search')?.value || '').toLowerCase();
@@ -1498,7 +2786,8 @@ async function viewDocProfile(id) {
       '<button class="btn btn-outline btn-sm" onclick="showMeetingStats(\'doctor\',' + d.id + ')"><i class="fas fa-chart-bar text-xs"></i></button>' +
       '<button class="btn btn-outline btn-sm" onclick="showTransferForm(' + d.id + ')"><i class="fas fa-right-left text-xs"></i></button>' +
       '<button class="btn btn-success btn-sm" onclick="showMeetForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-calendar-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>' +
-      '<button class="btn btn-outline btn-sm" onclick="showDocForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-pen text-xs"></i></button>';
+      '<button class="btn btn-outline btn-sm" onclick="showDocForm(' + d.hospital_id + ',' + d.id + ')"><i class="fas fa-pen text-xs"></i></button>' +
+      '<button class="btn btn-outline btn-sm" title="PDF 저장 / 인쇄" onclick="printDocProfile(' + d.id + ')"><i class="fas fa-file-pdf text-xs"></i><span class="hidden sm:inline">PDF</span></button>';
     renderDocProfile();
   } catch (e) { toast('의료진 정보를 불러올 수 없습니다', 'err') }
 }
@@ -1589,7 +2878,9 @@ function renderProfileMeetings(d) {
 }
 // ===== MEETINGS PAGE =====
 var _meetViewMode = localStorage.getItem('meetView') || 'calendar';
+var _calRange = localStorage.getItem('calRange') || 'month'; // month | week | day | timeline
 function setMeetView(mode) { _meetViewMode = mode; localStorage.setItem('meetView', mode); renderMeetPage(); }
+function setCalRange(r) { _calRange = r; localStorage.setItem('calRange', r); renderMeetCalendar(); }
 
 async function loadMeet() {
   document.getElementById('page-title').textContent = '미팅 관리';
@@ -1631,13 +2922,742 @@ function renderMeetPage() {
 
 // --- Calendar View (inline, not modal) ---
 function renderMeetCalendar() {
-  var meets = window._meetList || [];
+  // Route to appropriate sub-renderer based on range mode
+  if (_calRange === 'week') return renderMeetCalendarWeek();
+  if (_calRange === 'day') return renderMeetCalendarDay();
+  if (_calRange === 'timeline') return renderMeetCalendarTimeline();
+  return renderMeetCalendarMonth();
+}
+
+// Range toggle UI (월간/주간/일간)
+function calRangeToggle() {
+  var btn = function(value, label, icon) {
+    var active = _calRange === value;
+    return '<button class="px-2.5 py-1 rounded-md text-[11px] font-bold transition ' +
+      (active ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700') +
+      '" onclick="setCalRange(\'' + value + '\')">' +
+      '<i class="fas ' + icon + ' mr-1 text-[10px]"></i>' + label + '</button>';
+  };
+  return '<div class="flex items-center justify-between mb-3 flex-wrap gap-2">' +
+    '<div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5 flex-wrap">' +
+      btn('month', '월간', 'fa-calendar-days') +
+      btn('week', '주간', 'fa-calendar-week') +
+      btn('day', '일간', 'fa-calendar-day') +
+      btn('timeline', '타임라인', 'fa-stream') +
+    '</div>' +
+    '<button class="btn btn-ghost btn-sm text-[11px]" onclick="goToToday()"><i class="fas fa-circle-dot mr-1 text-[9px]"></i>오늘</button>' +
+  '</div>';
+}
+
+function goToToday() {
+  var now = new Date();
+  window._meetCalYear = now.getFullYear();
+  window._meetCalMonth = now.getMonth();
+  window._meetCalDay = now.getDate();
+  renderMeetCalendar();
+}
+
+// Helpers
+function getCurrentCalDate() {
+  var y = window._meetCalYear, m = window._meetCalMonth, d = window._meetCalDay || new Date().getDate();
+  // Clamp day to last day of month
+  var last = new Date(y, m + 1, 0).getDate();
+  if (d > last) d = last;
+  return new Date(y, m, d);
+}
+function dateStr(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function startOfWeek(d) {
+  // Sunday-based week (matches month grid headers)
+  var dt = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  dt.setDate(dt.getDate() - dt.getDay());
+  return dt;
+}
+
+// Filter meetings by current user filter
+function _filterMeetsByUser(meetsAll) {
+  var uf = window._calUserFilter || 'all';
+  if (uf === 'all') return meetsAll;
+  var ufNum = Number(uf);
+  return meetsAll.filter(function(m) {
+    var ids = (m.user_ids || []).map(Number);
+    if (ids.length === 0 && m.user_id) ids = [Number(m.user_id)];
+    return ids.indexOf(ufNum) !== -1;
+  });
+}
+
+// Build a date->meetings map (with next_meeting_date virtual entries)
+function _buildMeetMap(meets) {
+  var map = {};
+  meets.forEach(function(mt) {
+    if (!mt.meeting_date) return;
+    var d = mt.meeting_date.substring(0, 10);
+    if (!map[d]) map[d] = [];
+    map[d].push(mt);
+    if (mt.next_meeting_date) {
+      var nd = mt.next_meeting_date.substring(0, 10);
+      if (!map[nd]) map[nd] = [];
+      var existing = map[nd].some(function(e) { return e.id === mt.id && e._isNextMeeting; });
+      if (!existing) map[nd].push(Object.assign({}, mt, { _isNextMeeting: true, _originalDate: mt.meeting_date, meeting_date: nd }));
+    }
+  });
+  // Sort by visit_time
+  var visitTimeOrder = { am: 0, pm: 1, full: 2, '': 3 };
+  Object.keys(map).forEach(function(d) {
+    map[d].sort(function(a, b) {
+      var oa = visitTimeOrder[a.visit_time || ''] !== undefined ? visitTimeOrder[a.visit_time || ''] : 3;
+      var ob = visitTimeOrder[b.visit_time || ''] !== undefined ? visitTimeOrder[b.visit_time || ''] : 3;
+      if (oa !== ob) return oa - ob;
+      return (a.id || 0) - (b.id || 0);
+    });
+  });
+  return map;
+}
+
+// Compact meeting card used in week/day views
+function _meetCardHTML(mt) {
+  var tc = { visit:'blue', phone:'emerald', conference:'violet', email:'amber', online:'indigo' };
+  var c = tc[mt.meeting_type] || 'slate';
+  var icon = { visit:'fa-hospital', phone:'fa-phone', conference:'fa-chalkboard-user', email:'fa-envelope', online:'fa-video' };
+  var isNext = mt._isNextMeeting;
+  var primaryUid = (mt.user_ids && mt.user_ids[0]) || (mt.users && mt.users[0] && mt.users[0].user_id) || mt.user_id;
+  var uc = userColor(primaryUid);
+  var vt = mt.visit_time;
+  var vtBg = vt === 'am' ? '#fed7aa' : vt === 'pm' ? '#bfdbfe' : vt === 'full' ? '#e9d5ff' : '#f1f5f9';
+  var vtFg = vt === 'am' ? '#9a3412' : vt === 'pm' ? '#1e40af' : vt === 'full' ? '#6b21a8' : '#475569';
+  var vtLabel = vt === 'am' ? '오전' : vt === 'pm' ? '오후' : vt === 'full' ? '종일' : '미지정';
+  var bg = isNext ? 'bg-amber-50 border-dashed border-amber-300 text-amber-700' :
+    'bg-' + c + '-50 border-' + c + '-200 text-' + c + '-700';
+  var which = isNext ? 'next' : 'main';
+  return '<div class="rounded-lg p-2 border ' + bg + ' cursor-pointer hover:shadow-sm transition meet-drag" ' +
+    'draggable="true" data-meet-id="' + mt.id + '" data-which="' + which + '" ' +
+    'ondragstart="onMeetDragStart(event)" ondragend="onMeetDragEnd(event)" ' +
+    'style="border-left:3px solid ' + uc.dot + '" onclick="viewMeetDoctors(' + mt.id + ',[])">' +
+    '<div class="flex items-center gap-1.5 mb-1">' +
+      '<span class="text-[9px] font-extrabold rounded px-1" style="background:' + vtBg + ';color:' + vtFg + '">' + vtLabel + '</span>' +
+      '<i class="fas ' + (isNext ? 'fa-clock' : (icon[mt.meeting_type] || 'fa-calendar')) + ' text-[10px]"></i>' +
+      '<span class="text-[10px] font-semibold truncate flex-1">' + (isNext ? '예정: ' : '') + meetDoctorNames(mt) + '</span>' +
+      '<i class="fas fa-grip-vertical text-[9px] text-slate-300 cursor-move" title="드래그해서 이동"></i>' +
+    '</div>' +
+    '<div class="text-[9px] opacity-80 truncate">' + (mt.hospital_name || '') + '</div>' +
+    (mt.user_names ? '<div class="text-[9px] opacity-60 truncate"><i class="fas fa-user-tie mr-0.5"></i>' + mt.user_names + '</div>' : '') +
+  '</div>';
+}
+
+// ===== Drag & Drop Handlers =====
+function onMeetDragStart(e) {
+  var el = e.currentTarget;
+  var id = el.getAttribute('data-meet-id');
+  var which = el.getAttribute('data-which') || 'main';
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', JSON.stringify({ id: Number(id), which: which }));
+  el.classList.add('opacity-40');
+  // Highlight drop targets
+  document.querySelectorAll('[data-drop-target="1"]').forEach(function(c) {
+    c.classList.add('ring-1', 'ring-dashed', 'ring-brand-300');
+  });
+}
+function onMeetDragEnd(e) {
+  e.currentTarget.classList.remove('opacity-40');
+  document.querySelectorAll('[data-drop-target="1"]').forEach(function(c) {
+    c.classList.remove('ring-1', 'ring-dashed', 'ring-brand-300', 'bg-brand-50/60');
+  });
+}
+function onMeetDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  var t = e.currentTarget;
+  if (t) t.classList.add('bg-brand-50/60');
+}
+function onMeetDragLeave(e) {
+  var t = e.currentTarget;
+  if (t) t.classList.remove('bg-brand-50/60');
+}
+async function onMeetDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  var t = e.currentTarget;
+  if (t) t.classList.remove('bg-brand-50/60');
+  var raw = e.dataTransfer.getData('text/plain');
+  if (!raw) return;
+  var payload;
+  try { payload = JSON.parse(raw); } catch(_) { return; }
+  var newDate = t.getAttribute('data-date');
+  var newSlot = t.getAttribute('data-slot');
+  if (!payload.id || !newDate) return;
+  // Find original meeting
+  var orig = (window._meetList || []).find(function(m) { return m.id === payload.id; });
+  if (!orig) return;
+  var origDate = (payload.which === 'next' ? orig.next_meeting_date : orig.meeting_date) || '';
+  origDate = origDate.substring(0, 10);
+  var origSlot = orig.visit_time || '';
+  // No change?
+  if (newDate === origDate && (payload.which === 'next' || newSlot === origSlot)) return;
+  // Build patch body
+  var body = { which: payload.which, meeting_date: newDate };
+  if (payload.which !== 'next') body.visit_time = newSlot;
+  try {
+    await API.patch('/meetings/' + payload.id, body);
+    // Update local cache so re-render reflects change
+    if (payload.which === 'next') {
+      orig.next_meeting_date = newDate;
+    } else {
+      orig.meeting_date = newDate;
+      orig.visit_time = newSlot || null;
+    }
+    toast('일정이 이동되었습니다');
+    renderMeetCalendar();
+  } catch (err) {
+    toast('이동 실패', 'err');
+  }
+}
+
+// Team filter chips (shared by all calendar ranges)
+function _teamFilterChips(meetsAll) {
+  var userSet = {};
+  meetsAll.forEach(function(mt) {
+    (mt.users || []).forEach(function(u) { if (u && u.user_id != null) userSet[u.user_id] = u.user_name || ('#' + u.user_id); });
+  });
+  var userList = Object.keys(userSet).map(function(id) { return { id: Number(id), name: userSet[id] }; });
+  userList.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+  if (!userList.length) return '';
+  var uf = window._calUserFilter || 'all';
+  var html = '<div class="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1" role="tablist" aria-label="팀원 필터">';
+  var allCls = uf === 'all' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200';
+  html += '<button class="text-[11px] font-bold px-2.5 py-1 rounded-full transition flex-shrink-0 ' + allCls + '" onclick="window._calUserFilter=\'all\';renderMeetCalendar()"><i class="fas fa-users text-[9px] mr-1"></i>전체 (' + meetsAll.length + ')</button>';
+  userList.forEach(function(u) {
+    var c = userColor(u.id);
+    var sel = String(uf) === String(u.id);
+    var cls = sel ? '' : 'opacity-60 hover:opacity-100';
+    var cnt = meetsAll.filter(function(mm) {
+      var ids = (mm.user_ids || []).map(Number); if (ids.length === 0 && mm.user_id) ids = [Number(mm.user_id)];
+      return ids.indexOf(u.id) !== -1;
+    }).length;
+    html += '<button class="text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 transition flex-shrink-0 ' + cls + '" style="background:' + c.bg + ';color:' + c.fg + ';' + (sel ? 'box-shadow:0 0 0 2px ' + c.dot + '40' : '') + '" onclick="window._calUserFilter=' + u.id + ';renderMeetCalendar()">' +
+      '<span class="inline-block w-2 h-2 rounded-full" style="background:' + c.dot + '"></span>' + u.name + ' (' + cnt + ')</button>';
+  });
+  html += '</div>';
+  return html;
+}
+
+// ===== Weekly View =====
+function renderMeetCalendarWeek() {
+  var meetsAll = window._meetList || [];
+  var meets = _filterMeetsByUser(meetsAll);
+  var meetMap = _buildMeetMap(meets);
+
+  var current = getCurrentCalDate();
+  var weekStart = startOfWeek(current);
+  var todayStr = dateStr(new Date());
+
+  var dayLabels = ['일','월','화','수','목','금','토'];
+  var slots = [
+    { key: 'am', label: '오전', icon: 'fa-sun', bg: '#fff7ed' },
+    { key: 'pm', label: '오후', icon: 'fa-cloud-sun', bg: '#eff6ff' },
+    { key: 'full', label: '종일', icon: 'fa-clock', bg: '#faf5ff' },
+    { key: '',    label: '미지정', icon: 'fa-circle-question', bg: '#f8fafc' },
+  ];
+
+  var weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+  var rangeLabel = (weekStart.getMonth() + 1) + '/' + weekStart.getDate() + ' – ' + (weekEnd.getMonth() + 1) + '/' + weekEnd.getDate() + ', ' + weekStart.getFullYear();
+
+  var dates = [];
+  for (var i = 0; i < 7; i++) {
+    var d = new Date(weekStart); d.setDate(weekStart.getDate() + i);
+    dates.push(d);
+  }
+
+  var html = '<div class="card-flat p-4 lg:p-6 mb-4">' + calRangeToggle();
+
+  // Navigation
+  html += '<div class="flex items-center justify-between mb-3">' +
+    '<button class="btn btn-ghost btn-sm" onclick="shiftCalDays(-7)" aria-label="이전 주"><i class="fas fa-chevron-left"></i></button>' +
+    '<div class="text-center"><span class="font-bold text-lg text-slate-800">' + rangeLabel + '</span><div class="text-[11px] text-slate-400">주간 보기</div></div>' +
+    '<button class="btn btn-ghost btn-sm" onclick="shiftCalDays(7)" aria-label="다음 주"><i class="fas fa-chevron-right"></i></button>' +
+  '</div>';
+
+  // Team filter chips
+  html += _teamFilterChips(meetsAll);
+
+  // Day headers
+  html += '<div class="grid gap-1 mb-2" style="grid-template-columns:60px repeat(7,minmax(0,1fr))">';
+  html += '<div></div>';
+  dates.forEach(function(d) {
+    var ds = dateStr(d);
+    var isToday = ds === todayStr;
+    var dow = d.getDay();
+    var color = isToday ? 'text-brand-600 font-extrabold' : dow === 0 ? 'text-red-400' : dow === 6 ? 'text-blue-400' : 'text-slate-500';
+    html += '<div class="text-center py-1 ' + (isToday ? 'bg-brand-50 rounded-lg' : '') + '">' +
+      '<div class="text-[10px] font-semibold ' + color + '">' + dayLabels[dow] + '</div>' +
+      '<div class="text-sm font-bold ' + color + '">' + d.getDate() + '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+
+  // Time slot rows
+  html += '<div class="space-y-1">';
+  slots.forEach(function(slot) {
+    html += '<div class="grid gap-1" style="grid-template-columns:60px repeat(7,minmax(0,1fr))">';
+    html += '<div class="text-[11px] font-bold text-slate-500 flex flex-col items-center justify-center py-2 rounded-lg" style="background:' + slot.bg + '"><i class="fas ' + slot.icon + ' text-[12px] mb-0.5"></i>' + slot.label + '</div>';
+    dates.forEach(function(d) {
+      var ds = dateStr(d);
+      var isToday = ds === todayStr;
+      var dayMeets = (meetMap[ds] || []).filter(function(mt) { return (mt.visit_time || '') === slot.key; });
+      var cellBg = isToday ? 'bg-brand-50/30' : 'bg-white';
+      html += '<div class="border border-slate-100 rounded-lg p-1 min-h-[64px] ' + cellBg + ' transition" data-date="' + ds + '" data-slot="' + slot.key + '" data-drop-target="1" ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onMeetDrop(event)">';
+      if (dayMeets.length === 0) {
+        html += '<div class="h-full w-full flex items-center justify-center text-[10px] text-slate-300 cursor-pointer hover:text-slate-400" onclick="showDayMeetsInline(\'' + ds + '\')">+</div>';
+      } else {
+        dayMeets.slice(0, 3).forEach(function(mt) { html += _meetCardHTML(mt) + '<div class="h-1"></div>'; });
+        if (dayMeets.length > 3) html += '<div class="text-[9px] text-center text-slate-400 cursor-pointer hover:text-slate-600" onclick="showDayMeetsInline(\'' + ds + '\')">+' + (dayMeets.length - 3) + '건 더</div>';
+      }
+      html += '</div>';
+    });
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // Summary
+  var weekMeetCount = 0;
+  dates.forEach(function(d) { var ds = dateStr(d); weekMeetCount += (meetMap[ds] || []).length; });
+  html += '<div class="text-[11px] text-slate-400 mt-3"><i class="fas fa-info-circle mr-1"></i>이번 주 총 <strong class="text-slate-700">' + weekMeetCount + '</strong>건 · 시간대별 그리드 (오전/오후/종일/미지정)</div>';
+  html += '</div>';
+
+  document.getElementById('m-body').innerHTML = html;
+}
+
+function shiftCalDays(days) {
+  var current = getCurrentCalDate();
+  current.setDate(current.getDate() + days);
+  window._meetCalYear = current.getFullYear();
+  window._meetCalMonth = current.getMonth();
+  window._meetCalDay = current.getDate();
+  renderMeetCalendar();
+}
+
+// ===== Timeline (time-axis) View =====
+// 7-day × 30-minute time grid. Meetings with start_time/end_time are absolutely
+// positioned within their day column. Meetings without start_time appear in an
+// "all-day / unscheduled" strip above the grid. Drag-and-drop moves a meeting
+// to a new (day, time-slot) by writing start_time/end_time via PATCH.
+function _hhmmToMinutes(hhmm) {
+  if (!hhmm || typeof hhmm !== 'string') return null;
+  var parts = hhmm.split(':');
+  if (parts.length < 2) return null;
+  var h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+}
+function _minutesToHHMM(mins) {
+  if (mins == null) return '';
+  mins = Math.max(0, Math.min(24 * 60 - 1, mins));
+  var h = Math.floor(mins / 60), m = mins % 60;
+  return (h < 10 ? '0' + h : h) + ':' + (m < 10 ? '0' + m : m);
+}
+
+function renderMeetCalendarTimeline() {
+  var meetsAll = window._meetList || [];
+  var meets = _filterMeetsByUser(meetsAll);
+
+  var current = getCurrentCalDate();
+  var weekStart = startOfWeek(current);
+  var todayStr = dateStr(new Date());
+  var dayLabels = ['일','월','화','수','목','금','토'];
+
+  // Build 7-day date list
+  var dates = [];
+  for (var i = 0; i < 7; i++) {
+    var d = new Date(weekStart); d.setDate(weekStart.getDate() + i);
+    dates.push(d);
+  }
+
+  // Group meetings by date string
+  var byDate = {};
+  meets.forEach(function(mt) {
+    if (!mt.meeting_date) return;
+    var ds = mt.meeting_date.substring(0, 10);
+    if (!byDate[ds]) byDate[ds] = [];
+    byDate[ds].push(mt);
+    // virtual next-meeting entry
+    if (mt.next_meeting_date) {
+      var nd = mt.next_meeting_date.substring(0, 10);
+      if (!byDate[nd]) byDate[nd] = [];
+      byDate[nd].push(Object.assign({}, mt, { _isNextMeeting: true, _originalDate: mt.meeting_date, meeting_date: nd }));
+    }
+  });
+
+  // Time-axis configuration
+  var startHour = 8;     // 08:00
+  var endHour = 20;      // 20:00 (12 hour window, scrollable)
+  var slotMinutes = 30;
+  var slotsPerHour = 60 / slotMinutes;
+  var totalSlots = (endHour - startHour) * slotsPerHour; // 24 slots
+  var slotHeightPx = 28; // each 30-min slot is 28px tall
+  var totalHeight = totalSlots * slotHeightPx;
+
+  var weekEnd = new Date(weekStart); weekEnd.setDate(weekEnd.getDate() + 6);
+  var rangeLabel = (weekStart.getMonth() + 1) + '/' + weekStart.getDate() + ' – ' + (weekEnd.getMonth() + 1) + '/' + weekEnd.getDate() + ', ' + weekStart.getFullYear();
+
+  var html = '<div class="card-flat p-4 lg:p-6 mb-4">' + calRangeToggle();
+
+  // Navigation
+  html += '<div class="flex items-center justify-between mb-3">' +
+    '<button class="btn btn-ghost btn-sm" onclick="shiftCalDays(-7)" aria-label="이전 주"><i class="fas fa-chevron-left"></i></button>' +
+    '<div class="text-center"><span class="font-bold text-lg text-slate-800">' + rangeLabel + '</span><div class="text-[11px] text-slate-400">타임라인 (30분 단위 · ' + startHour + ':00 ~ ' + endHour + ':00)</div></div>' +
+    '<button class="btn btn-ghost btn-sm" onclick="shiftCalDays(7)" aria-label="다음 주"><i class="fas fa-chevron-right"></i></button>' +
+  '</div>';
+
+  // Team filter
+  html += _teamFilterChips(meetsAll);
+
+  // ===== Unscheduled / all-day strip =====
+  html += '<div class="grid gap-1 mb-2" style="grid-template-columns:60px repeat(7,minmax(0,1fr))">';
+  html += '<div class="text-[10px] font-bold text-slate-400 flex items-center justify-center bg-slate-50 rounded-md py-1"><i class="fas fa-circle-question text-[10px] mr-1"></i>미지정</div>';
+  dates.forEach(function(d) {
+    var ds = dateStr(d);
+    var dayMeets = (byDate[ds] || []).filter(function(mt) { return !_hhmmToMinutes(mt.start_time); });
+    var bg = ds === todayStr ? 'bg-brand-50/30' : 'bg-white';
+    html += '<div class="border border-slate-100 rounded-md p-1 min-h-[40px] ' + bg + ' transition" data-date="' + ds + '" data-slot="" data-tl-unscheduled="1" data-drop-target="1" ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onTimelineDrop(event)">';
+    if (dayMeets.length === 0) {
+      html += '<div class="text-[9px] text-slate-300 text-center py-1">·</div>';
+    } else {
+      dayMeets.slice(0, 2).forEach(function(mt) { html += _timelineMiniCardHTML(mt); });
+      if (dayMeets.length > 2) html += '<div class="text-[9px] text-center text-slate-400">+' + (dayMeets.length - 2) + '</div>';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+
+  // ===== Day headers =====
+  html += '<div class="grid gap-1 mb-1" style="grid-template-columns:60px repeat(7,minmax(0,1fr))">';
+  html += '<div></div>';
+  dates.forEach(function(d) {
+    var ds = dateStr(d);
+    var isToday = ds === todayStr;
+    var dow = d.getDay();
+    var color = isToday ? 'text-brand-600 font-extrabold' : dow === 0 ? 'text-red-400' : dow === 6 ? 'text-blue-400' : 'text-slate-500';
+    html += '<div class="text-center py-1 ' + (isToday ? 'bg-brand-50 rounded-md' : '') + '">' +
+      '<div class="text-[10px] font-semibold ' + color + '">' + dayLabels[dow] + '</div>' +
+      '<div class="text-sm font-bold ' + color + '">' + d.getDate() + '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+
+  // ===== Time-axis grid (scrollable) =====
+  html += '<div class="overflow-y-auto border border-slate-200 rounded-lg" style="max-height:560px">';
+  html += '<div class="grid gap-0 relative" style="grid-template-columns:60px repeat(7,minmax(0,1fr))">';
+
+  // Time-label column (left)
+  html += '<div class="bg-slate-50/60 border-r border-slate-100" style="position:relative;height:' + totalHeight + 'px">';
+  for (var s = 0; s < totalSlots; s++) {
+    var hh = startHour + Math.floor(s / slotsPerHour);
+    var isHourMark = (s % slotsPerHour) === 0;
+    var top = s * slotHeightPx;
+    if (isHourMark) {
+      html += '<div class="absolute left-0 right-0 text-[10px] font-bold text-slate-500 text-center" style="top:' + top + 'px">' +
+        (hh < 10 ? '0' + hh : hh) + ':00</div>';
+    }
+  }
+  html += '</div>';
+
+  // Day columns
+  dates.forEach(function(d) {
+    var ds = dateStr(d);
+    var isToday = ds === todayStr;
+    var bgCol = isToday ? 'bg-brand-50/15' : 'bg-white';
+    html += '<div class="border-r border-slate-100 ' + bgCol + '" style="position:relative;height:' + totalHeight + 'px">';
+
+    // Slot cells (drop targets, half-hour each)
+    for (var s2 = 0; s2 < totalSlots; s2++) {
+      var topPx = s2 * slotHeightPx;
+      var isHourLine = (s2 % slotsPerHour) === 0;
+      var borderCls = isHourLine ? 'border-t border-slate-200' : 'border-t border-slate-100 border-dashed';
+      var slotMins = (startHour * 60) + s2 * slotMinutes;
+      var slotTime = _minutesToHHMM(slotMins);
+      html += '<div class="absolute left-0 right-0 ' + borderCls + ' transition" style="top:' + topPx + 'px;height:' + slotHeightPx + 'px" ' +
+        'data-date="' + ds + '" data-time="' + slotTime + '" data-drop-target="1" ' +
+        'ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onTimelineDrop(event)" ' +
+        'onclick="quickAddAtSlot(\'' + ds + '\',\'' + slotTime + '\')"></div>';
+    }
+
+    // "Now" indicator on today's column
+    if (isToday) {
+      var now = new Date();
+      var nowMins = now.getHours() * 60 + now.getMinutes();
+      var startMins = startHour * 60;
+      var endMins = endHour * 60;
+      if (nowMins >= startMins && nowMins <= endMins) {
+        var nowTop = ((nowMins - startMins) / slotMinutes) * slotHeightPx;
+        html += '<div class="absolute left-0 right-0 pointer-events-none z-20" style="top:' + nowTop + 'px;height:2px;background:#ef4444">' +
+          '<div class="absolute -left-1 -top-1 w-2 h-2 rounded-full bg-red-500"></div></div>';
+      }
+    }
+
+    // Meeting blocks (absolute-positioned within day column)
+    var dayMeets = (byDate[ds] || []).filter(function(mt) { return _hhmmToMinutes(mt.start_time) != null; });
+    dayMeets.forEach(function(mt) {
+      var startM = _hhmmToMinutes(mt.start_time);
+      var endM = _hhmmToMinutes(mt.end_time) != null ? _hhmmToMinutes(mt.end_time) : startM + 30;
+      if (endM <= startM) endM = startM + 30;
+      var startMinsRange = startHour * 60;
+      var endMinsRange = endHour * 60;
+      // Clip to visible window
+      var visibleStart = Math.max(startM, startMinsRange);
+      var visibleEnd = Math.min(endM, endMinsRange);
+      if (visibleEnd <= visibleStart) return;
+      var topPx2 = ((visibleStart - startMinsRange) / slotMinutes) * slotHeightPx;
+      var heightPx = Math.max(slotHeightPx - 2, ((visibleEnd - visibleStart) / slotMinutes) * slotHeightPx);
+      html += _timelineBlockHTML(mt, topPx2, heightPx);
+    });
+
+    html += '</div>';
+  });
+
+  html += '</div>'; // grid
+  html += '</div>'; // scroll container
+
+  // Summary
+  var weekMeetCount = 0;
+  dates.forEach(function(d) { var ds = dateStr(d); weekMeetCount += (byDate[ds] || []).length; });
+  html += '<div class="text-[11px] text-slate-400 mt-3"><i class="fas fa-info-circle mr-1"></i>이번 주 총 <strong class="text-slate-700">' + weekMeetCount + '</strong>건 · 빈 슬롯 클릭으로 빠른 등록 · 미팅을 드래그해서 시각 이동</div>';
+  html += '</div>';
+
+  document.getElementById('m-body').innerHTML = html;
+
+  // Auto-scroll to a sensible default (current hour or 9:00)
+  setTimeout(function() {
+    var scroller = document.querySelector('#m-body .overflow-y-auto');
+    if (!scroller) return;
+    var now = new Date();
+    var nowMins = now.getHours() * 60 + now.getMinutes();
+    var startMins = startHour * 60;
+    var targetMins = (nowMins >= startMins && nowMins <= endHour * 60) ? nowMins - 60 : 9 * 60;
+    var targetTop = Math.max(0, ((targetMins - startMins) / slotMinutes) * slotHeightPx);
+    scroller.scrollTop = targetTop;
+  }, 30);
+}
+
+// Compact card for meeting blocks placed inside the time-axis grid
+function _timelineBlockHTML(mt, topPx, heightPx) {
+  var tc = { visit:'blue', phone:'emerald', conference:'violet', email:'amber', online:'indigo' };
+  var c = tc[mt.meeting_type] || 'slate';
+  var icon = { visit:'fa-hospital', phone:'fa-phone', conference:'fa-chalkboard-user', email:'fa-envelope', online:'fa-video' };
+  var isNext = mt._isNextMeeting;
+  var primaryUid = (mt.user_ids && mt.user_ids[0]) || (mt.users && mt.users[0] && mt.users[0].user_id) || mt.user_id;
+  var uc = userColor(primaryUid);
+  var bg = isNext ? 'background:#fffbeb;border:1px dashed #fcd34d;color:#92400e' :
+    'background:var(--color-' + c + '-50,#eff6ff);border:1px solid var(--color-' + c + '-200,#bfdbfe);color:var(--color-' + c + '-700,#1d4ed8)';
+  var which = isNext ? 'next' : 'main';
+  var timeLabel = (mt.start_time || '') + (mt.end_time ? '~' + mt.end_time : '');
+  // Compact text for short blocks
+  var compact = heightPx < 44;
+  var inner = compact
+    ? '<div class="flex items-center gap-1 truncate"><i class="fas ' + (icon[mt.meeting_type] || 'fa-calendar') + ' text-[8px]"></i><span class="text-[9px] font-bold truncate">' + meetDoctorNames(mt) + '</span></div>'
+    : '<div class="text-[9px] font-bold opacity-80 mb-0.5">' + timeLabel + '</div>' +
+      '<div class="flex items-center gap-1 mb-0.5"><i class="fas ' + (icon[mt.meeting_type] || 'fa-calendar') + ' text-[9px]"></i><span class="text-[10px] font-bold truncate">' + meetDoctorNames(mt) + '</span></div>' +
+      '<div class="text-[9px] opacity-70 truncate">' + (mt.hospital_name || '') + '</div>';
+  return '<div class="absolute rounded-md p-1 cursor-pointer overflow-hidden meet-drag z-10 hover:shadow transition" ' +
+    'draggable="true" data-meet-id="' + mt.id + '" data-which="' + which + '" ' +
+    'ondragstart="onMeetDragStart(event)" ondragend="onMeetDragEnd(event)" ' +
+    'style="top:' + topPx + 'px;height:' + heightPx + 'px;left:2px;right:2px;' + bg + ';border-left:3px solid ' + uc.dot + '" ' +
+    'onclick="event.stopPropagation();viewMeetDoctors(' + mt.id + ',[])" title="' + timeLabel + ' · ' + meetDoctorNames(mt) + '">' + inner + '</div>';
+}
+
+// Tiny card for the "unscheduled" strip above the timeline grid
+function _timelineMiniCardHTML(mt) {
+  var tc = { visit:'blue', phone:'emerald', conference:'violet', email:'amber', online:'indigo' };
+  var c = tc[mt.meeting_type] || 'slate';
+  var primaryUid = (mt.user_ids && mt.user_ids[0]) || (mt.users && mt.users[0] && mt.users[0].user_id) || mt.user_id;
+  var uc = userColor(primaryUid);
+  var isNext = mt._isNextMeeting;
+  var which = isNext ? 'next' : 'main';
+  var bg = isNext ? 'background:#fffbeb;color:#92400e' : 'background:var(--color-' + c + '-50,#eff6ff);color:var(--color-' + c + '-700,#1d4ed8)';
+  return '<div class="rounded px-1 py-0.5 text-[9px] font-bold truncate cursor-pointer meet-drag mb-0.5" ' +
+    'draggable="true" data-meet-id="' + mt.id + '" data-which="' + which + '" ' +
+    'ondragstart="onMeetDragStart(event)" ondragend="onMeetDragEnd(event)" ' +
+    'style="' + bg + ';border-left:2px solid ' + uc.dot + '" ' +
+    'onclick="event.stopPropagation();viewMeetDoctors(' + mt.id + ',[])">' + meetDoctorNames(mt) + '</div>';
+}
+
+// Drop handler specifically for timeline grid (handles start_time/end_time)
+async function onTimelineDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  var t = e.currentTarget;
+  if (t) t.classList.remove('bg-brand-50/60');
+  var raw = e.dataTransfer.getData('text/plain');
+  if (!raw) return;
+  var payload;
+  try { payload = JSON.parse(raw); } catch(_) { return; }
+  if (!payload.id) return;
+  var newDate = t.getAttribute('data-date');
+  var newTime = t.getAttribute('data-time') || '';
+  var unscheduled = t.getAttribute('data-tl-unscheduled') === '1';
+  var orig = (window._meetList || []).find(function(m) { return m.id === payload.id; });
+  if (!orig || !newDate) return;
+
+  // Build PATCH body
+  var body = { which: payload.which, meeting_date: newDate };
+  if (payload.which !== 'next') {
+    if (unscheduled) {
+      // Move to unscheduled strip → clear start/end times
+      body.start_time = '';
+      body.end_time = '';
+    } else if (newTime) {
+      // Preserve duration if both start/end were set
+      var origStart = _hhmmToMinutes(orig.start_time);
+      var origEnd = _hhmmToMinutes(orig.end_time);
+      var duration = (origStart != null && origEnd != null && origEnd > origStart) ? (origEnd - origStart) : 30;
+      var newStartMins = _hhmmToMinutes(newTime);
+      var newEndMins = newStartMins + duration;
+      body.start_time = newTime;
+      body.end_time = _minutesToHHMM(newEndMins);
+      // Also auto-tag visit_time slot for backward compat
+      var hh = Math.floor(newStartMins / 60);
+      body.visit_time = hh < 12 ? 'am' : 'pm';
+    }
+  }
+  try {
+    await API.patch('/meetings/' + payload.id, body);
+    // Update local cache
+    if (payload.which === 'next') {
+      orig.next_meeting_date = newDate;
+    } else {
+      orig.meeting_date = newDate;
+      if (unscheduled) {
+        orig.start_time = null;
+        orig.end_time = null;
+      } else if (newTime) {
+        orig.start_time = body.start_time;
+        orig.end_time = body.end_time;
+        orig.visit_time = body.visit_time || orig.visit_time;
+      }
+    }
+    toast('일정이 이동되었습니다');
+    renderMeetCalendar();
+  } catch (err) {
+    toast('이동 실패', 'err');
+  }
+}
+
+// Click an empty slot → open new-meeting form pre-filled with date + time
+function quickAddAtSlot(date, time) {
+  // Stash the slot info; new-meeting form will pick this up
+  window._timelinePrefill = { date: date, time: time };
+  showNewMeetGlobal();
+  // After form renders, populate date/start/end fields
+  setTimeout(function() {
+    var dInp = document.querySelector('#fm input[name="meeting_date"]');
+    var sInp = document.querySelector('#fm input[name="start_time"]');
+    var eInp = document.querySelector('#fm input[name="end_time"]');
+    var vInp = document.querySelector('#fm select[name="visit_time"]');
+    if (dInp) dInp.value = date;
+    if (sInp) sInp.value = time;
+    if (eInp) {
+      var mins = _hhmmToMinutes(time) + 30;
+      eInp.value = _minutesToHHMM(mins);
+    }
+    if (vInp) {
+      var hhx = parseInt((time || '12:00').split(':')[0], 10);
+      vInp.value = hhx < 12 ? 'am' : 'pm';
+    }
+  }, 200);
+}
+
+// ===== Daily View =====
+function renderMeetCalendarDay() {
+  var meetsAll = window._meetList || [];
+  var meets = _filterMeetsByUser(meetsAll);
+  var meetMap = _buildMeetMap(meets);
+
+  var current = getCurrentCalDate();
+  var ds = dateStr(current);
+  var todayStr = dateStr(new Date());
+  var isToday = ds === todayStr;
+  var dayLabels = ['일','월','화','수','목','금','토'];
+  var dowLabel = dayLabels[current.getDay()];
+
+  var dayMeets = meetMap[ds] || [];
+  var slots = [
+    { key: 'am', label: '오전 (AM)', icon: 'fa-sun', color: '#f59e0b' },
+    { key: 'pm', label: '오후 (PM)', icon: 'fa-cloud-sun', color: '#3b82f6' },
+    { key: 'full', label: '종일', icon: 'fa-clock', color: '#8b5cf6' },
+    { key: '',    label: '시간 미지정', icon: 'fa-circle-question', color: '#94a3b8' },
+  ];
+
+  var titleLabel = current.getFullYear() + '년 ' + (current.getMonth() + 1) + '월 ' + current.getDate() + '일 (' + dowLabel + ')';
+
+  var html = '<div class="card-flat p-4 lg:p-6 mb-4">' + calRangeToggle();
+
+  // Navigation
+  html += '<div class="flex items-center justify-between mb-3">' +
+    '<button class="btn btn-ghost btn-sm" onclick="shiftCalDays(-1)" aria-label="이전 날"><i class="fas fa-chevron-left"></i></button>' +
+    '<div class="text-center"><span class="font-bold text-lg ' + (isToday ? 'text-brand-600' : 'text-slate-800') + '">' + titleLabel + (isToday ? ' · 오늘' : '') + '</span><div class="text-[11px] text-slate-400">일간 보기</div></div>' +
+    '<button class="btn btn-ghost btn-sm" onclick="shiftCalDays(1)" aria-label="다음 날"><i class="fas fa-chevron-right"></i></button>' +
+  '</div>';
+
+  // Team filter chips
+  html += _teamFilterChips(meetsAll);
+
+  if (!dayMeets.length) {
+    html += '<div class="text-center py-12 text-slate-300 border border-dashed border-slate-200 rounded-xl transition" data-date="' + ds + '" data-slot="" data-drop-target="1" ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onMeetDrop(event)"><i class="fas fa-calendar-xmark text-3xl mb-3 block"></i><div class="text-sm">이 날에는 등록된 미팅이 없습니다</div><div class="text-[11px] mt-1">다른 일정을 여기로 드래그하면 이 날짜로 이동합니다</div><button class="btn btn-success btn-sm mt-4" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs mr-1"></i>미팅 추가</button></div>';
+    html += '</div>';
+    document.getElementById('m-body').innerHTML = html;
+    return;
+  }
+
+  // Group by visit_time slot (all slots are drop targets, even when empty)
+  html += '<div class="space-y-4">';
+  slots.forEach(function(slot) {
+    var slotMeets = dayMeets.filter(function(mt) { return (mt.visit_time || '') === slot.key; });
+    var emptyHint = slotMeets.length === 0
+      ? '<div class="col-span-full text-center text-[11px] text-slate-300 py-3 border border-dashed border-slate-200 rounded-lg">여기에 드래그하여 ' + slot.label + ' 시간대로 이동</div>'
+      : '';
+    html += '<div>' +
+      '<div class="flex items-center gap-2 mb-2"><div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:' + slot.color + '20;color:' + slot.color + '"><i class="fas ' + slot.icon + ' text-xs"></i></div>' +
+      '<span class="font-bold text-sm text-slate-700">' + slot.label + '</span>' +
+      '<span class="text-[11px] text-slate-400">' + slotMeets.length + '건</span></div>' +
+      '<div class="grid grid-cols-1 md:grid-cols-2 gap-2 rounded-lg p-1 transition" data-date="' + ds + '" data-slot="' + slot.key + '" data-drop-target="1" ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onMeetDrop(event)">' +
+        slotMeets.map(function(mt) { return _meetCardHTML(mt); }).join('') + emptyHint +
+      '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+
+  // Day summary
+  html += '<div class="text-[11px] text-slate-400 mt-4"><i class="fas fa-info-circle mr-1"></i>총 <strong class="text-slate-700">' + dayMeets.length + '</strong>건의 미팅</div>';
+  html += '</div>';
+
+  document.getElementById('m-body').innerHTML = html;
+}
+
+function renderMeetCalendarMonth() {
+  var meetsAll = window._meetList || [];
+  // Apply user filter (team calendar)
+  var uf = window._calUserFilter || 'all';
+  var meets = meetsAll;
+  if (uf !== 'all') {
+    var ufNum = Number(uf);
+    meets = meetsAll.filter(function(m) {
+      var ids = (m.user_ids || []).map(Number);
+      if (ids.length === 0 && m.user_id) ids = [Number(m.user_id)];
+      return ids.indexOf(ufNum) !== -1;
+    });
+  }
   var y = window._meetCalYear, m = window._meetCalMonth;
   var firstDay = new Date(y, m, 1).getDay();
   var daysInMonth = new Date(y, m + 1, 0).getDate();
   var monthNames = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월'];
   var dayLabels = ['일','월','화','수','목','금','토'];
   var todayStr = new Date().toISOString().split('T')[0];
+  // Build distinct user list from data
+  var userSet = {};
+  meetsAll.forEach(function(mt) {
+    (mt.users || []).forEach(function(u) { if (u && u.user_id != null) userSet[u.user_id] = u.user_name || ('#' + u.user_id); });
+  });
+  var userList = Object.keys(userSet).map(function(id) { return { id: Number(id), name: userSet[id] }; });
+  userList.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
   // Group meetings by date (including next_meeting_date as scheduled)
   var meetMap = {};
   meets.forEach(function(mt) {
@@ -1674,14 +3694,33 @@ function renderMeetCalendar() {
   allMonthEntries.forEach(function(e) { if (e.date <= todayStr) pastCount++; else futureCount++; });
 
   var html = '<div class="card-flat p-4 lg:p-6 mb-4">' +
-    '<div class="flex items-center justify-between mb-5">' +
-    '<button class="btn btn-ghost btn-sm" onclick="window._meetCalMonth--;if(window._meetCalMonth<0){window._meetCalYear--;window._meetCalMonth=11;}renderMeetCalendar()"><i class="fas fa-chevron-left"></i></button>' +
+    calRangeToggle() +
+    '<div class="flex items-center justify-between mb-3">' +
+    '<button class="btn btn-ghost btn-sm" onclick="window._meetCalMonth--;if(window._meetCalMonth<0){window._meetCalYear--;window._meetCalMonth=11;}renderMeetCalendar()" aria-label="이전 달"><i class="fas fa-chevron-left"></i></button>' +
     '<div class="text-center"><span class="font-bold text-lg text-slate-800">' + y + '년 ' + monthNames[m] + '</span>' +
     '<div class="flex items-center justify-center gap-3 mt-1 text-[11px]">' +
     '<span class="text-slate-400"><i class="fas fa-calendar-check text-emerald-400 mr-1"></i>완료 <strong class="text-emerald-600">' + pastCount + '</strong></span>' +
     '<span class="text-slate-400"><i class="fas fa-clock text-blue-400 mr-1"></i>예정 <strong class="text-blue-600">' + futureCount + '</strong></span>' +
     '<span class="text-slate-400">총 <strong class="text-slate-700">' + allMonthEntries.length + '</strong>건</span></div></div>' +
-    '<button class="btn btn-ghost btn-sm" onclick="window._meetCalMonth++;if(window._meetCalMonth>11){window._meetCalYear++;window._meetCalMonth=0;}renderMeetCalendar()"><i class="fas fa-chevron-right"></i></button></div>';
+    '<button class="btn btn-ghost btn-sm" onclick="window._meetCalMonth++;if(window._meetCalMonth>11){window._meetCalYear++;window._meetCalMonth=0;}renderMeetCalendar()" aria-label="다음 달"><i class="fas fa-chevron-right"></i></button></div>';
+  // ===== Team filter chips =====
+  if (userList.length > 0) {
+    html += '<div class="flex items-center gap-1.5 mb-4 overflow-x-auto pb-1" role="tablist" aria-label="팀원 필터">';
+    var allCls = uf === 'all' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200';
+    html += '<button class="text-[11px] font-bold px-2.5 py-1 rounded-full transition flex-shrink-0 ' + allCls + '" onclick="window._calUserFilter=\'all\';renderMeetCalendar()" role="tab" aria-selected="' + (uf==='all') + '"><i class="fas fa-users text-[9px] mr-1"></i>전체 (' + meetsAll.length + ')</button>';
+    userList.forEach(function(u) {
+      var c = userColor(u.id);
+      var sel = String(uf) === String(u.id);
+      var cls = sel ? '' : 'opacity-60 hover:opacity-100';
+      var cnt = meetsAll.filter(function(mm) {
+        var ids = (mm.user_ids || []).map(Number); if (ids.length === 0 && mm.user_id) ids = [Number(mm.user_id)];
+        return ids.indexOf(u.id) !== -1;
+      }).length;
+      html += '<button class="text-[11px] font-bold px-2.5 py-1 rounded-full flex items-center gap-1.5 transition flex-shrink-0 ' + cls + '" style="background:' + c.bg + ';color:' + c.fg + ';' + (sel ? 'box-shadow:0 0 0 2px ' + c.dot + '40' : '') + '" onclick="window._calUserFilter=' + u.id + ';renderMeetCalendar()" role="tab" aria-selected="' + sel + '">' +
+        '<span class="inline-block w-2 h-2 rounded-full" style="background:' + c.dot + '"></span>' + u.name + ' (' + cnt + ')</button>';
+    });
+    html += '</div>';
+  }
   // Day headers
   html += '<div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold mb-2">' +
     dayLabels.map(function(dl, i) { return '<div class="py-1 ' + (i === 0 ? 'text-red-400' : i === 6 ? 'text-blue-400' : 'text-slate-400') + '">' + dl + '</div>'; }).join('') + '</div>';
@@ -1699,7 +3738,7 @@ function renderMeetCalendar() {
     var cellBg = isToday ? 'bg-brand-50 border-brand-300 ring-1 ring-brand-200' :
       dayMeets.length > 0 ? (isFuture ? 'bg-blue-50/40 border-blue-200' : 'bg-white border-slate-200') :
       isSun ? 'bg-red-50/20 border-slate-100' : isSat ? 'bg-blue-50/20 border-slate-100' : 'bg-white border-slate-100 hover:border-slate-200';
-    html += '<div class="h-14 lg:h-[88px] border rounded-lg p-1 ' + cellBg + ' overflow-hidden cursor-pointer transition-all hover:shadow-sm" onclick="showDayMeetsInline(\'' + dateStr + '\')">' +
+    html += '<div class="h-14 lg:h-[88px] border rounded-lg p-1 ' + cellBg + ' overflow-hidden cursor-pointer transition-all hover:shadow-sm" data-date="' + dateStr + '" data-slot="" data-drop-target="1" ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onMeetDrop(event)" onclick="showDayMeetsInline(\'' + dateStr + '\')">' +
       '<div class="flex items-center justify-between">' +
       '<span class="text-[11px] font-bold ' + (isToday ? 'bg-brand-500 text-white w-5 h-5 rounded-full flex items-center justify-center' : isSun ? 'text-red-400' : isSat ? 'text-blue-400' : 'text-slate-600') + '">' + d + '</span>' +
       (dayMeets.length > 0 ? '<span class="text-[8px] font-bold px-1 py-0 rounded-full ' + (isFuture ? 'bg-blue-500 text-white' : 'bg-emerald-500 text-white') + '">' + dayMeets.length + '</span>' : '') + '</div>';
@@ -1713,12 +3752,16 @@ function renderMeetCalendar() {
       if (mt.visit_time === 'am') vtPrefix = '<span class="inline-flex items-center justify-center text-[7px] lg:text-[8px] font-extrabold rounded px-0.5 mr-0.5" style="background:#fed7aa;color:#9a3412">오전</span>';
       else if (mt.visit_time === 'pm') vtPrefix = '<span class="inline-flex items-center justify-center text-[7px] lg:text-[8px] font-extrabold rounded px-0.5 mr-0.5" style="background:#bfdbfe;color:#1e40af">오후</span>';
       else if (mt.visit_time === 'full') vtPrefix = '<span class="inline-flex items-center justify-center text-[7px] lg:text-[8px] font-extrabold rounded px-0.5 mr-0.5" style="background:#e9d5ff;color:#6b21a8">종일</span>';
+      // User color marker (left border) — uses primary user
+      var primaryUid = (mt.user_ids && mt.user_ids[0]) || (mt.users && mt.users[0] && mt.users[0].user_id) || mt.user_id;
+      var uc = userColor(primaryUid);
+      var multiUser = (mt.users && mt.users.length > 1) ? '<span class="ml-auto inline-flex items-center justify-center text-[6px] font-bold rounded-full" style="width:9px;height:9px;background:' + uc.dot + ';color:#fff" title="' + (mt.users.length) + '명 담당">' + mt.users.length + '</span>' : '';
       html += '<div class="text-[7px] lg:text-[9px] truncate rounded px-1 py-0.5 mt-0.5 flex items-center gap-0.5 ' +
         (isNext ? 'bg-amber-100 text-amber-700 font-semibold border border-dashed border-amber-300' :
-         isFuture ? 'bg-' + c + '-100 text-' + c + '-700 font-semibold' : 'bg-' + c + '-50 text-' + c + '-500') + '">' +
+         isFuture ? 'bg-' + c + '-100 text-' + c + '-700 font-semibold' : 'bg-' + c + '-50 text-' + c + '-500') + '" style="border-left:3px solid ' + uc.dot + '" title="담당: ' + (mt.user_names || '') + '">' +
         '<i class="fas ' + (isNext ? 'fa-clock' : (icon[mt.meeting_type] || 'fa-calendar')) + ' text-[6px] lg:text-[7px]"></i>' +
         vtPrefix +
-        (isNext ? '예정: ' : '') + meetDoctorNames(mt) + '</div>';
+        (isNext ? '예정: ' : '') + meetDoctorNames(mt) + multiUser + '</div>';
     });
     if (dayMeets.length > 2) html += '<div class="text-[7px] lg:text-[8px] text-slate-400 mt-0.5 text-center">+' + (dayMeets.length - 2) + '</div>';
     html += '</div>';
@@ -1734,6 +3777,7 @@ function renderMeetCalendar() {
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-violet-100 border border-violet-200"></span>학회</span>' +
     '<span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded bg-amber-100 border border-dashed border-amber-300"></span>다음 미팅 예정</span>' +
     '<span class="flex items-center gap-1"><span class="text-[8px] font-extrabold rounded px-0.5" style="background:#fed7aa;color:#9a3412">오전</span><span class="text-[8px] font-extrabold rounded px-0.5" style="background:#bfdbfe;color:#1e40af">오후</span><span class="text-slate-400">방문 시간대</span></span>' +
+    '<span class="flex items-center gap-1"><span class="inline-block w-1 h-3 rounded-sm" style="background:#3b82f6"></span><span class="inline-block w-1 h-3 rounded-sm" style="background:#ec4899"></span><span class="inline-block w-1 h-3 rounded-sm" style="background:#22c55e"></span><span class="text-slate-400">담당자별 색상 (좌측 띠)</span></span>' +
     '</div></div>';
 
   // Upcoming section below calendar - include next_meeting_date as scheduled
@@ -2173,13 +4217,32 @@ async function updatePipelineStage(hid, stage) {
 }
 
 async function showHospForm(id) {
-  let h = { name: '', region: '', address: '', phone: '', grade: 'A', notes: '', status: 'active', type: 'hospital', priority: '3', todoc_contact: 'X', patient_count: 0, hearing_aid_sales: 0, ci_referrals: 0, pipeline_stage: 'contact' };
+  let h = { name: '', region: '', address: '', phone: '', notes: '', status: 'active', type: 'hospital', priority: '3', todoc_contact: 'X', patient_count: 0, hearing_aid_sales: 0, ci_referrals: 0, pipeline_stage: 'contact' };
   if (id) { try { h = (await API.get('/hospitals/' + id)).data.data } catch (e) { } }
   openModal(id ? '기관 정보 수정' : '새 기관 추가',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
     field('유형', 'type', 'select', h.type || 'hospital', [{ v: 'hospital', l: '병원' }, { v: 'clinic', l: '의원' }]) +
     '<div class="relative col-span-full sm:col-span-1"><label class="input-label">이름 *</label><input type="text" name="name" value="' + (h.name || '') + '" class="input" placeholder="기관명을 입력하세요" autocomplete="off"><div id="hosp-suggest" class="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-60 overflow-y-auto"></div></div>' +
-    field('지역', 'region', 'text', h.region) + field('주소', 'address', 'text', h.address) + field('전화번호', 'phone', 'tel', h.phone) +
+    field('지역', 'region', 'select', h.region || '', [
+      { v: '', l: '선택하세요' },
+      { v: '서울', l: '서울특별시' },
+      { v: '부산', l: '부산광역시' },
+      { v: '대구', l: '대구광역시' },
+      { v: '인천', l: '인천광역시' },
+      { v: '광주', l: '광주광역시' },
+      { v: '대전', l: '대전광역시' },
+      { v: '울산', l: '울산광역시' },
+      { v: '세종', l: '세종특별자치시' },
+      { v: '경기', l: '경기도' },
+      { v: '강원', l: '강원특별자치도' },
+      { v: '충북', l: '충청북도' },
+      { v: '충남', l: '충청남도' },
+      { v: '전북', l: '전북특별자치도' },
+      { v: '전남', l: '전라남도' },
+      { v: '경북', l: '경상북도' },
+      { v: '경남', l: '경상남도' },
+      { v: '제주', l: '제주특별자치도' }
+    ]) + field('주소', 'address', 'text', h.address) + field('전화번호', 'phone', 'tel', h.phone) +
 
     field('병원코드', 'status', 'select', h.status, [{ v: 'active', l: '등록완료' }, { v: 'inactive', l: '미등록' }]) +
 
@@ -2219,9 +4282,20 @@ async function showHospForm(id) {
         dd.querySelectorAll('[data-name]').forEach(function(el) {
           el.onclick = function() {
             document.querySelector('#fm input[name="name"]').value = this.dataset.name;
-            var regionInput = document.querySelector('#fm input[name="region"]');
+            var regionInput = document.querySelector('#fm select[name="region"]') || document.querySelector('#fm input[name="region"]');
             var addrInput = document.querySelector('#fm input[name="address"]');
-            if (regionInput && this.dataset.region) regionInput.value = this.dataset.region;
+            if (regionInput && this.dataset.region) {
+              // Map known region label to select option value (광역시/도 → 단축명)
+              var rg = this.dataset.region;
+              var regionMap = {
+                '서울특별시':'서울','부산광역시':'부산','대구광역시':'대구','인천광역시':'인천',
+                '광주광역시':'광주','대전광역시':'대전','울산광역시':'울산','세종특별자치시':'세종',
+                '경기도':'경기','강원특별자치도':'강원','강원도':'강원','충청북도':'충북','충청남도':'충남',
+                '전북특별자치도':'전북','전라북도':'전북','전라남도':'전남','경상북도':'경북',
+                '경상남도':'경남','제주특별자치도':'제주','제주도':'제주'
+              };
+              regionInput.value = regionMap[rg] || rg;
+            }
             if (addrInput && this.dataset.address) addrInput.value = this.dataset.address;
             // Auto-set type and toggle clinic fields
             var typeSelect = document.querySelector('#fm select[name="type"]');
@@ -2336,6 +4410,8 @@ async function showMeetForm(hid, did, mid) {
     field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
     field('유형', 'meeting_type', 'select', m.meeting_type, [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
     field('방문 시간대', 'visit_time', 'select', m.visit_time || '', [{ v: '', l: '미지정' }, { v: 'am', l: '오전' }, { v: 'pm', l: '오후' }, { v: 'full', l: '종일' }]) +
+    '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>시작 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="start_time" class="input" step="1800" value="' + (m.start_time || '') + '"></div>' +
+    '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>종료 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="end_time" class="input" step="1800" value="' + (m.end_time || '') + '"></div>' +
     field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
@@ -2454,6 +4530,8 @@ async function showMeetFormFromProfile(hid, did, mid) {
     field('미팅일자 *', 'meeting_date', 'date', m.meeting_date) +
     field('유형', 'meeting_type', 'select', m.meeting_type, [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
     field('방문 시간대', 'visit_time', 'select', m.visit_time || '', [{ v: '', l: '미지정' }, { v: 'am', l: '오전' }, { v: 'pm', l: '오후' }, { v: 'full', l: '종일' }]) +
+    '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>시작 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="start_time" class="input" step="1800" value="' + (m.start_time || '') + '"></div>' +
+    '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>종료 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="end_time" class="input" step="1800" value="' + (m.end_time || '') + '"></div>' +
     field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
@@ -2499,6 +4577,8 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
     field('미팅일자 *', 'meeting_date', 'date', m.meeting_date || '') +
     field('유형', 'meeting_type', 'select', m.meeting_type || 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
     field('방문 시간대', 'visit_time', 'select', m.visit_time || '', [{ v: '', l: '미지정' }, { v: 'am', l: '오전' }, { v: 'pm', l: '오후' }, { v: 'full', l: '종일' }]) +
+    '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>시작 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="start_time" class="input" step="1800" value="' + (m.start_time || '') + '"></div>' +
+    '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>종료 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="end_time" class="input" step="1800" value="' + (m.end_time || '') + '"></div>' +
     field('목적', 'purpose', 'text', m.purpose || '') +
     field('미팅 내용', 'content', 'textarea', m.content || '') + field('결과', 'result', 'textarea', m.result || '') + field('후속 액션', 'next_action', 'textarea', m.next_action || '') +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
@@ -2529,9 +4609,11 @@ async function showNewMeetGlobal() {
       '<div><label class="input-label">기관 *</label><select name="hospital_id" id="nm-hosp" class="input" onchange="updateNewMeetDocs()"><option value="">-- 기관 선택 --</option>' + hospOpts + '</select></div>' +
       newMeetUserCbs +
       '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 기관을 선택하세요</div></div></div>' +
-      field('미팅일자 *', 'meeting_date', 'date', new Date().toISOString().split('T')[0]) +
+      field('미팅일자 *', 'meeting_date', 'date', (window._calPrefill && window._calPrefill.meeting_date) || new Date().toISOString().split('T')[0]) +
       field('유형', 'meeting_type', 'select', 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
       field('방문 시간대', 'visit_time', 'select', '', [{ v: '', l: '미지정' }, { v: 'am', l: '오전' }, { v: 'pm', l: '오후' }, { v: 'full', l: '종일' }]) +
+      '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>시작 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="start_time" class="input" step="1800" value="' + ((window._calPrefill && window._calPrefill.start_time) || '') + '"></div>' +
+      '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>종료 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="end_time" class="input" step="1800" value="' + ((window._calPrefill && window._calPrefill.end_time) || '') + '"></div>' +
       field('목적', 'purpose', 'text', '') +
       field('미팅 내용', 'content', 'textarea', '') + field('결과', 'result', 'textarea', '') + field('후속 액션', 'next_action', 'textarea', '') +
       '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" class="input"></div>' +
@@ -2546,7 +4628,7 @@ async function showNewMeetGlobal() {
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
       const selUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
       const payload = { ...f, doctor_ids: doctorIds, user_ids: selUserIds };
-      try { await API.post('/meetings', payload); toast('미팅 등록됨'); closeModal(); if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); } catch (e) { toast('저장 실패', 'err') }
+      try { await API.post('/meetings', payload); toast('미팅 등록됨'); closeModal(); window._calPrefill = null; if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); else if (curPage === 'calendar') renderCalendar(); } catch (e) { toast('저장 실패', 'err') }
     };
   } catch (e) { toast('데이터를 불러올 수 없습니다', 'err'); closeModal(); }
 }
@@ -2628,6 +4710,18 @@ function showMeetDetail(m) {
     sections = '<div class="text-sm text-slate-400 text-center py-4"><i class="fas fa-file-lines text-slate-300 text-lg mb-2 block"></i>상세 기록이 없습니다</div>';
   }
 
+  var commentsSection = '<div class="mt-5 pt-4 border-t border-gray-100">' +
+    '<div class="flex items-center justify-between mb-3">' +
+      '<div class="text-xs font-semibold text-slate-400 uppercase tracking-wider"><i class="fas fa-comments mr-1.5"></i>댓글 <span id="mc-count" class="text-slate-300">·</span></div>' +
+    '</div>' +
+    '<div id="mc-list" class="space-y-2 mb-3"><div class="text-xs text-slate-300 text-center py-3"><i class="fas fa-spinner fa-spin"></i></div></div>' +
+    '<div class="relative">' +
+      '<textarea id="mc-input" class="input" rows="2" placeholder="댓글 입력 (@로 멘션, Ctrl+Enter로 등록)" oninput="onMcInput(event)" onkeydown="onMcKey(event,' + m.id + ')"></textarea>' +
+      '<div id="mc-mention-pop" class="hidden absolute z-50 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto" style="left:8px;bottom:100%;min-width:180px"></div>' +
+      '<div class="flex justify-end mt-2"><button class="btn btn-primary btn-sm" onclick="postComment(' + m.id + ')"><i class="fas fa-paper-plane mr-1.5 text-xs"></i>등록</button></div>' +
+    '</div>' +
+  '</div>';
+
   var body = '<div>' +
     '<div class="flex items-center gap-3 mb-5 pb-4 border-b border-gray-100">' +
       '<div class="w-10 h-10 rounded-xl bg-' + tc + '-50 flex items-center justify-center"><i class="fas fa-calendar-check text-' + tc + '-500"></i></div>' +
@@ -2637,11 +4731,448 @@ function showMeetDetail(m) {
         '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-clock mr-1"></i>' + fmtShort(m.meeting_date) + (m.visit_time ? ' <span class="font-semibold text-slate-500">' + (visitTimeLabels[m.visit_time] || '') + '</span>' : '') + ' · ' + daysAgo(m.meeting_date) + ' · <i class="fas fa-user-tie mr-0.5"></i>' + (m.user_names || m.user_name || (currentUser ? currentUser.name : '')) + '</div></div></div>' +
     doctorCards + sections +
     '<div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">' +
+      '<button class="btn btn-outline btn-sm" onclick="printMeetDetail(' + m.id + ')"><i class="fas fa-file-pdf mr-1.5 text-xs"></i>PDF</button>' +
       '<button class="btn btn-outline btn-sm" onclick="closeModal();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen mr-1.5 text-xs"></i>수정</button>' +
       '<button class="btn btn-outline btn-sm !border-red-200 !text-red-500 hover:!bg-red-50" onclick="closeModal();delMeetGlobal(' + m.id + ')"><i class="fas fa-trash mr-1.5 text-xs"></i>삭제</button>' +
-    '</div></div>';
+    '</div>' + commentsSection + '</div>';
 
   openModal('미팅 상세', body);
+  window._meetDetailCache = m;
+  loadComments(m.id);
+}
+
+// ===== Print / PDF: Doctor profile =====
+function printDocProfile(doctorId) {
+  try {
+    var d = window._docProfile;
+    if (!d || d.id !== doctorId) {
+      toast('의료진 정보를 먼저 불러와야 합니다', 'err');
+      return;
+    }
+    var content = document.getElementById('content');
+    if (!content) return;
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    var userName = (window._me && window._me.name) ? window._me.name : '';
+
+    var header = '<div class="print-header">' +
+      '<div class="print-title">' + (d.name || '') + ' ' + (d.position || '') + '</div>' +
+      '<div class="print-meta">' +
+        (d.hospital_name ? '소속: ' + d.hospital_name : '') +
+        (d.department ? ' · ' + d.department : '') +
+        (d.specialty ? ' · ' + d.specialty : '') +
+        ' · 미팅 ' + (d.meeting_count || 0) + '회' +
+        ' · 출력일 ' + dateStr + (userName ? ' · ' + userName : '') +
+      '</div>' +
+    '</div>';
+
+    var infoRows = [
+      ['이름', d.name || '-'],
+      ['직위', d.position || '-'],
+      ['진료과', d.department || '-'],
+      ['전문분야', d.specialty || '-'],
+      ['소속 병원', d.hospital_name || '-'],
+      ['지역', d.hospital_region || '-'],
+      ['전화', d.phone || '-'],
+      ['이메일', d.email || '-']
+    ];
+    var infoTable = '<h2 style="margin:6mm 0 2mm 0;font-size:13pt;">기본 정보</h2>' +
+      '<table><tbody>' +
+      infoRows.map(function(r){ return '<tr><th style="width:25%;text-align:left;background:#f3f4f6">' + r[0] + '</th><td>' + r[1] + '</td></tr>'; }).join('') +
+      '</tbody></table>';
+
+    var sections = '';
+    if (d.bio) sections += '<h2 style="margin:6mm 0 2mm 0;font-size:13pt;">소개</h2><div style="white-space:pre-wrap;font-size:10.5pt">' + d.bio + '</div>';
+    if (d.education) sections += '<h2 style="margin:6mm 0 2mm 0;font-size:13pt;">학력</h2><div style="white-space:pre-wrap;font-size:10.5pt">' + d.education + '</div>';
+    if (d.career) sections += '<h2 style="margin:6mm 0 2mm 0;font-size:13pt;">경력</h2><div style="white-space:pre-wrap;font-size:10.5pt">' + d.career + '</div>';
+    if (d.notes) sections += '<h2 style="margin:6mm 0 2mm 0;font-size:13pt;">영업 메모</h2><div style="white-space:pre-wrap;font-size:10.5pt">' + d.notes + '</div>';
+
+    // Meetings table
+    var meets = (d.meetings || []).slice().sort(function(a,b){ return (b.meeting_date || '').localeCompare(a.meeting_date || ''); });
+    var typeLabel = function(t){ return ({visit:'방문', phone:'전화', conference:'학회', email:'이메일', online:'온라인'})[t] || t || '-'; };
+    var vtLabel = function(v){ return ({am:'오전', pm:'오후', full:'종일'})[v] || '미지정'; };
+    var meetsRows = meets.map(function(m){
+      var range = (m.start_time && m.end_time) ? (m.start_time + '~' + m.end_time) : vtLabel(m.visit_time);
+      return '<tr>' +
+        '<td>' + (m.meeting_date || '') + '</td>' +
+        '<td>' + range + '</td>' +
+        '<td>' + typeLabel(m.meeting_type || m.type) + '</td>' +
+        '<td>' + (m.purpose || '-') + '</td>' +
+        '<td>' + ((m.result || '') + (m.next_action ? ' / 후속: ' + m.next_action : '')) + '</td>' +
+      '</tr>';
+    }).join('');
+    var meetsTable = '<h2 style="margin:8mm 0 2mm 0;font-size:13pt;" class="print-page-break">미팅 이력 (' + meets.length + ')</h2>' +
+      (meets.length === 0 ? '<div style="color:#6b7280">등록된 미팅이 없습니다.</div>' :
+        '<table><thead><tr><th>날짜</th><th>시간</th><th>유형</th><th>목적</th><th>결과/후속</th></tr></thead><tbody>' + meetsRows + '</tbody></table>');
+
+    var footer = '<div class="print-footer">TODOC CRM · ' + (d.name || '') + ' · ' + dateStr + '</div>';
+
+    var wrap = document.createElement('div');
+    wrap.className = 'print-target';
+    wrap.id = 'print-target-temp';
+    wrap.innerHTML = header + infoTable + sections + meetsTable + footer;
+
+    document.body.classList.add('print-mode');
+    var origClasses = content.className;
+    content.classList.add('not-print-target');
+    document.body.appendChild(wrap);
+
+    var cleanup = function(){
+      document.body.classList.remove('print-mode');
+      content.className = origClasses;
+      var t = document.getElementById('print-target-temp');
+      if (t && t.parentNode) t.parentNode.removeChild(t);
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(function(){ window.print(); }, 50);
+    setTimeout(function(){ if (document.getElementById('print-target-temp')) cleanup(); }, 10000);
+  } catch (e) {
+    toast('PDF 저장 준비 중 오류가 발생했습니다', 'err');
+  }
+}
+
+// ===== Print / PDF: Meeting detail =====
+function printMeetDetail(meetingId) {
+  try {
+    var m = window._meetDetailCache;
+    if (!m || m.id !== meetingId) {
+      toast('미팅 정보를 먼저 불러와야 합니다', 'err');
+      return;
+    }
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0') + '-' + String(now.getDate()).padStart(2,'0') + ' ' + String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+    var userName = (window._me && window._me.name) ? window._me.name : '';
+    var typeLabel = ({visit:'방문', phone:'전화', conference:'학회', email:'이메일', online:'온라인'})[m.meeting_type] || m.meeting_type || '-';
+    var vtLabel = ({am:'오전', pm:'오후', full:'종일'})[m.visit_time] || '미지정';
+    var range = (m.start_time && m.end_time) ? (m.start_time + '~' + m.end_time) : vtLabel;
+    var doctors = (m.doctors && m.doctors.length) ? m.doctors.map(function(d){ return (d.doctor_name || d.name) + (d.position ? ' (' + d.position + ')' : ''); }).join(', ') : '-';
+
+    var header = '<div class="print-header">' +
+      '<div class="print-title">미팅 기록 — ' + (m.hospital_name || '') + '</div>' +
+      '<div class="print-meta">' +
+        (m.meeting_date || '') + ' · ' + range + ' · ' + typeLabel +
+        ' · 작성자 ' + (m.user_names || m.user_name || userName || '-') +
+        ' · 출력일 ' + dateStr +
+      '</div>' +
+    '</div>';
+
+    var rows = [
+      ['기관', m.hospital_name || '-'],
+      ['일시', (m.meeting_date || '') + ' / ' + range],
+      ['유형', typeLabel],
+      ['참석 의료진', doctors],
+      ['미팅 목적', m.purpose || '-'],
+      ['상세 내용', m.content || '-'],
+      ['결과', m.result || '-'],
+      ['후속 액션', m.next_action || '-'],
+      ['다음 미팅', m.next_meeting_date || '-']
+    ];
+    var infoTable = '<table><tbody>' +
+      rows.map(function(r){ return '<tr><th style="width:25%;text-align:left;background:#f3f4f6;vertical-align:top">' + r[0] + '</th><td style="white-space:pre-wrap">' + r[1] + '</td></tr>'; }).join('') +
+      '</tbody></table>';
+
+    var footer = '<div class="print-footer">TODOC CRM · ' + (m.hospital_name || '') + ' · ' + (m.meeting_date || '') + ' · ' + dateStr + '</div>';
+
+    var wrap = document.createElement('div');
+    wrap.className = 'print-target';
+    wrap.id = 'print-target-temp';
+    wrap.innerHTML = header + infoTable + footer;
+
+    // Hide modal during print
+    var modal = document.querySelector('.modal') || document.querySelector('.modal-bg');
+    var modalDisplay = null;
+    if (modal) { modalDisplay = modal.style.display; modal.style.display = 'none'; }
+    var content = document.getElementById('content');
+    var origClasses = content ? content.className : '';
+    if (content) content.classList.add('not-print-target');
+    document.body.classList.add('print-mode');
+    document.body.appendChild(wrap);
+
+    var cleanup = function(){
+      document.body.classList.remove('print-mode');
+      if (content) content.className = origClasses;
+      if (modal && modalDisplay !== null) modal.style.display = modalDisplay;
+      var t = document.getElementById('print-target-temp');
+      if (t && t.parentNode) t.parentNode.removeChild(t);
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    setTimeout(function(){ window.print(); }, 50);
+    setTimeout(function(){ if (document.getElementById('print-target-temp')) cleanup(); }, 10000);
+  } catch (e) {
+    toast('PDF 저장 준비 중 오류가 발생했습니다', 'err');
+  }
+}
+
+// ===== Comments / Mentions =====
+async function loadComments(meetingId) {
+  var listEl = document.getElementById('mc-list');
+  if (!listEl) return;
+  try {
+    var r = await API.get('/comments/meeting/' + meetingId);
+    var list = (r.data && r.data.data) || [];
+    var cnt = document.getElementById('mc-count');
+    if (cnt) cnt.textContent = '· ' + list.length;
+    if (!list.length) {
+      listEl.innerHTML = '<div class="text-xs text-slate-300 text-center py-3">아직 댓글이 없습니다</div>';
+      return;
+    }
+    listEl.innerHTML = list.map(function(c) {
+      var mine = currentUser && c.user_id === currentUser.id;
+      var content = renderCommentContent(c.content);
+      return '<div class="bg-gray-50 rounded-xl p-3">' +
+        '<div class="flex items-center justify-between mb-1">' +
+          '<div class="flex items-center gap-2">' +
+            avatar(null, c.user_name || '?', 'width:22px;height:22px;border-radius:6px;font-size:10px') +
+            '<span class="text-xs font-semibold text-slate-700">' + (c.user_name || '익명') + '</span>' +
+            '<span class="text-[10px] text-slate-400">' + fmtShort(c.created_at) + '</span>' +
+          '</div>' +
+          (mine ? '<button class="text-[11px] text-red-400 hover:text-red-600" onclick="delComment(' + c.id + ',' + meetingId + ')"><i class="fas fa-trash"></i></button>' : '') +
+        '</div>' +
+        '<div class="text-sm text-slate-700 whitespace-pre-wrap break-words">' + content + '</div>' +
+      '</div>';
+    }).join('');
+  } catch (e) {
+    listEl.innerHTML = '<div class="text-xs text-red-400 text-center py-3">댓글을 불러올 수 없습니다</div>';
+  }
+}
+
+function renderCommentContent(s) {
+  if (!s) return '';
+  var esc = String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Replace @[name](id) tokens with highlighted span
+  esc = esc.replace(/@\[([^\]]+)\]\((\d+)\)/g, function(_, nm, id) {
+    return '<span class="text-blue-600 font-semibold bg-blue-50 px-1 rounded">@' + nm + '</span>';
+  });
+  return esc;
+}
+
+function onMcKey(e, meetingId) {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    postComment(meetingId);
+  } else if (e.key === 'Escape') {
+    var pop = document.getElementById('mc-mention-pop');
+    if (pop) pop.classList.add('hidden');
+  }
+}
+
+function onMcInput(e) {
+  var ta = e.target;
+  var val = ta.value;
+  var pos = ta.selectionStart;
+  var before = val.substring(0, pos);
+  var m = before.match(/@([^\s@\[]*)$/);
+  var pop = document.getElementById('mc-mention-pop');
+  if (!pop) return;
+  if (!m) { pop.classList.add('hidden'); return; }
+  var q = (m[1] || '').toLowerCase();
+  var users = (window._allUsers || []).filter(function(u) {
+    return !q || (u.name && u.name.toLowerCase().includes(q)) || (u.email && u.email.toLowerCase().includes(q));
+  }).slice(0, 6);
+  if (!users.length) { pop.classList.add('hidden'); return; }
+  pop.innerHTML = users.map(function(u) {
+    return '<div class="px-3 py-2 hover:bg-brand-50 cursor-pointer flex items-center gap-2 text-xs" onclick="insertMention(' + u.id + ',\'' + (u.name || '').replace(/'/g, "\\'") + '\')">' +
+      avatar(null, u.name || '?', 'width:20px;height:20px;border-radius:5px;font-size:9px') +
+      '<span class="font-semibold text-slate-700">' + (u.name || '') + '</span>' +
+      '<span class="text-slate-400">' + (u.email || '') + '</span>' +
+    '</div>';
+  }).join('');
+  pop.classList.remove('hidden');
+}
+
+function insertMention(id, name) {
+  var ta = document.getElementById('mc-input');
+  if (!ta) return;
+  var val = ta.value;
+  var pos = ta.selectionStart;
+  var before = val.substring(0, pos);
+  var after = val.substring(pos);
+  var newBefore = before.replace(/@([^\s@\[]*)$/, '@[' + name + '](' + id + ') ');
+  ta.value = newBefore + after;
+  ta.focus();
+  var newPos = newBefore.length;
+  ta.selectionStart = ta.selectionEnd = newPos;
+  var pop = document.getElementById('mc-mention-pop');
+  if (pop) pop.classList.add('hidden');
+}
+
+async function postComment(meetingId) {
+  var ta = document.getElementById('mc-input');
+  if (!ta) return;
+  var content = (ta.value || '').trim();
+  if (!content) { toast('내용을 입력하세요', 'err'); return; }
+  try {
+    await API.post('/comments/meeting/' + meetingId, { content: content });
+    ta.value = '';
+    loadComments(meetingId);
+    toast('댓글 등록됨');
+  } catch (e) { toast('등록 실패', 'err'); }
+}
+
+async function delComment(id, meetingId) {
+  showConfirm('댓글 삭제', '이 댓글을 삭제하시겠습니까?', async () => {
+    try {
+      await API.delete('/comments/' + id);
+      loadComments(meetingId);
+      toast('삭제됨');
+    } catch (e) { toast('삭제 실패', 'err'); }
+  });
+}
+
+// Preload user list for mention auto-complete
+async function preloadUsers() {
+  try {
+    var r = await API.get('/users');
+    window._allUsers = (r.data && r.data.data) || [];
+  } catch (e) { window._allUsers = []; }
+}
+
+// ===== Mention Notifications (header bell) =====
+var _mentionPollTimer = null;
+var _mentionCache = [];
+
+function startMentionPolling() {
+  if (_mentionPollTimer) clearInterval(_mentionPollTimer);
+  refreshMentions();
+  // Poll every 60 seconds
+  _mentionPollTimer = setInterval(refreshMentions, 60000);
+}
+
+function stopMentionPolling() {
+  if (_mentionPollTimer) { clearInterval(_mentionPollTimer); _mentionPollTimer = null; }
+  var badge = document.getElementById('mention-badge');
+  if (badge) badge.classList.add('hidden');
+}
+
+async function refreshMentions() {
+  if (!currentUser) return;
+  try {
+    var r = await API.get('/comments/mentions');
+    _mentionCache = (r.data && r.data.data) || [];
+    var unread = (r.data && r.data.unread) || 0;
+    var badge = document.getElementById('mention-badge');
+    if (badge) {
+      if (unread > 0) {
+        badge.textContent = unread > 99 ? '99+' : String(unread);
+        badge.classList.remove('hidden');
+      } else {
+        badge.classList.add('hidden');
+      }
+    }
+    // If panel is open, re-render
+    var panel = document.getElementById('mention-panel');
+    if (panel && !panel.classList.contains('hidden')) {
+      renderMentionPanel();
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function toggleMentionPanel(e) {
+  if (e) { e.preventDefault(); e.stopPropagation(); }
+  var panel = document.getElementById('mention-panel');
+  var bell = document.getElementById('mention-bell');
+  if (!panel) return;
+  var isHidden = panel.classList.contains('hidden');
+  if (isHidden) {
+    renderMentionPanel();
+    panel.classList.remove('hidden');
+    if (bell) bell.setAttribute('aria-expanded', 'true');
+    // Close on outside click
+    setTimeout(function() {
+      document.addEventListener('click', _mentionOutsideClick);
+    }, 0);
+  } else {
+    panel.classList.add('hidden');
+    if (bell) bell.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('click', _mentionOutsideClick);
+  }
+}
+
+function _mentionOutsideClick(e) {
+  var panel = document.getElementById('mention-panel');
+  var bell = document.getElementById('mention-bell');
+  if (!panel) return;
+  if (panel.contains(e.target) || (bell && bell.contains(e.target))) return;
+  panel.classList.add('hidden');
+  if (bell) bell.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('click', _mentionOutsideClick);
+}
+
+function renderMentionPanel() {
+  var panel = document.getElementById('mention-panel');
+  if (!panel) return;
+  var list = _mentionCache || [];
+  var unreadCount = list.filter(function(x) { return !x.read_at; }).length;
+
+  var header = '<div class="flex items-center justify-between px-3 py-2.5 border-b border-gray-100 sticky top-0 bg-white z-10">' +
+    '<div class="flex items-center gap-2"><i class="fas fa-at text-brand-500 text-sm"></i><span class="text-sm font-bold text-slate-700">멘션 알림</span>' +
+      (unreadCount > 0 ? '<span class="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-600 font-bold">' + unreadCount + '개 안읽음</span>' : '') +
+    '</div>' +
+    (unreadCount > 0 ? '<button class="text-[11px] text-brand-500 hover:text-brand-600 font-semibold" onclick="markAllMentionsRead()">모두 읽음</button>' : '') +
+  '</div>';
+
+  var body;
+  if (!list.length) {
+    body = '<div class="px-3 py-10 text-center text-xs text-slate-400"><i class="fas fa-bell-slash text-2xl text-slate-200 block mb-2"></i>받은 멘션이 없습니다</div>';
+  } else {
+    body = '<div>' + list.map(function(n) {
+      var isUnread = !n.read_at;
+      var preview = String(n.content || '').replace(/@\[([^\]]+)\]\(\d+\)/g, '@$1');
+      if (preview.length > 80) preview = preview.slice(0, 80) + '…';
+      preview = preview.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      var bg = isUnread ? 'bg-blue-50/60 hover:bg-blue-50' : 'hover:bg-gray-50';
+      return '<div class="px-3 py-2.5 border-b border-gray-50 cursor-pointer ' + bg + '" onclick="openMentionItem(' + n.notif_id + ',' + n.meeting_id + ')">' +
+        '<div class="flex items-start gap-2">' +
+          (isUnread ? '<span class="w-1.5 h-1.5 rounded-full bg-brand-500 mt-1.5 flex-shrink-0"></span>' : '<span class="w-1.5 h-1.5 mt-1.5 flex-shrink-0"></span>') +
+          '<div class="flex-1 min-w-0">' +
+            '<div class="flex items-center gap-1.5 flex-wrap">' +
+              '<span class="text-xs font-bold text-slate-700">' + (n.author_name || '익명') + '</span>' +
+              '<span class="text-[10px] text-slate-400">님이 회원님을 언급함</span>' +
+            '</div>' +
+            '<div class="text-[11px] text-slate-500 mt-0.5"><i class="fas fa-hospital text-[9px] mr-0.5"></i>' + (n.hospital_name || '-') + ' · ' + (n.meeting_date || '') + '</div>' +
+            '<div class="text-xs text-slate-700 mt-1 line-clamp-2">' + preview + '</div>' +
+            '<div class="text-[10px] text-slate-400 mt-1"><i class="fas fa-clock text-[9px] mr-0.5"></i>' + fmtShort(n.notif_created_at) + '</div>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+  panel.innerHTML = header + body;
+}
+
+async function openMentionItem(notifId, meetingId) {
+  // Mark this mention as read
+  try { await API.post('/comments/mentions/' + notifId + '/read', {}); } catch (e) { /* ignore */ }
+  // Close panel
+  var panel = document.getElementById('mention-panel');
+  if (panel) panel.classList.add('hidden');
+  var bell = document.getElementById('mention-bell');
+  if (bell) bell.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('click', _mentionOutsideClick);
+  // Fetch meeting detail and open it
+  try {
+    var r = await API.get('/meetings/' + meetingId);
+    var meet = (r.data && r.data.data) || null;
+    if (meet) {
+      showMeetDetail(meet);
+    } else {
+      toast('미팅을 찾을 수 없습니다', 'err');
+    }
+  } catch (e) {
+    toast('미팅 정보를 불러올 수 없습니다', 'err');
+  }
+  // Refresh after a moment
+  setTimeout(refreshMentions, 500);
+}
+
+async function markAllMentionsRead() {
+  try {
+    await API.post('/comments/mentions/read-all', {});
+    toast('모든 멘션을 읽음으로 표시했습니다');
+    refreshMentions();
+  } catch (e) { toast('처리 실패', 'err'); }
 }
 
 // ===== CI STATS =====
@@ -3228,7 +5759,7 @@ function renderClinicHours(str) {
   if (!hasAnyDay && !h.notes) return '';
   
   var slotColor = function(v) {
-    if (!v) return { bg: 'bg-gray-50', text: 'text-slate-300', border: 'border-gray-100', icon: '' };
+    if (!v) return { bg: 'bg-gray-100', text: 'text-gray-400', border: 'border-gray-200', icon: '<i class="fas fa-ban text-[8px] mr-0.5"></i>' };
     if (v === '진료') return { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: '<i class="fas fa-stethoscope text-[8px] mr-0.5"></i>' };
     if (v === '수술') return { bg: 'bg-rose-50', text: 'text-rose-600', border: 'border-rose-100', icon: '<i class="fas fa-scissors text-[8px] mr-0.5"></i>' };
     if (v === '휴진') return { bg: 'bg-gray-100', text: 'text-gray-400', border: 'border-gray-200', icon: '<i class="fas fa-ban text-[8px] mr-0.5"></i>' };
@@ -3236,6 +5767,8 @@ function renderClinicHours(str) {
     if (v.includes('검사')) return { bg: 'bg-purple-50', text: 'text-purple-600', border: 'border-purple-100', icon: '<i class="fas fa-microscope text-[8px] mr-0.5"></i>' };
     return { bg: 'bg-blue-50', text: 'text-blue-600', border: 'border-blue-100', icon: '' };
   };
+  // 빈 값은 휴진으로 정규화
+  var normSlot = function(v) { return (v == null || String(v).trim() === '') ? '휴진' : String(v); };
   
   var html = '<div class="card-flat p-4 lg:p-5"><div class="flex items-center gap-2 mb-3"><div class="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center"><i class="fas fa-calendar-days text-cyan-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">외래 시간</span></div>';
   // Table layout
@@ -3251,18 +5784,18 @@ function renderClinicHours(str) {
   html += '<div class="grid grid-cols-7 border-b border-gray-50">';
   html += '<div class="p-1.5 text-[9px] font-bold text-amber-500 text-center bg-amber-50/40 flex items-center justify-center">오전</div>';
   DAYS_KEY.forEach(function(k) {
-    var v = h[k + '_am'] || '';
+    var v = normSlot(h[k + '_am']);
     var c = slotColor(v);
-    html += '<div class="p-1"><div class="' + c.bg + ' ' + c.text + ' border ' + c.border + ' rounded-lg text-center py-1.5 text-[10px] font-semibold leading-none">' + (v ? c.icon + v : '-') + '</div></div>';
+    html += '<div class="p-1"><div class="' + c.bg + ' ' + c.text + ' border ' + c.border + ' rounded-lg text-center py-1.5 text-[10px] font-semibold leading-none">' + c.icon + v + '</div></div>';
   });
   html += '</div>';
   // PM row
   html += '<div class="grid grid-cols-7">';
   html += '<div class="p-1.5 text-[9px] font-bold text-indigo-500 text-center bg-indigo-50/40 flex items-center justify-center">오후</div>';
   DAYS_KEY.forEach(function(k) {
-    var v = h[k + '_pm'] || '';
+    var v = normSlot(h[k + '_pm']);
     var c = slotColor(v);
-    html += '<div class="p-1"><div class="' + c.bg + ' ' + c.text + ' border ' + c.border + ' rounded-lg text-center py-1.5 text-[10px] font-semibold leading-none">' + (v ? c.icon + v : '-') + '</div></div>';
+    html += '<div class="p-1"><div class="' + c.bg + ' ' + c.text + ' border ' + c.border + ' rounded-lg text-center py-1.5 text-[10px] font-semibold leading-none">' + c.icon + v + '</div></div>';
   });
   html += '</div></div>';
   if (h.notes) html += '<div class="text-[11px] text-amber-700 mt-2.5 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100"><i class="fas fa-exclamation-circle text-amber-400 mr-1"></i>' + h.notes + '</div>';
@@ -3395,9 +5928,460 @@ var _scheduleSuggestions = [];
 var _scheduleTimeOrdered = [];
 var _scheduleSelected = new Set();
 var _scheduleVisitTimes = {}; // hospital_id -> 'am'|'pm'|'full'|''
+var _scheduleSelectedDoctors = {}; // hospital_id -> Set of doctor_ids
 var _schViewMode = 'time'; // 'time' or 'score'
 var _schDayLabel = '';
 var _schSelectedRegions = new Set();
+
+// ===== Calendar (week / day / month) =====
+var _calView = (localStorage.getItem('todoc_cal_view') || 'week'); // 'day' | 'week' | 'month'
+var _calAnchor = new Date(); // anchor date in current view
+var _calStartHour = 8;  // 08:00
+var _calEndHour = 20;   // 20:00 (exclusive end at 20:00 displayed)
+var _calSlotMin = 30;   // 30-minute slots
+var _calMeetings = [];  // currently loaded meetings for the visible range
+
+function _calFmtDate(d) {
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+function _calParseDate(s) {
+  if (!s) return null;
+  var parts = String(s).split('-');
+  if (parts.length < 3) return null;
+  return new Date(Number(parts[0]), Number(parts[1])-1, Number(parts[2]));
+}
+function _calStartOfWeek(d) {
+  // Week starts on Monday
+  var x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var dow = x.getDay(); // 0=Sun..6=Sat
+  var diff = (dow === 0 ? -6 : 1 - dow);
+  x.setDate(x.getDate() + diff);
+  return x;
+}
+function _calRangeForView() {
+  var from, to;
+  if (_calView === 'day') {
+    from = new Date(_calAnchor.getFullYear(), _calAnchor.getMonth(), _calAnchor.getDate());
+    to = new Date(from); to.setDate(to.getDate());
+  } else if (_calView === 'week') {
+    from = _calStartOfWeek(_calAnchor);
+    to = new Date(from); to.setDate(to.getDate() + 6);
+  } else { // month
+    from = new Date(_calAnchor.getFullYear(), _calAnchor.getMonth(), 1);
+    to = new Date(_calAnchor.getFullYear(), _calAnchor.getMonth()+1, 0);
+  }
+  return { from: from, to: to };
+}
+function _calMinFromTime(t) {
+  if (!t) return null;
+  var parts = String(t).split(':');
+  if (parts.length < 2) return null;
+  return Number(parts[0]) * 60 + Number(parts[1]);
+}
+function _calTimeFromMin(min) {
+  var h = Math.floor(min / 60);
+  var m = min % 60;
+  return String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+}
+function _calVtRangeMinutes(vt) {
+  // Default visit_time → minute range
+  if (vt === 'am') return [9*60, 10*60];
+  if (vt === 'pm') return [14*60, 15*60];
+  if (vt === 'full') return [9*60, 18*60];
+  return null;
+}
+function _calTypeColor(t) {
+  return ({ visit:'#10b981', phone:'#3b82f6', conference:'#8b5cf6', email:'#f59e0b', online:'#6366f1' })[t] || '#64748b';
+}
+function _calTypeLabel(t) {
+  return ({ visit:'방문', phone:'전화', conference:'학회', email:'이메일', online:'온라인' })[t] || (t || '미팅');
+}
+
+async function loadCalendar() {
+  destroyCharts && destroyCharts();
+  var c = document.getElementById('content');
+  document.getElementById('page-title').textContent = '캘린더';
+  document.getElementById('page-subtitle').textContent = '주간 · 일간 · 월간 일정 그리드';
+  document.getElementById('header-actions').innerHTML =
+    '<button class="btn btn-success btn-sm" onclick="showNewMeetGlobal()" aria-label="미팅 추가"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">미팅</span></button>';
+
+  c.innerHTML =
+    '<div class="p-3 lg:p-6 max-w-[1400px] mx-auto">' +
+      '<div id="cal-toolbar" class="flex flex-wrap items-center gap-2 mb-3"></div>' +
+      '<div id="cal-canvas" class="card-flat p-0 overflow-hidden"></div>' +
+      '<div class="text-[10px] text-slate-400 mt-2 px-1"><i class="fas fa-circle-info mr-1"></i>이벤트를 다른 시간대로 끌어다 놓으면 미팅 일정이 자동으로 업데이트됩니다.</div>' +
+    '</div>';
+
+  await renderCalendar();
+}
+
+async function renderCalendar() {
+  renderCalToolbar();
+  var box = document.getElementById('cal-canvas');
+  if (!box) return;
+  box.innerHTML = '<div class="text-center py-12 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div>';
+
+  var range = _calRangeForView();
+  try {
+    var r = await API.get('/meetings?date_from=' + _calFmtDate(range.from) + '&date_to=' + _calFmtDate(range.to) + '&limit=500');
+    _calMeetings = (r.data && r.data.data) || [];
+  } catch (e) {
+    _calMeetings = [];
+  }
+
+  if (_calView === 'day') renderCalDay();
+  else if (_calView === 'week') renderCalWeek();
+  else renderCalMonth();
+}
+
+function renderCalToolbar() {
+  var bar = document.getElementById('cal-toolbar');
+  if (!bar) return;
+  var range = _calRangeForView();
+  var rangeLabel;
+  if (_calView === 'day') {
+    var dn = ['일','월','화','수','목','금','토'][_calAnchor.getDay()];
+    rangeLabel = _calAnchor.getFullYear() + '. ' + (_calAnchor.getMonth()+1) + '. ' + _calAnchor.getDate() + ' (' + dn + ')';
+  } else if (_calView === 'week') {
+    rangeLabel = (range.from.getMonth()+1) + '/' + range.from.getDate() + ' ~ ' + (range.to.getMonth()+1) + '/' + range.to.getDate() + ', ' + range.to.getFullYear();
+  } else {
+    rangeLabel = _calAnchor.getFullYear() + '년 ' + (_calAnchor.getMonth()+1) + '월';
+  }
+
+  bar.innerHTML =
+    '<div class="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 dark:bg-[var(--surface-tertiary)]" role="tablist" aria-label="캘린더 뷰">' +
+      ['day','week','month'].map(function(v){
+        var lbl = ({day:'일간', week:'주간', month:'월간'})[v];
+        var active = (_calView === v);
+        return '<button role="tab" aria-selected="' + active + '" class="px-3 py-1.5 text-[12px] font-bold rounded-md transition ' + (active ? 'bg-white text-brand-600 shadow-sm' : 'text-slate-500 hover:text-slate-700') + '" onclick="setCalView(\'' + v + '\')">' + lbl + '</button>';
+      }).join('') +
+    '</div>' +
+    '<div class="flex items-center gap-1 ml-1">' +
+      '<button class="btn btn-outline btn-sm !px-2" onclick="calNav(-1)" aria-label="이전"><i class="fas fa-chevron-left text-xs"></i></button>' +
+      '<button class="btn btn-outline btn-sm" onclick="calToday()" aria-label="오늘로 이동"><i class="fas fa-calendar-day text-xs mr-1"></i>오늘</button>' +
+      '<button class="btn btn-outline btn-sm !px-2" onclick="calNav(1)" aria-label="다음"><i class="fas fa-chevron-right text-xs"></i></button>' +
+    '</div>' +
+    '<div class="ml-2 font-bold text-sm text-slate-700 dark:text-[var(--gray-800)]">' + rangeLabel + '</div>' +
+    '<div class="ml-auto text-[11px] text-slate-400">' + _calMeetings.length + '건</div>';
+}
+
+function setCalView(v) {
+  _calView = v;
+  localStorage.setItem('todoc_cal_view', v);
+  renderCalendar();
+}
+function calNav(delta) {
+  var d = new Date(_calAnchor);
+  if (_calView === 'day') d.setDate(d.getDate() + delta);
+  else if (_calView === 'week') d.setDate(d.getDate() + 7 * delta);
+  else d.setMonth(d.getMonth() + delta);
+  _calAnchor = d;
+  renderCalendar();
+}
+function calToday() { _calAnchor = new Date(); renderCalendar(); }
+
+function _calMeetingsForDate(dateStr) {
+  return _calMeetings.filter(function(m) { return m.meeting_date === dateStr; });
+}
+function _calMeetingTimeRange(m) {
+  var start = _calMinFromTime(m.start_time);
+  var end = _calMinFromTime(m.end_time);
+  if (start != null && end != null && end > start) return [start, end];
+  if (start != null) return [start, start + 60];
+  var vtRange = _calVtRangeMinutes(m.visit_time);
+  if (vtRange) return vtRange;
+  return [9*60, 10*60];
+}
+
+// ===== Week View =====
+function renderCalWeek() {
+  var box = document.getElementById('cal-canvas');
+  if (!box) return;
+  var range = _calRangeForView();
+  var days = [];
+  for (var i = 0; i < 7; i++) {
+    var d = new Date(range.from); d.setDate(d.getDate() + i);
+    days.push(d);
+  }
+  var todayStr = _calFmtDate(new Date());
+  var slotCount = ((_calEndHour - _calStartHour) * 60) / _calSlotMin;
+  var slotPx = 28; // each 30-min slot = 28px tall
+
+  // Header row
+  var headHtml = '<div class="cal-grid-head" style="display:grid;grid-template-columns:60px repeat(7,1fr);border-bottom:1px solid var(--border-light);background:var(--surface-elevated);position:sticky;top:0;z-index:5">';
+  headHtml += '<div class="cal-time-corner" style="border-right:1px solid var(--border-light)"></div>';
+  days.forEach(function(d) {
+    var dn = ['일','월','화','수','목','금','토'][d.getDay()];
+    var ds = _calFmtDate(d);
+    var isToday = (ds === todayStr);
+    var isWeekend = (d.getDay() === 0 || d.getDay() === 6);
+    var color = isToday ? 'var(--brand-500)' : (isWeekend ? '#f87171' : 'var(--gray-700)');
+    headHtml += '<div class="cal-day-head" style="padding:10px 6px;text-align:center;border-right:1px solid var(--border-light);' + (isToday ? 'background:rgba(37,99,235,.05);' : '') + '">' +
+      '<div class="text-[10px] font-bold" style="color:' + color + '">' + dn + '</div>' +
+      '<div class="text-[16px] font-bold mt-0.5" style="color:' + color + '">' + d.getDate() + '</div>' +
+      '<div class="text-[9px] text-slate-400 mt-0.5">' + _calMeetingsForDate(ds).length + '건</div>' +
+    '</div>';
+  });
+  headHtml += '</div>';
+
+  // Time grid body
+  var gridStyle = 'display:grid;grid-template-columns:60px repeat(7,1fr);position:relative;background:var(--surface-primary)';
+  var bodyHtml = '<div class="cal-grid-body" style="' + gridStyle + ';height:' + (slotCount * slotPx) + 'px">';
+
+  // Time labels column
+  bodyHtml += '<div class="cal-time-col" style="border-right:1px solid var(--border-light);position:relative">';
+  for (var s = 0; s < slotCount; s++) {
+    var min = _calStartHour * 60 + s * _calSlotMin;
+    var label = (s % 2 === 0) ? _calTimeFromMin(min) : '';
+    bodyHtml += '<div style="height:' + slotPx + 'px;border-bottom:1px dashed var(--border-light);text-align:right;padding-right:6px;font-size:10px;color:var(--gray-400);line-height:' + slotPx + 'px">' + label + '</div>';
+  }
+  bodyHtml += '</div>';
+
+  // Day columns
+  days.forEach(function(d, dayIdx) {
+    var ds = _calFmtDate(d);
+    var isWeekend = (d.getDay() === 0 || d.getDay() === 6);
+    bodyHtml += '<div class="cal-day-col" data-date="' + ds + '" style="border-right:1px solid var(--border-light);position:relative;' + (isWeekend ? 'background:rgba(241,245,249,.4);' : '') + '">';
+    // Slots (drop targets)
+    for (var s2 = 0; s2 < slotCount; s2++) {
+      var slotMin = _calStartHour * 60 + s2 * _calSlotMin;
+      var topPx = s2 * slotPx;
+      bodyHtml += '<div class="cal-slot" data-date="' + ds + '" data-min="' + slotMin + '"' +
+        ' style="position:absolute;top:' + topPx + 'px;left:0;right:0;height:' + slotPx + 'px;border-bottom:1px dashed var(--border-light);cursor:pointer"' +
+        ' ondragover="event.preventDefault();this.style.background=\'rgba(37,99,235,.08)\'"' +
+        ' ondragleave="this.style.background=\'\'"' +
+        ' ondrop="onCalDrop(event,\'' + ds + '\',' + slotMin + ')"' +
+        ' onclick="onCalSlotClick(\'' + ds + '\',' + slotMin + ')"></div>';
+    }
+    // Meeting cards positioned absolutely
+    var meets = _calMeetingsForDate(ds);
+    meets.forEach(function(m) {
+      var range = _calMeetingTimeRange(m);
+      var startMin = Math.max(_calStartHour * 60, range[0]);
+      var endMin = Math.min(_calEndHour * 60, range[1]);
+      if (endMin <= startMin) return;
+      var top = ((startMin - _calStartHour * 60) / _calSlotMin) * slotPx;
+      var height = ((endMin - startMin) / _calSlotMin) * slotPx;
+      var color = _calTypeColor(m.meeting_type);
+      var label = _calTypeLabel(m.meeting_type);
+      var hospName = (m.hospital_name || '').replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+      var purpose = (m.purpose || '').replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+      bodyHtml += '<div class="cal-event" draggable="true"' +
+        ' data-meeting-id="' + m.id + '"' +
+        ' style="position:absolute;left:3px;right:3px;top:' + top + 'px;height:' + Math.max(20, height - 2) + 'px;background:' + color + ';color:#fff;border-radius:6px;padding:3px 6px;font-size:10px;line-height:1.25;overflow:hidden;cursor:grab;box-shadow:0 1px 3px rgba(0,0,0,.15);z-index:2"' +
+        ' ondragstart="onCalDragStart(event,' + m.id + ')"' +
+        ' ondragend="onCalDragEnd(event)"' +
+        ' onclick="event.stopPropagation();openCalMeeting(' + m.id + ')"' +
+        ' title="' + hospName + ' - ' + purpose + '">' +
+        '<div class="font-bold truncate">' + _calTimeFromMin(startMin) + ' ' + hospName + '</div>' +
+        (height > 28 ? '<div class="truncate opacity-90">' + label + ' · ' + purpose + '</div>' : '') +
+      '</div>';
+    });
+    bodyHtml += '</div>';
+  });
+  bodyHtml += '</div>';
+
+  box.innerHTML = '<div style="max-height:calc(100vh - 220px);overflow:auto">' + headHtml + bodyHtml + '</div>';
+}
+
+// ===== Day View =====
+function renderCalDay() {
+  var box = document.getElementById('cal-canvas');
+  if (!box) return;
+  var ds = _calFmtDate(_calAnchor);
+  var dn = ['일','월','화','수','목','금','토'][_calAnchor.getDay()];
+  var todayStr = _calFmtDate(new Date());
+  var isToday = (ds === todayStr);
+  var slotCount = ((_calEndHour - _calStartHour) * 60) / _calSlotMin;
+  var slotPx = 36;
+
+  var headHtml = '<div style="display:grid;grid-template-columns:80px 1fr;border-bottom:1px solid var(--border-light);background:var(--surface-elevated);position:sticky;top:0;z-index:5">' +
+    '<div style="border-right:1px solid var(--border-light)"></div>' +
+    '<div style="padding:12px 14px;' + (isToday ? 'background:rgba(37,99,235,.05);' : '') + '">' +
+      '<div class="text-[12px] font-bold" style="color:' + (isToday ? 'var(--brand-500)' : 'var(--gray-700)') + '">' + (_calAnchor.getMonth()+1) + '월 ' + _calAnchor.getDate() + '일 (' + dn + ')</div>' +
+      '<div class="text-[10px] text-slate-400 mt-0.5">' + _calMeetingsForDate(ds).length + '건의 일정</div>' +
+    '</div>' +
+  '</div>';
+
+  var bodyHtml = '<div style="display:grid;grid-template-columns:80px 1fr;height:' + (slotCount * slotPx) + 'px">';
+  // Time column
+  bodyHtml += '<div style="border-right:1px solid var(--border-light)">';
+  for (var s = 0; s < slotCount; s++) {
+    var min = _calStartHour * 60 + s * _calSlotMin;
+    var label = _calTimeFromMin(min);
+    bodyHtml += '<div style="height:' + slotPx + 'px;border-bottom:1px dashed var(--border-light);text-align:right;padding-right:8px;font-size:11px;color:var(--gray-400);line-height:' + slotPx + 'px">' + label + '</div>';
+  }
+  bodyHtml += '</div>';
+
+  // Day column
+  bodyHtml += '<div data-date="' + ds + '" style="position:relative;background:var(--surface-primary)">';
+  for (var s2 = 0; s2 < slotCount; s2++) {
+    var slotMin = _calStartHour * 60 + s2 * _calSlotMin;
+    var topPx = s2 * slotPx;
+    bodyHtml += '<div class="cal-slot" data-date="' + ds + '" data-min="' + slotMin + '"' +
+      ' style="position:absolute;top:' + topPx + 'px;left:0;right:0;height:' + slotPx + 'px;border-bottom:1px dashed var(--border-light);cursor:pointer"' +
+      ' ondragover="event.preventDefault();this.style.background=\'rgba(37,99,235,.08)\'"' +
+      ' ondragleave="this.style.background=\'\'"' +
+      ' ondrop="onCalDrop(event,\'' + ds + '\',' + slotMin + ')"' +
+      ' onclick="onCalSlotClick(\'' + ds + '\',' + slotMin + ')"></div>';
+  }
+  var meets = _calMeetingsForDate(ds);
+  meets.forEach(function(m) {
+    var range = _calMeetingTimeRange(m);
+    var startMin = Math.max(_calStartHour * 60, range[0]);
+    var endMin = Math.min(_calEndHour * 60, range[1]);
+    if (endMin <= startMin) return;
+    var top = ((startMin - _calStartHour * 60) / _calSlotMin) * slotPx;
+    var height = ((endMin - startMin) / _calSlotMin) * slotPx;
+    var color = _calTypeColor(m.meeting_type);
+    var label = _calTypeLabel(m.meeting_type);
+    var hospName = (m.hospital_name || '').replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+    var purpose = (m.purpose || '').replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+    var docNames = (m.doctor_name || '').replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+    bodyHtml += '<div class="cal-event" draggable="true"' +
+      ' data-meeting-id="' + m.id + '"' +
+      ' style="position:absolute;left:8px;right:8px;top:' + top + 'px;height:' + Math.max(28, height - 2) + 'px;background:' + color + ';color:#fff;border-radius:8px;padding:6px 10px;font-size:11px;line-height:1.3;overflow:hidden;cursor:grab;box-shadow:0 2px 6px rgba(0,0,0,.18);z-index:2"' +
+      ' ondragstart="onCalDragStart(event,' + m.id + ')"' +
+      ' ondragend="onCalDragEnd(event)"' +
+      ' onclick="event.stopPropagation();openCalMeeting(' + m.id + ')">' +
+      '<div class="font-bold">' + _calTimeFromMin(startMin) + ' ~ ' + _calTimeFromMin(endMin) + ' · ' + hospName + '</div>' +
+      (height > 38 ? '<div class="opacity-95 mt-0.5">' + label + (docNames ? ' · ' + docNames : '') + '</div>' : '') +
+      (height > 60 ? '<div class="opacity-90 mt-0.5 truncate">' + purpose + '</div>' : '') +
+    '</div>';
+  });
+  bodyHtml += '</div>';
+  bodyHtml += '</div>';
+
+  box.innerHTML = '<div style="max-height:calc(100vh - 220px);overflow:auto">' + headHtml + bodyHtml + '</div>';
+}
+
+// ===== Month View =====
+function renderCalMonth() {
+  var box = document.getElementById('cal-canvas');
+  if (!box) return;
+  var year = _calAnchor.getFullYear(), month = _calAnchor.getMonth();
+  var firstOfMonth = new Date(year, month, 1);
+  var gridStart = _calStartOfWeek(firstOfMonth);
+  var todayStr = _calFmtDate(new Date());
+
+  var headHtml = '<div style="display:grid;grid-template-columns:repeat(7,1fr);background:var(--surface-elevated);border-bottom:1px solid var(--border-light)">';
+  ['월','화','수','목','금','토','일'].forEach(function(dn, i) {
+    var color = (i === 5) ? '#3b82f6' : (i === 6 ? '#f87171' : 'var(--gray-700)');
+    headHtml += '<div class="text-[10px] font-bold" style="padding:10px 8px;text-align:center;color:' + color + ';border-right:1px solid var(--border-light)">' + dn + '</div>';
+  });
+  headHtml += '</div>';
+
+  var bodyHtml = '<div style="display:grid;grid-template-columns:repeat(7,1fr);grid-auto-rows:minmax(96px,auto)">';
+  for (var i = 0; i < 42; i++) {
+    var cellDate = new Date(gridStart); cellDate.setDate(cellDate.getDate() + i);
+    var ds = _calFmtDate(cellDate);
+    var inMonth = (cellDate.getMonth() === month);
+    var isToday = (ds === todayStr);
+    var dow = cellDate.getDay();
+    var dayColor = isToday ? 'var(--brand-500)' : (dow === 0 ? '#f87171' : (dow === 6 ? '#3b82f6' : 'var(--gray-700)'));
+    var meets = _calMeetingsForDate(ds);
+    var bg = isToday ? 'rgba(37,99,235,.05)' : (inMonth ? 'var(--surface-primary)' : 'var(--surface-tertiary)');
+    bodyHtml += '<div class="cal-month-cell" data-date="' + ds + '"' +
+      ' style="border-right:1px solid var(--border-light);border-bottom:1px solid var(--border-light);padding:6px;background:' + bg + ';position:relative;min-height:96px;cursor:pointer"' +
+      ' ondragover="event.preventDefault();this.style.background=\'rgba(37,99,235,.1)\'"' +
+      ' ondragleave="this.style.background=\'' + bg + '\'"' +
+      ' ondrop="onCalDrop(event,\'' + ds + '\',null)"' +
+      ' onclick="_calAnchor=new Date(' + cellDate.getFullYear() + ',' + cellDate.getMonth() + ',' + cellDate.getDate() + ');setCalView(\'day\')">' +
+      '<div class="flex items-center justify-between mb-1">' +
+        '<span class="text-[12px] font-bold" style="color:' + dayColor + ';opacity:' + (inMonth ? '1' : '.4') + '">' + cellDate.getDate() + '</span>' +
+        (meets.length > 0 ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style="background:var(--brand-50);color:var(--brand-600)">' + meets.length + '</span>' : '') +
+      '</div>';
+    var max = 3;
+    bodyHtml += meets.slice(0, max).map(function(m) {
+      var color = _calTypeColor(m.meeting_type);
+      var range = _calMeetingTimeRange(m);
+      var startTime = _calTimeFromMin(range[0]);
+      var hospName = (m.hospital_name || '').replace(/'/g, "&#39;").replace(/"/g, '&quot;');
+      return '<div class="cal-event truncate" draggable="true"' +
+        ' data-meeting-id="' + m.id + '"' +
+        ' style="font-size:10px;padding:2px 5px;border-radius:4px;background:' + color + '15;color:' + color + ';border-left:2px solid ' + color + ';margin-bottom:2px;cursor:grab"' +
+        ' ondragstart="event.stopPropagation();onCalDragStart(event,' + m.id + ')"' +
+        ' ondragend="onCalDragEnd(event)"' +
+        ' onclick="event.stopPropagation();openCalMeeting(' + m.id + ')">' +
+        '<span class="font-bold">' + startTime + '</span> ' + hospName +
+      '</div>';
+    }).join('');
+    if (meets.length > max) {
+      bodyHtml += '<div class="text-[9px] text-slate-400 px-1">+' + (meets.length - max) + ' more</div>';
+    }
+    bodyHtml += '</div>';
+  }
+  bodyHtml += '</div>';
+
+  box.innerHTML = headHtml + bodyHtml;
+}
+
+// ===== Drag & Drop handlers =====
+var _calDragMeetingId = null;
+function onCalDragStart(e, meetingId) {
+  _calDragMeetingId = meetingId;
+  try {
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(meetingId));
+  } catch (_) {}
+  if (e.currentTarget && e.currentTarget.style) e.currentTarget.style.opacity = '0.4';
+}
+function onCalDragEnd(e) {
+  if (e.currentTarget && e.currentTarget.style) e.currentTarget.style.opacity = '';
+  // Clear all slot highlights
+  document.querySelectorAll('.cal-slot, .cal-month-cell').forEach(function(el){ el.style.background = ''; });
+}
+async function onCalDrop(e, dateStr, slotMin) {
+  e.preventDefault();
+  e.stopPropagation();
+  var mid = _calDragMeetingId;
+  _calDragMeetingId = null;
+  document.querySelectorAll('.cal-slot, .cal-month-cell').forEach(function(el){ el.style.background = ''; });
+  if (!mid) return;
+  var meeting = _calMeetings.find(function(x){ return x.id === mid; });
+  if (!meeting) return;
+
+  // Build patch payload
+  var patch = { meeting_date: dateStr };
+  if (slotMin != null) {
+    var origRange = _calMeetingTimeRange(meeting);
+    var dur = Math.max(_calSlotMin, origRange[1] - origRange[0]);
+    var newStart = slotMin;
+    var newEnd = Math.min(_calEndHour * 60, slotMin + dur);
+    patch.start_time = _calTimeFromMin(newStart);
+    patch.end_time = _calTimeFromMin(newEnd);
+    // Adjust visit_time to align with am/pm
+    if (newStart < 12 * 60) patch.visit_time = 'am';
+    else if (newStart >= 17 * 60 - 1 && newEnd > 17 * 60) patch.visit_time = 'full';
+    else patch.visit_time = 'pm';
+  }
+
+  try {
+    await API.patch('/meetings/' + mid, patch);
+    toast('일정이 이동되었습니다');
+    await renderCalendar();
+  } catch (e2) {
+    toast('일정 이동에 실패했습니다', 'err');
+  }
+}
+
+function onCalSlotClick(dateStr, slotMin) {
+  // Pre-fill new meeting form with date + start_time
+  if (typeof showNewMeetGlobal === 'function') {
+    var startTime = _calTimeFromMin(slotMin);
+    var endTime = _calTimeFromMin(Math.min(_calEndHour * 60, slotMin + 60));
+    window._calPrefill = { meeting_date: dateStr, start_time: startTime, end_time: endTime };
+    showNewMeetGlobal();
+  }
+}
+
+async function openCalMeeting(meetingId) {
+  try {
+    var r = await API.get('/meetings/' + meetingId);
+    var meet = (r.data && r.data.data) || null;
+    if (meet) showMeetDetail(meet);
+  } catch (e) { toast('미팅 정보를 불러올 수 없습니다', 'err'); }
+}
 
 async function loadSchedule() {
   var c = document.getElementById('content');
@@ -3562,6 +6546,7 @@ async function fetchScheduleSuggestions() {
     _scheduleTimeOrdered = res.data.time_ordered || [];
     _scheduleSelected = new Set();
     _scheduleVisitTimes = {};
+    _scheduleSelectedDoctors = {};
     _schDayLabel = res.data.dayLabel || '';
     var stats = res.data.stats || {};
     
@@ -3579,6 +6564,7 @@ async function fetchScheduleSuggestions() {
 }
 
 function renderScheduleResults(region, date, stats) {
+  window._lastScheduleStats = stats;
   var resultsDiv = document.getElementById('sch-results');
   var dateObj = new Date(date + 'T00:00:00');
   var dayNames = ['일','월','화','수','목','금','토'];
@@ -3593,6 +6579,7 @@ function renderScheduleResults(region, date, stats) {
       '<h3 class="font-bold text-slate-800 text-[15px]"><i class="fas fa-map-pin text-blue-500 mr-1.5"></i>' + region.split(', ').map(function(r) { return '<span class="inline-flex items-center mr-1">' + r + '</span>'; }).join('<i class="fas fa-arrow-right text-[10px] text-slate-300 mx-1"></i>') + ' 방문 추천</h3>' +
       '<p class="text-xs text-slate-400 mt-0.5">' + dateStr + ' · 추천 ' + list.length + '곳' +
         (stats.clinic_today_count > 0 ? ' · <span class="text-cyan-600 font-medium">' + dayNames[dateObj.getDay()] + '요일 외래 ' + stats.clinic_today_count + '곳</span>' : '') +
+        (stats.excluded_off_hospitals > 0 ? ' · <span class="text-gray-400">휴진 제외 ' + stats.excluded_off_hospitals + '곳</span>' : '') +
       '</p>' +
     '</div>' +
     '<div class="flex gap-2 flex-wrap">' +
@@ -3601,6 +6588,7 @@ function renderScheduleResults(region, date, stats) {
         '<button onclick="setSchView(\'score\')" class="text-[11px] px-3 py-1.5 font-medium transition ' + (_schViewMode === 'score' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50') + '"><i class="fas fa-ranking-star mr-1"></i>추천순</button>' +
       '</div>' +
       '<button onclick="selectAllSchedule()" class="btn btn-outline btn-sm text-xs"><i class="fas fa-check-double mr-1"></i>전체 선택</button>' +
+      '<button onclick="optimizeScheduleRoute()" id="sch-route-btn" class="btn btn-outline btn-sm text-xs hidden" title="선택한 기관들의 최적 동선을 계산합니다"><i class="fas fa-route mr-1"></i>동선 최적화</button>' +
       '<button onclick="createSchedulePlan()" id="sch-create-btn" class="btn btn-primary btn-sm text-xs hidden"><i class="fas fa-calendar-plus mr-1"></i>미팅 생성 (<span id="sch-sel-count">0</span>건)</button>' +
     '</div>' +
   '</div>';
@@ -3758,23 +6746,48 @@ function schTimeCard(s, list) {
             '</div>';
           })();
   
-  // 외래 의사 상세 표시
-  if (s.clinic_analysis && s.clinic_analysis.length > 0) {
-    var clinicDocs = s.clinic_analysis.filter(function(a) { return a.am || a.pm; });
-    if (clinicDocs.length > 0) {
-      html += '<div class="mt-2 flex flex-wrap gap-1.5">';
-      clinicDocs.forEach(function(a) {
-        var amBadge = a.am ? schSlotBadge(a.am, 'AM') : '';
-        var pmBadge = a.pm ? schSlotBadge(a.pm, 'PM') : '';
-        html += '<div class="flex items-center gap-1 text-[10px] bg-slate-50 border border-slate-100 rounded-lg px-2 py-1">' +
-          '<span class="font-semibold text-slate-700">' + a.doctor_name + '</span>' +
-          (a.position ? '<span class="text-slate-400">' + a.position + '</span>' : '') +
-          amBadge + pmBadge +
-          (a.hasClinic ? '<span class="text-cyan-500"><i class="fas fa-stethoscope text-[8px]"></i></span>' : '') +
-        '</div>';
-      });
-      html += '</div>';
+  // 의료진 선택 UI (체크박스 스타일)
+  if (s.doctors && s.doctors.length > 0) {
+    // clinic_analysis 매핑 (의사별)
+    var clinicMap = {};
+    if (s.clinic_analysis) {
+      s.clinic_analysis.forEach(function(a) { clinicMap[a.doctor_id] = a; });
     }
+    // 기본값: 외래있는 의사 자동 선택, 없으면 모든 의사 선택
+    if (_scheduleSelectedDoctors[s.hospital_id] === undefined) {
+      var defaultSet = new Set();
+      var hasAnyClinic = s.doctors.some(function(d) { var a = clinicMap[d.id]; return a && a.hasClinic; });
+      s.doctors.forEach(function(d) {
+        var a = clinicMap[d.id];
+        if (hasAnyClinic) { if (a && a.hasClinic) defaultSet.add(d.id); }
+        else { defaultSet.add(d.id); }
+      });
+      _scheduleSelectedDoctors[s.hospital_id] = defaultSet;
+    }
+    var selDocs = _scheduleSelectedDoctors[s.hospital_id];
+    html += '<div class="mt-2.5 pt-2 border-t border-slate-100" onclick="event.stopPropagation()">' +
+      '<div class="flex items-center justify-between mb-1.5">' +
+        '<span class="text-[10px] text-slate-400 font-semibold"><i class="fas fa-user-doctor mr-0.5"></i>만날 의료진 <span class="text-blue-600">' + selDocs.size + '</span>/<span>' + s.doctors.length + '</span></span>' +
+        '<button type="button" onclick="event.stopPropagation();toggleAllScheduleDoctors(' + s.hospital_id + ')" class="text-[10px] text-blue-600 hover:underline font-medium">' + (selDocs.size === s.doctors.length ? '전체 해제' : '전체 선택') + '</button>' +
+      '</div>' +
+      '<div class="flex flex-wrap gap-1.5">';
+    s.doctors.forEach(function(d) {
+      var a = clinicMap[d.id];
+      var amBadge = a && a.am ? schSlotBadge(a.am, 'AM') : '';
+      var pmBadge = a && a.pm ? schSlotBadge(a.pm, 'PM') : '';
+      var isSel = selDocs.has(d.id);
+      var bg = isSel ? '#eff6ff' : '#f8fafc';
+      var bd = isSel ? '#bfdbfe' : '#e2e8f0';
+      var fg = isSel ? '#1d4ed8' : '#64748b';
+      html += '<button type="button" onclick="event.stopPropagation();toggleScheduleDoctor(' + s.hospital_id + ',' + d.id + ')" class="flex items-center gap-1 text-[10px] rounded-lg px-2 py-1 border transition-all" style="background:' + bg + ';border-color:' + bd + ';color:' + fg + '">' +
+        '<i class="fas fa-' + (isSel ? 'check-square' : 'square') + ' text-[10px]"></i>' +
+        '<span class="font-semibold">' + d.name + '</span>' +
+        (d.position ? '<span class="opacity-70">' + d.position + '</span>' : '') +
+        amBadge + pmBadge +
+        (a && a.hasClinic ? '<span class="text-cyan-500"><i class="fas fa-stethoscope text-[8px]"></i></span>' : '') +
+      '</button>';
+    });
+    html += '</div></div>';
   }
   
   html += (s.address ? '<p class="text-[11px] text-slate-400 mt-1.5 truncate"><i class="fas fa-map-marker-alt mr-1 text-slate-300"></i>' + s.address + '</p>' : '');
@@ -3846,6 +6859,47 @@ function toggleScheduleSelect(hospId) {
   updateScheduleSelection();
 }
 
+function toggleScheduleDoctor(hospId, docId) {
+  if (!_scheduleSelectedDoctors[hospId]) _scheduleSelectedDoctors[hospId] = new Set();
+  var set = _scheduleSelectedDoctors[hospId];
+  if (set.has(docId)) set.delete(docId);
+  else set.add(docId);
+  // 의료진을 선택하면 기관도 자동 선택
+  if (set.size > 0 && !_scheduleSelected.has(hospId)) _scheduleSelected.add(hospId);
+  // 재렌더링
+  var regions = Array.from(_schSelectedRegions).join(', ');
+  var date = document.getElementById('sch-date').value;
+  var stats = {
+    total_in_region: _scheduleSuggestions.length,
+    suggested: _scheduleSuggestions.length,
+    has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
+    clinic_today_count: _scheduleSuggestions.filter(function(s) { return s.has_clinic_today; }).length
+  };
+  renderScheduleResults(regions, date, stats);
+  updateScheduleSelection();
+}
+
+function toggleAllScheduleDoctors(hospId) {
+  var s = _scheduleSuggestions.find(function(x) { return x.hospital_id === hospId; }) ||
+          _scheduleTimeOrdered.find(function(x) { return x.hospital_id === hospId; });
+  if (!s || !s.doctors) return;
+  if (!_scheduleSelectedDoctors[hospId]) _scheduleSelectedDoctors[hospId] = new Set();
+  var set = _scheduleSelectedDoctors[hospId];
+  if (set.size === s.doctors.length) set.clear();
+  else s.doctors.forEach(function(d) { set.add(d.id); });
+  if (set.size > 0 && !_scheduleSelected.has(hospId)) _scheduleSelected.add(hospId);
+  var regions = Array.from(_schSelectedRegions).join(', ');
+  var date = document.getElementById('sch-date').value;
+  var stats = {
+    total_in_region: _scheduleSuggestions.length,
+    suggested: _scheduleSuggestions.length,
+    has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
+    clinic_today_count: _scheduleSuggestions.filter(function(s) { return s.has_clinic_today; }).length
+  };
+  renderScheduleResults(regions, date, stats);
+  updateScheduleSelection();
+}
+
 function setScheduleVisitTime(hospId, val) {
   _scheduleVisitTimes[hospId] = val;
   // 선택되지 않았다면 자동으로 선택
@@ -3872,10 +6926,18 @@ function selectAllSchedule() {
 
 function updateScheduleSelection() {
   var btn = document.getElementById('sch-create-btn');
+  var routeBtn = document.getElementById('sch-route-btn');
   var countSpan = document.getElementById('sch-sel-count');
   if (!btn) return;
-  if (_scheduleSelected.size > 0) { btn.classList.remove('hidden'); countSpan.textContent = _scheduleSelected.size; }
-  else { btn.classList.add('hidden'); }
+  if (_scheduleSelected.size > 0) {
+    btn.classList.remove('hidden');
+    countSpan.textContent = _scheduleSelected.size;
+    if (routeBtn && _scheduleSelected.size >= 2) routeBtn.classList.remove('hidden');
+    else if (routeBtn) routeBtn.classList.add('hidden');
+  } else {
+    btn.classList.add('hidden');
+    if (routeBtn) routeBtn.classList.add('hidden');
+  }
   
   var list = _schViewMode === 'time' ? _scheduleTimeOrdered : _scheduleSuggestions;
   list.forEach(function(s, idx) {
@@ -3897,12 +6959,134 @@ function updateScheduleSelection() {
   });
 }
 
+// ===== 동선 최적화 (이동 경로 최적화) =====
+async function optimizeScheduleRoute() {
+  if (_scheduleSelected.size < 2) { toast('동선 최적화는 2곳 이상 선택해야 합니다', 'warn'); return; }
+  var stops = [];
+  _scheduleSuggestions.forEach(function(s) {
+    if (_scheduleSelected.has(s.hospital_id)) {
+      stops.push({
+        hospital_id: s.hospital_id,
+        name: s.name,
+        region: s.region,
+        address: s.address || '',
+        phone: s.phone || '',
+        visit_slot: s.visit_slot,
+        visit_time: s.visit_time,
+        visit_label: s.visit_label,
+        score: s.score
+      });
+    }
+  });
+  if (stops.length < 2) { toast('선택한 방문지를 찾을 수 없습니다', 'err'); return; }
+
+  toast('최적 동선을 계산하는 중...', 'info');
+  try {
+    var res = await API.post('/schedule/optimize-route', { stops: stops });
+    var d = res.data.data;
+    showOptimizedRouteModal(d);
+  } catch (e) {
+    toast('동선 최적화 중 오류가 발생했습니다', 'err');
+  }
+}
+
+function showOptimizedRouteModal(d) {
+  var ordered = d.ordered || [];
+  var legs = d.legs || [];
+  var summary = d.summary || {};
+  var slotLabel = { am_start: '오전 시작', am_end: '오전 외래 후', pm_end: '오후 외래 후', none: '시간 미정' };
+  var slotColor = { am_start: '#0891b2', am_end: '#c2410c', pm_end: '#1d4ed8', none: '#64748b' };
+
+  var totalH = Math.floor((summary.total_estimated_minutes || 0) / 60);
+  var totalM = (summary.total_estimated_minutes || 0) % 60;
+  var totalLabel = (totalH > 0 ? totalH + '시간 ' : '') + totalM + '분';
+
+  var html = '<div class="text-left">';
+  // 요약
+  html += '<div class="grid grid-cols-3 gap-2 mb-4">' +
+    '<div class="bg-blue-50 rounded-xl p-3 border border-blue-100"><div class="text-[10px] text-blue-500 font-semibold">방문지</div><div class="text-xl font-bold text-blue-700">' + (summary.total_stops || 0) + '곳</div></div>' +
+    '<div class="bg-amber-50 rounded-xl p-3 border border-amber-100"><div class="text-[10px] text-amber-500 font-semibold">예상 이동</div><div class="text-xl font-bold text-amber-700">' + totalLabel + '</div></div>' +
+    '<div class="bg-emerald-50 rounded-xl p-3 border border-emerald-100"><div class="text-[10px] text-emerald-500 font-semibold">지역수</div><div class="text-xl font-bold text-emerald-700">' + (summary.unique_regions || 0) + '개</div></div>' +
+  '</div>';
+
+  // 타임라인
+  html += '<div class="text-[11px] text-slate-500 mb-2"><i class="fas fa-info-circle mr-1"></i>지역·주소 유사도와 외래 시간을 고려한 추천 동선입니다.</div>';
+  html += '<div class="relative pl-1 max-h-[400px] overflow-y-auto pr-1">';
+  ordered.forEach(function(stop, idx) {
+    var sc = slotColor[stop.visit_slot] || '#64748b';
+    var sl = slotLabel[stop.visit_slot] || '시간 미정';
+    html += '<div class="flex gap-3 items-stretch mb-1">';
+    // 좌측 번호 + 라인
+    html += '<div class="flex flex-col items-center" style="min-width:28px">' +
+      '<div class="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white" style="background:' + sc + '">' + (idx + 1) + '</div>' +
+      (idx < ordered.length - 1 ? '<div class="flex-1 w-0.5 my-1" style="background:linear-gradient(to bottom,' + sc + '60,#cbd5e160)"></div>' : '') +
+    '</div>';
+    // 본문
+    html += '<div class="flex-1 pb-2">';
+    html += '<div class="bg-white border border-gray-200 rounded-xl p-3 hover:shadow-sm transition">';
+    html += '<div class="flex items-start justify-between gap-2">';
+    html += '<div class="flex-1 min-w-0">' +
+      '<div class="font-semibold text-[13px] text-slate-800 truncate">' + (stop.name || '-') + '</div>' +
+      '<div class="text-[11px] text-slate-500 mt-0.5"><i class="fas fa-map-marker-alt mr-1 text-slate-400"></i>' + (stop.region || '') + (stop.address ? ' · ' + stop.address : '') + '</div>' +
+    '</div>';
+    html += '<span class="text-[10px] px-2 py-0.5 rounded-full font-bold whitespace-nowrap" style="background:' + sc + '15;color:' + sc + '">' +
+      (stop.visit_time ? '<i class="fas fa-clock mr-0.5"></i>' + stop.visit_time + ' ' : '') + sl + '</span>';
+    html += '</div></div>';
+    // 이동 정보 (다음 leg)
+    if (idx < legs.length) {
+      var leg = legs[idx];
+      var em = leg.estimated_minutes || 0;
+      var mIcon = leg.region_match ? 'fa-walking text-emerald-500' : 'fa-car text-amber-500';
+      html += '<div class="flex items-center gap-2 text-[10px] text-slate-400 mt-1 ml-1">' +
+        '<i class="fas ' + mIcon + '"></i>' +
+        '<span>다음 방문지까지 약 ' + em + '분' + (leg.region_match ? ' · 같은 지역' : '') + '</span>' +
+      '</div>';
+    }
+    html += '</div></div>';
+  });
+  html += '</div>';
+
+  html += '<div class="mt-4 text-[11px] text-slate-500 bg-slate-50 rounded-lg p-2"><i class="fas fa-lightbulb text-amber-400 mr-1"></i>"이 순서로 적용" 버튼을 누르면 추천 결과 카드 순서가 이 동선대로 정렬되며, 미팅 생성 시 그대로 반영됩니다.</div>';
+  html += '</div>';
+
+  showConfirm(
+    '<i class="fas fa-route text-blue-500 mr-1"></i>최적 동선 결과',
+    html,
+    function() { applyOptimizedRoute(ordered); },
+    { type: 'info', yesLabel: '<i class="fas fa-check mr-1"></i>이 순서로 적용', noLabel: '닫기' }
+  );
+}
+
+function applyOptimizedRoute(ordered) {
+  if (!Array.isArray(ordered) || ordered.length === 0) return;
+  var orderMap = {};
+  ordered.forEach(function(stop, idx) { orderMap[stop.hospital_id] = idx; });
+  // 시간순 / 추천순 두 리스트 모두 재정렬 (선택된 것만 위로)
+  function sortFn(a, b) {
+    var aIn = orderMap.hasOwnProperty(a.hospital_id);
+    var bIn = orderMap.hasOwnProperty(b.hospital_id);
+    if (aIn && bIn) return orderMap[a.hospital_id] - orderMap[b.hospital_id];
+    if (aIn) return -1;
+    if (bIn) return 1;
+    return 0;
+  }
+  _scheduleTimeOrdered = _scheduleTimeOrdered.slice().sort(sortFn);
+  _scheduleSuggestions = _scheduleSuggestions.slice().sort(sortFn);
+
+  var date = document.getElementById('sch-date').value;
+  var regions = (document.getElementById('sch-region') || {}).value || '';
+  var stats = window._lastScheduleStats || { has_clinic_data: true, clinic_today_count: 0, excluded_off_hospitals: 0 };
+  renderScheduleResults(regions, date, stats);
+  toast('최적 동선 순서로 정렬되었습니다', 'success');
+}
+
 async function createSchedulePlan() {
   if (_scheduleSelected.size === 0) { toast('방문할 기관을 선택해주세요', 'warn'); return; }
   var date = document.getElementById('sch-date').value;
   if (!date) { toast('날짜를 선택해주세요', 'warn'); return; }
   
   var visits = [];
+  var skippedNoDoc = [];
   _scheduleSuggestions.forEach(function(s) {
     if (_scheduleSelected.has(s.hospital_id)) {
       // 방문 시간대 결정 (사용자 선택 우선, 없으면 추천 슬롯 기반)
@@ -3912,15 +7096,25 @@ async function createSchedulePlan() {
         else if (s.visit_slot === 'pm_end') vt = 'pm';
         else vt = '';
       }
+      // 선택된 의료진만 미팅에 포함
+      var selDocSet = _scheduleSelectedDoctors[s.hospital_id];
+      var selDocIds = (selDocSet && selDocSet.size > 0)
+        ? Array.from(selDocSet)
+        : s.doctors.map(function(d) { return d.id; });
+      if (selDocIds.length === 0) { skippedNoDoc.push(s.name); return; }
       visits.push({
         hospital_id: s.hospital_id,
-        doctor_ids: s.doctors.map(function(d) { return d.id; }),
+        doctor_ids: selDocIds,
         purpose: '영업 방문 (일정 플래너)',
         meeting_type: 'visit',
         visit_time: vt
       });
     }
   });
+  if (visits.length === 0) {
+    toast(skippedNoDoc.length > 0 ? '선택된 기관의 의료진을 선택해주세요' : '방문할 기관을 선택해주세요', 'warn');
+    return;
+  }
   
   // 영업사원 목록 가져오기 (복수 선택 체크박스)
   var usersHtml = '<div class="text-left mt-2"><label class="text-xs font-semibold text-slate-500 mb-1 block"><i class="fas fa-user-tie mr-1"></i>방문 영업사원 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +

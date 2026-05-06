@@ -2,7 +2,14 @@ import { Hono } from 'hono'
 import { logActivity } from '../helpers'
 
 type Bindings = { DB: D1Database }
-const pipeline = new Hono<{ Bindings: Bindings }>()
+type Variables = { userId: number }
+const pipeline = new Hono<{ Bindings: Bindings, Variables: Variables }>()
+
+const STAGE_ORDER = ['contact', 'meeting', 'demo', 'proposal', 'contract', 'active_customer'] as const
+const STAGE_LABELS: Record<string, string> = {
+  contact: '첫 접촉', meeting: '미팅 진행', demo: '데모/시연',
+  proposal: '제안/협의', contract: '계약', active_customer: '활성 거래처'
+}
 
 // Get pipeline overview (grouped by stage)
 pipeline.get('/', async (c) => {
@@ -36,16 +43,153 @@ pipeline.get('/', async (c) => {
 pipeline.put('/:hospitalId', async (c) => {
   const hid = c.req.param('hospitalId')
   const { pipeline_stage } = await c.req.json()
-  const validStages = ['contact', 'meeting', 'demo', 'proposal', 'contract', 'active_customer']
-  if (!validStages.includes(pipeline_stage)) return c.json({ error: 'Invalid stage' }, 400)
+  if (!STAGE_ORDER.includes(pipeline_stage as any)) return c.json({ error: 'Invalid stage' }, 400)
   
   const h = await c.env.DB.prepare('SELECT name, pipeline_stage FROM hospitals WHERE id=?').bind(hid).first() as any
+  const fromStage = h?.pipeline_stage || 'contact'
   await c.env.DB.prepare('UPDATE hospitals SET pipeline_stage=?, updated_at=CURRENT_TIMESTAMP WHERE id=?')
     .bind(pipeline_stage, hid).run()
+
+  // Record transition history if stage actually changed
+  if (fromStage !== pipeline_stage) {
+    const userId = c.get('userId') || null
+    await c.env.DB.prepare(
+      `INSERT INTO pipeline_transitions (hospital_id, from_stage, to_stage, changed_by, changed_at)
+       VALUES (?, ?, ?, ?, datetime('now','+9 hours'))`
+    ).bind(Number(hid), fromStage, pipeline_stage, userId).run().catch(() => {})
+  }
   
   await logActivity(c.env.DB, 'update', 'hospital', Number(hid), h?.name || '', 
-    `파이프라인: ${h?.pipeline_stage || 'contact'} → ${pipeline_stage}`)
+    `파이프라인: ${fromStage} → ${pipeline_stage}`)
   return c.json({ success: true })
+})
+
+// ===== Pipeline Conversion Analytics =====
+// GET /api/pipeline/analytics?period=30|90|180|365 (days)
+pipeline.get('/analytics', async (c) => {
+  const periodDays = Number(c.req.query('period') || '90')
+  const cutoff = `date('now','+9 hours','-${periodDays} days')`
+
+  // 1) Current funnel: how many hospitals are in each stage (snapshot)
+  const funnelRaw = await c.env.DB.prepare(`
+    SELECT COALESCE(pipeline_stage,'contact') as stage, COUNT(*) as c
+    FROM hospitals GROUP BY stage
+  `).all()
+  const funnelMap: Record<string, number> = {}
+  for (const r of funnelRaw.results as any[]) funnelMap[r.stage] = r.c
+
+  // 2) Stage entries within the period (for conversion rate calc)
+  // For each stage we count: how many hospitals entered the stage in window,
+  // and of those, how many later moved forward to the next stage.
+  const transitions = await c.env.DB.prepare(`
+    SELECT hospital_id, from_stage, to_stage, changed_at
+    FROM pipeline_transitions
+    WHERE changed_at >= ${cutoff}
+    ORDER BY hospital_id, changed_at ASC
+  `).all()
+
+  // 3) Compute dwell time per stage from full history (not limited to window)
+  const allTrans = await c.env.DB.prepare(`
+    SELECT hospital_id, from_stage, to_stage, changed_at
+    FROM pipeline_transitions
+    ORDER BY hospital_id, changed_at ASC
+  `).all()
+
+  // Build per-hospital timeline
+  const byHosp: Record<number, any[]> = {}
+  for (const r of allTrans.results as any[]) {
+    if (!byHosp[r.hospital_id]) byHosp[r.hospital_id] = []
+    byHosp[r.hospital_id].push(r)
+  }
+
+  // Dwell time: for each stage entry, dwell = next changed_at - this changed_at
+  const dwellSums: Record<string, { total: number, count: number }> = {}
+  const stageEntries: Record<string, number> = {}
+  const stageProgressions: Record<string, number> = {}
+  for (const stage of STAGE_ORDER) {
+    dwellSums[stage] = { total: 0, count: 0 }
+    stageEntries[stage] = 0
+    stageProgressions[stage] = 0
+  }
+
+  const now = Date.now()
+  const cutoffTs = now - periodDays * 86400000
+
+  for (const hid in byHosp) {
+    const list = byHosp[hid]
+    for (let i = 0; i < list.length; i++) {
+      const cur = list[i]
+      const next = list[i + 1]
+      const enteredTs = new Date(cur.changed_at + 'Z').getTime()
+      const stage = cur.to_stage
+      const exitTs = next ? new Date(next.changed_at + 'Z').getTime() : null
+      const dwellMs = (exitTs || now) - enteredTs
+      const dwellDays = Math.max(0, Math.round(dwellMs / 86400000))
+      if (dwellSums[stage]) {
+        dwellSums[stage].total += dwellDays
+        dwellSums[stage].count += 1
+      }
+
+      // Window-based conversion: only count entries that happened in window
+      if (enteredTs >= cutoffTs) {
+        if (stageEntries[stage] !== undefined) stageEntries[stage] += 1
+        // Did it progress to the next stage?
+        if (next) {
+          const nextIdx = STAGE_ORDER.indexOf(next.to_stage as any)
+          const curIdx = STAGE_ORDER.indexOf(stage as any)
+          if (nextIdx > curIdx && stageProgressions[stage] !== undefined) {
+            stageProgressions[stage] += 1
+          }
+        }
+      }
+    }
+  }
+
+  // 4) Conversion rates between consecutive stages (within window)
+  const stageStats = STAGE_ORDER.map(stage => {
+    const dw = dwellSums[stage]
+    const avgDwell = dw.count > 0 ? Math.round(dw.total / dw.count) : 0
+    const entries = stageEntries[stage] || 0
+    const progressed = stageProgressions[stage] || 0
+    const conversion = entries > 0 ? Math.round((progressed / entries) * 100) : 0
+    return {
+      stage,
+      label: STAGE_LABELS[stage],
+      current: funnelMap[stage] || 0,
+      entries,
+      progressed,
+      conversion_rate: conversion,
+      avg_dwell_days: avgDwell,
+    }
+  })
+
+  // 5) Bottleneck: stage with highest avg dwell among non-terminal stages
+  const nonTerminal = stageStats.filter(s => s.stage !== 'active_customer')
+  let bottleneck: any = null
+  for (const s of nonTerminal) {
+    if (s.current > 0 && (!bottleneck || s.avg_dwell_days > bottleneck.avg_dwell_days)) {
+      bottleneck = s
+    }
+  }
+
+  // 6) Recent stage changes (timeline)
+  const recentChanges = await c.env.DB.prepare(`
+    SELECT pt.id, pt.hospital_id, pt.from_stage, pt.to_stage, pt.changed_at,
+      h.name as hospital_name, u.name as changed_by_name
+    FROM pipeline_transitions pt
+    LEFT JOIN hospitals h ON h.id = pt.hospital_id
+    LEFT JOIN users u ON u.id = pt.changed_by
+    WHERE pt.from_stage IS NOT NULL
+    ORDER BY pt.changed_at DESC
+    LIMIT 15
+  `).all()
+
+  return c.json({ data: {
+    period_days: periodDays,
+    funnel: stageStats,
+    bottleneck,
+    recent_changes: recentChanges.results,
+  }})
 })
 
 // KPI targets
