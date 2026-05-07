@@ -19,7 +19,7 @@ doctors.get('/hospitals/:hid/doctors', async (c) => {
 // List all doctors with filters
 doctors.get('/doctors', async (c) => {
   const { search, influence_level, specialty, unvisited_days } = c.req.query()
-  let q = `SELECT d.*, h.name as hospital_name, h.grade as hospital_grade, 
+  let q = `SELECT d.*, h.name as hospital_name, 
     MAX(m.meeting_date) as last_meeting, COUNT(DISTINCT m.id) as meeting_count 
     FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id 
     LEFT JOIN meeting_doctors md ON d.id=md.doctor_id 
@@ -51,7 +51,7 @@ doctors.get('/doctors/departments', async (c) => {
 doctors.get('/doctors/:id', async (c) => {
   const id = c.req.param('id')
   const [docR, papersR, meetingsR] = await Promise.all([
-    c.env.DB.prepare('SELECT d.*, h.name as hospital_name, h.region as hospital_region, h.grade as hospital_grade, h.address as hospital_address FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id WHERE d.id=?').bind(id).first(),
+    c.env.DB.prepare('SELECT d.*, h.name as hospital_name, h.region as hospital_region, h.address as hospital_address FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id WHERE d.id=?').bind(id).first(),
     c.env.DB.prepare('SELECT * FROM doctor_papers WHERE doctor_id=? ORDER BY year DESC, id DESC').bind(id).all(),
     c.env.DB.prepare(`SELECT m.*, h.name as hospital_name FROM meetings m 
       LEFT JOIN hospitals h ON m.hospital_id=h.id 

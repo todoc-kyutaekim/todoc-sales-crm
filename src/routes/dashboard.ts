@@ -88,7 +88,7 @@ dashboard.get('/', async (c) => {
     `).all(),
     // Long-inactive hospitals (last meeting > 30 days ago or never)
     c.env.DB.prepare(`
-      SELECT h.id, h.name, h.region, h.grade, h.status, h.pipeline_stage,
+      SELECT h.id, h.name, h.region, h.status, h.pipeline_stage,
         MAX(m.meeting_date) as last_meeting_date,
         CAST(julianday('now','+9 hours') - julianday(MAX(m.meeting_date)) AS INTEGER) as days_since
       FROM hospitals h
@@ -100,7 +100,7 @@ dashboard.get('/', async (c) => {
     `).all(),
     // Recently added hospitals (last 14 days)
     c.env.DB.prepare(`
-      SELECT id, name, region, grade, status, type, created_at
+      SELECT id, name, region, status, type, created_at
       FROM hospitals
       WHERE created_at >= date('now', '+9 hours', '-14 days')
       ORDER BY created_at DESC LIMIT 5
@@ -623,8 +623,8 @@ dashboard.get('/report', async (c) => {
         WHERE m.meeting_date >= ? AND m.meeting_date <= ? AND m.doctor_id IS NOT NULL
     )`).bind(from, to, from, to).first<any>().catch(() => ({ c: 0 })),
     c.env.DB.prepare('SELECT meeting_type, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_type ORDER BY c DESC').bind(from, to).all(),
-    // 활동 상위 기관 — 마지막 미팅일/등급/단계 포함
-    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.grade, h.pipeline_stage,
+    // 활동 상위 기관 — 마지막 미팅일/단계 포함
+    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.pipeline_stage,
       COUNT(m.id) as c, MAX(m.meeting_date) as last_date
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
       WHERE m.meeting_date >= ? AND m.meeting_date <= ?
@@ -647,7 +647,7 @@ dashboard.get('/report', async (c) => {
     c.env.DB.prepare('SELECT meeting_date as d, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date ORDER BY meeting_date ASC').bind(from, to).all(),
     // 기간 내 모든 미팅 상세 — 핵심: '어떤 곳과 무슨 미팅을 했는가'
     c.env.DB.prepare(`SELECT m.id, m.meeting_date, m.meeting_type, m.purpose, m.content as summary, m.next_action, m.next_meeting_date,
-      m.hospital_id, h.name as hospital_name, h.region, h.grade, h.pipeline_stage,
+      m.hospital_id, h.name as hospital_name, h.region, h.pipeline_stage,
       d.name as doctor_name, d.position as doctor_position
       FROM meetings m
       LEFT JOIN hospitals h ON m.hospital_id = h.id
@@ -656,7 +656,7 @@ dashboard.get('/report', async (c) => {
       ORDER BY m.meeting_date DESC, m.id DESC LIMIT 100`).bind(from, to).all(),
     // 한동안 미팅하지 못한 활성 기관 (소홀해진 거래처) — pipeline_stage가 active_customer/contract/proposal/demo/meeting인 곳 중 30일 이상 미접촉
     // NULLS FIRST 대신 CASE 표현식으로 NULL이 먼저 오도록 정렬 (D1 SQLite 호환)
-    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.grade, h.pipeline_stage,
+    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.pipeline_stage,
       (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) as last_date
       FROM hospitals h
       WHERE h.status = 'active'

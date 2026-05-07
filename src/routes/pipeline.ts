@@ -19,7 +19,7 @@ pipeline.get('/', async (c) => {
     proposal: '제안/협의', contract: '계약', active_customer: '활성 거래처'
   }
   const r = await c.env.DB.prepare(`
-    SELECT h.id, h.name, h.region, h.grade, h.status, h.pipeline_stage,
+    SELECT h.id, h.name, h.region, h.status, h.pipeline_stage,
       COUNT(DISTINCT m.id) as meeting_count,
       MAX(m.meeting_date) as last_meeting
     FROM hospitals h
@@ -339,7 +339,7 @@ pipeline.get('/check-duplicate', async (c) => {
   
   // Simple fuzzy: search for names containing the input, or input containing the name
   const r = await c.env.DB.prepare(
-    `SELECT id, name, region, type, grade FROM hospitals 
+    `SELECT id, name, region, type FROM hospitals 
      WHERE name LIKE ? OR ? LIKE '%' || name || '%'
      ORDER BY name LIMIT 10`
   ).bind(`%${name}%`, name).all()

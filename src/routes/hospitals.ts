@@ -32,11 +32,12 @@ hospitals.get('/:id', async (c) => {
 hospitals.post('/', async (c) => {
   const b = await c.req.json()
   if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
+  // grade 컬럼은 DB 호환성을 위해 기본값 'A'로 자동 채움 (UI에서는 더 이상 표시/입력하지 않음)
   const r = await c.env.DB.prepare(
     'INSERT INTO hospitals (name,region,address,phone,grade,notes,status,type,priority,todoc_contact,patient_count,hearing_aid_sales,ci_referrals,pipeline_stage,audiology_room,mapping_room) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).bind(
     b.name.trim(), b.region || '', b.address || '', b.phone || '',
-    b.grade || 'A',
+    'A',
     b.notes || '', b.status || 'active',
     b.type || 'hospital',
     b.priority || '3', b.todoc_contact || '', 
@@ -52,9 +53,9 @@ hospitals.put('/:id', async (c) => {
   const b = await c.req.json(); const id = c.req.param('id')
   if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
 
-  // Preserve existing grade column for backward compatibility (no longer surfaced in UI)
+  // grade 컬럼 보존 (UI에서 제거되었지만 DB 스키마와 과거 데이터 호환성 유지)
   const prev = await c.env.DB.prepare('SELECT grade FROM hospitals WHERE id=?').bind(id).first() as any
-  const keepGrade = b.grade || prev?.grade || 'A'
+  const keepGrade = prev?.grade || 'A'
 
   await c.env.DB.prepare(
     'UPDATE hospitals SET name=?,region=?,address=?,phone=?,grade=?,notes=?,status=?,type=?,priority=?,todoc_contact=?,patient_count=?,hearing_aid_sales=?,ci_referrals=?,pipeline_stage=?,audiology_room=?,mapping_room=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'
@@ -75,19 +76,12 @@ hospitals.put('/:id', async (c) => {
 
 // ===== Hospital Score History =====
 // GET /api/hospitals/:id/score-history?months=12
-// Returns time-series of grade changes, monthly meeting counts, and pipeline transitions
+// Returns time-series of monthly meeting counts and pipeline transitions
 hospitals.get('/:id/score-history', async (c) => {
   const id = c.req.param('id')
   const months = Number(c.req.query('months') || '12')
 
-  const [grades, pipes, monthlyMeets, hospital] = await Promise.all([
-    c.env.DB.prepare(`
-      SELECT from_grade, to_grade, changed_at, u.name as changed_by_name
-      FROM hospital_grade_history hgh
-      LEFT JOIN users u ON u.id = hgh.changed_by
-      WHERE hgh.hospital_id = ?
-      ORDER BY hgh.changed_at ASC
-    `).bind(id).all(),
+  const [pipes, monthlyMeets, hospital] = await Promise.all([
     c.env.DB.prepare(`
       SELECT from_stage, to_stage, changed_at, u.name as changed_by_name
       FROM pipeline_transitions pt
@@ -103,14 +97,12 @@ hospitals.get('/:id/score-history', async (c) => {
       WHERE hospital_id = ? AND meeting_date >= date('now','+9 hours','-${months} months')
       GROUP BY month ORDER BY month ASC
     `).bind(id).all(),
-    c.env.DB.prepare('SELECT id, name, grade, pipeline_stage FROM hospitals WHERE id=?').bind(id).first(),
+    c.env.DB.prepare('SELECT id, name, pipeline_stage FROM hospitals WHERE id=?').bind(id).first(),
   ])
 
-  // Compute score time series:
-  // grade weight: S=5, A=4, B=3, C=2, D=1
+  // Compute score time series (등급 제거 후):
   // pipeline weight: contact=1, meeting=2, demo=3, proposal=4, contract=5, active_customer=6
-  // monthly score = grade_weight * 10 + pipeline_weight * 5 + monthly_meeting_count * 2 + result_count * 3
-  const gradeW: any = { S: 5, A: 4, B: 3, C: 2, D: 1 }
+  // monthly score = pipeline_weight * 10 + monthly_meeting_count * 3 + result_count * 5
   const pipeW: any = { contact: 1, meeting: 2, demo: 3, proposal: 4, contract: 5, active_customer: 6 }
 
   // Build month buckets for the requested window
@@ -122,31 +114,23 @@ hospitals.get('/:id/score-history', async (c) => {
     buckets.push({ month, label: month })
   }
 
-  // For each bucket, find grade and pipeline_stage in effect at end-of-month
+  // For each bucket, find pipeline_stage in effect at end-of-month
   const meetMap: any = {}
   for (const m of monthlyMeets.results as any[]) meetMap[m.month] = m
 
   const series = buckets.map(b => {
     const eom = b.month + '-31T23:59:59'
-    let curGrade = (hospital as any)?.grade || 'A'
     let curPipe = (hospital as any)?.pipeline_stage || 'contact'
-    // Find latest grade as of eom
-    for (const g of grades.results as any[]) {
-      if (g.changed_at <= eom) curGrade = g.to_grade
-      else break
-    }
     for (const p of pipes.results as any[]) {
       if (p.changed_at <= eom) curPipe = p.to_stage
       else break
     }
     const meets = meetMap[b.month] || { count: 0, visit_count: 0, result_count: 0 }
-    const score = (gradeW[curGrade] || 0) * 10
-      + (pipeW[curPipe] || 0) * 5
-      + (meets.count || 0) * 2
-      + (meets.result_count || 0) * 3
+    const score = (pipeW[curPipe] || 0) * 10
+      + (meets.count || 0) * 3
+      + (meets.result_count || 0) * 5
     return {
       month: b.month,
-      grade: curGrade,
       pipeline_stage: curPipe,
       meeting_count: meets.count || 0,
       visit_count: meets.visit_count || 0,
@@ -159,7 +143,6 @@ hospitals.get('/:id/score-history', async (c) => {
     hospital,
     months,
     series,
-    grade_changes: grades.results,
     pipeline_changes: pipes.results,
   }})
 })

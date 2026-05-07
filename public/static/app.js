@@ -1489,7 +1489,6 @@ function renderReportBody(d) {
         '<div class="flex-1 min-w-0">' +
           '<div class="flex items-center gap-1.5 flex-wrap">' +
             '<span class="text-[12px] font-semibold text-slate-700 truncate hover:text-brand-500">' + (h.name || '-') + '</span>' +
-            (h.grade ? '<span class="grade-' + h.grade + ' text-[9px] px-1 py-0.5 rounded font-bold">' + h.grade + '</span>' : '') +
             '<span class="text-[9px] px-1.5 py-0.5 rounded font-medium" style="background:' + stageBg + '15;color:' + stageBg + '">' + stageLbl + '</span>' +
           '</div>' +
           '<div class="text-[10px] text-slate-400 mt-0.5"><i class="fas fa-map-marker-alt mr-0.5"></i>' + (h.region || '-') + ' · 마지막 ' + (h.last_date ? h.last_date.slice(5) : '-') + '</div>' +
@@ -2456,7 +2455,6 @@ async function loadHospScore(hospitalId, months) {
     var labels = d.series.map(function(s) { return fmtMonthLabel(s.month); });
     var scores = d.series.map(function(s) { return s.score; });
     var meets = d.series.map(function(s) { return s.meeting_count; });
-    var grades = d.series.map(function(s) { return s.grade; });
     var pipes = d.series.map(function(s) { return s.pipeline_stage; });
 
     Chart.defaults.font.family = 'Pretendard,sans-serif';
@@ -2660,7 +2658,7 @@ function renderMeetingsTab(h, meets) {
 }
 
 // ===== Hospital Integrated Timeline Tab =====
-window._hospTlFilter = window._hospTlFilter || 'all'; // all|meeting|grade|pipeline|doctor_activity|hospital_activity|comment
+window._hospTlFilter = window._hospTlFilter || 'all'; // all|meeting|pipeline|doctor_activity|hospital_activity|comment
 function setHospTlFilter(f) {
   window._hospTlFilter = f;
   var hid = window._hospDetail && window._hospDetail.h && window._hospDetail.h.id;
@@ -6926,7 +6924,6 @@ function schTimeSlotHeader(time, label, icon, color, bgClass, dayName) {
 
 function schTimeCard(s, list) {
   var isSelected = _scheduleSelected.has(s.hospital_id);
-  var gradeColors = { S: '#7c3aed', A: '#2563eb', B: '#059669', C: '#f59e0b', D: '#94a3b8' };
   var stageLabels = { contact: '컨택', meeting: '미팅', demo: '데모', proposal: '제안', contract: '계약', active_customer: '기존고객' };
   var stageColors = { contact: '#94a3b8', meeting: '#2563eb', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#ef4444', active_customer: '#059669' };
   var idx = list.indexOf(s);

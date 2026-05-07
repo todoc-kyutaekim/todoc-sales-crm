@@ -250,10 +250,6 @@ textarea.input { resize: vertical; min-height: 72px }
   padding: 2px 8px; border-radius: 5px;
   font-size: 10px; font-weight: 700; letter-spacing: .02em;
 }
-.grade-S { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #92400e; box-shadow: inset 0 -1px 0 rgba(146,64,14,.08) }
-.grade-A { background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%); color: #1e40af }
-.grade-B { background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%); color: #065f46 }
-.grade-C { background: var(--gray-100); color: var(--gray-500) }
 .inf-high { background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%); color: #b91c1c; padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 700 }
 .inf-medium { background: linear-gradient(135deg, #fef9c3 0%, #fef08a 100%); color: #854d0e; padding: 2px 7px; border-radius: 5px; font-size: 10px; font-weight: 600 }
 .inf-low { color: var(--gray-400); font-size: 10px }
@@ -934,10 +930,6 @@ html[data-theme="dark"] .mt-phone { background: rgba(16,185,129,.18); color: #6e
 html[data-theme="dark"] .mt-conference { background: rgba(139,92,246,.18); color: #c4b5fd }
 html[data-theme="dark"] .mt-email { background: rgba(245,158,11,.18); color: #fcd34d }
 html[data-theme="dark"] .mt-online { background: rgba(99,102,241,.18); color: #a5b4fc }
-html[data-theme="dark"] .grade-S { background: rgba(245,158,11,.16); color: #fcd34d }
-html[data-theme="dark"] .grade-A { background: rgba(59,130,246,.18); color: #93c5fd }
-html[data-theme="dark"] .grade-B { background: rgba(16,185,129,.18); color: #6ee7b7 }
-html[data-theme="dark"] .grade-C { background: var(--gray-100); color: var(--gray-500) }
 html[data-theme="dark"] .inf-high { background: rgba(239,68,68,.18); color: #fca5a5 }
 html[data-theme="dark"] .inf-medium { background: rgba(234,179,8,.18); color: #fde047 }
 html[data-theme="dark"] .al-create { background: rgba(16,185,129,.16); color: #6ee7b7 }
@@ -1252,12 +1244,8 @@ html[data-theme="dark"] :focus-visible {
   box-shadow: 0 0 0 4px rgba(96,165,250,.25) !important;
 }
 
-/* Color-blind friendly: ensure status/grade chips show non-color cues (icon already used in markup);
+/* Color-blind friendly: ensure status chips show non-color cues (icon already used in markup);
    add subtle pattern/border so red-green distinction is not color-only */
-.grade-S { border: 1px solid rgba(245,158,11,.45); }
-.grade-A { border: 1px solid rgba(59,130,246,.45); }
-.grade-B { border: 1px solid rgba(16,185,129,.45); }
-.grade-C { border: 1px dashed rgba(100,116,139,.5); }
 .inf-high { border: 1px solid rgba(239,68,68,.55); }
 .inf-medium { border: 1px solid rgba(234,179,8,.55); }
 .al-create { border-left: 3px solid #10b981; padding-left: 6px; }
