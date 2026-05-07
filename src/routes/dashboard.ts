@@ -655,6 +655,7 @@ dashboard.get('/report', async (c) => {
       WHERE m.meeting_date >= ? AND m.meeting_date <= ?
       ORDER BY m.meeting_date DESC, m.id DESC LIMIT 100`).bind(from, to).all(),
     // 한동안 미팅하지 못한 활성 기관 (소홀해진 거래처) — pipeline_stage가 active_customer/contract/proposal/demo/meeting인 곳 중 30일 이상 미접촉
+    // NULLS FIRST 대신 CASE 표현식으로 NULL이 먼저 오도록 정렬 (D1 SQLite 호환)
     c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.grade, h.pipeline_stage,
       (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) as last_date
       FROM hospitals h
@@ -664,7 +665,9 @@ dashboard.get('/report', async (c) => {
           (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) IS NULL
           OR (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) < date('now',${KST},'-30 days')
         )
-      ORDER BY last_date ASC NULLS FIRST LIMIT 15`).all().catch(() => ({ results: [] })),
+      ORDER BY CASE WHEN (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) IS NULL THEN 0 ELSE 1 END,
+               (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) ASC
+      LIMIT 15`).all().catch(() => ({ results: [] })),
     // 지역별 미팅 분포
     c.env.DB.prepare(`SELECT COALESCE(h.region,'기타') as region, COUNT(m.id) as c, COUNT(DISTINCT m.hospital_id) as hosp_count
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
