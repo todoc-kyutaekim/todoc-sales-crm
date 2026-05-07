@@ -355,6 +355,11 @@ function toggleSidebar() {
 // ===== Nav =====
 function nav(p) {
   curPage = p;
+  // 일정 페이지를 떠날 때 sticky bottom action bar 제거
+  if (p !== 'schedule') {
+    var sb = document.getElementById('sch-sticky-bar');
+    if (sb) sb.remove();
+  }
   document.querySelectorAll('.nav-item').forEach(e => e.classList.remove('active'));
   document.getElementById('n-' + p)?.classList.add('active');
   // Update bottom nav (also handle aliases: doctors -> stays unmapped now, cistats/activity -> none)
@@ -440,6 +445,10 @@ function openModal(t, h, wide) {
   mdl.classList.remove('hidden');
   mdl.style.display = 'flex';
   mdl.setAttribute('aria-hidden', 'false');
+  // Lock body scroll on mobile when modal opens
+  if (window.innerWidth < 1024) document.body.style.overflow = 'hidden';
+  // Setup swipe-to-close on mobile
+  setupModalSwipeClose(mc);
   // Save current focus for restoration
   window._modalLastFocus = document.activeElement;
   // Move focus into the modal (first focusable element, or content)
@@ -449,11 +458,57 @@ function openModal(t, h, wide) {
     else mc.focus();
   }, 30);
 }
+
+// Swipe down to close modal on mobile (only when scrolled to top)
+function setupModalSwipeClose(mc) {
+  if (!mc || window.innerWidth >= 1024) return;
+  if (mc._swipeBound) return;
+  mc._swipeBound = true;
+  var startY = 0, currentY = 0, dragging = false;
+  mc.addEventListener('touchstart', function(e) {
+    if (mc.scrollTop > 0) { dragging = false; return; }
+    startY = e.touches[0].clientY;
+    currentY = startY;
+    dragging = true;
+    mc.style.transition = '';
+  }, { passive: true });
+  mc.addEventListener('touchmove', function(e) {
+    if (!dragging) return;
+    currentY = e.touches[0].clientY;
+    var diff = currentY - startY;
+    if (diff > 0) {
+      mc.style.transform = 'translateY(' + diff + 'px)';
+      mc.style.opacity = String(Math.max(0.6, 1 - diff / 600));
+    }
+  }, { passive: true });
+  mc.addEventListener('touchend', function() {
+    if (!dragging) return;
+    dragging = false;
+    var diff = currentY - startY;
+    mc.style.transition = 'transform .25s var(--ease-smooth), opacity .25s';
+    if (diff > 120) {
+      // Close
+      mc.style.transform = 'translateY(100%)';
+      mc.style.opacity = '0';
+      setTimeout(function() {
+        mc.style.transform = ''; mc.style.opacity = '';
+        if (typeof tryCloseModal === 'function') tryCloseModal();
+      }, 240);
+    } else {
+      mc.style.transform = ''; mc.style.opacity = '';
+    }
+  });
+}
 function closeModal() {
   var mdl = document.getElementById('modal');
   mdl.classList.add('hidden');
   mdl.style.display = '';
   mdl.setAttribute('aria-hidden', 'true');
+  // Unlock body scroll
+  document.body.style.overflow = '';
+  // Reset modal-content transform/opacity in case swipe was in progress
+  var mc = document.getElementById('modal-content');
+  if (mc) { mc.style.transform = ''; mc.style.opacity = ''; mc.style.transition = ''; }
   // Restore previous focus
   try { if (window._modalLastFocus && window._modalLastFocus.focus) window._modalLastFocus.focus(); } catch(e) {}
   window._modalLastFocus = null;
@@ -6573,23 +6628,25 @@ function renderScheduleResults(region, date, stats) {
   
   var html = '';
   
-  // 헤더
-  html += '<div class="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-4 gap-3">' +
-    '<div>' +
-      '<h3 class="font-bold text-slate-800 text-[15px]"><i class="fas fa-map-pin text-blue-500 mr-1.5"></i>' + region.split(', ').map(function(r) { return '<span class="inline-flex items-center mr-1">' + r + '</span>'; }).join('<i class="fas fa-arrow-right text-[10px] text-slate-300 mx-1"></i>') + ' 방문 추천</h3>' +
+  // 헤더 (모바일 최적화: 정보 영역과 액션 영역을 분리)
+  html += '<div class="mb-4">' +
+    // 제목 + 메타 정보
+    '<div class="min-w-0 mb-3">' +
+      '<h3 class="font-bold text-slate-800 text-[15px] flex items-center flex-wrap gap-1"><i class="fas fa-map-pin text-blue-500 mr-1"></i>' + region.split(', ').map(function(r) { return '<span class="inline-flex items-center">' + r + '</span>'; }).join('<i class="fas fa-arrow-right text-[10px] text-slate-300 mx-1"></i>') + '<span class="ml-1">방문 추천</span></h3>' +
       '<p class="text-xs text-slate-400 mt-0.5">' + dateStr + ' · 추천 ' + list.length + '곳' +
         (stats.clinic_today_count > 0 ? ' · <span class="text-cyan-600 font-medium">' + dayNames[dateObj.getDay()] + '요일 외래 ' + stats.clinic_today_count + '곳</span>' : '') +
         (stats.excluded_off_hospitals > 0 ? ' · <span class="text-gray-400">휴진 제외 ' + stats.excluded_off_hospitals + '곳</span>' : '') +
       '</p>' +
     '</div>' +
-    '<div class="flex gap-2 flex-wrap">' +
-      '<div class="flex rounded-lg overflow-hidden border border-gray-200">' +
-        '<button onclick="setSchView(\'time\')" class="text-[11px] px-3 py-1.5 font-medium transition ' + (_schViewMode === 'time' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50') + '"><i class="fas fa-clock mr-1"></i>시간순</button>' +
-        '<button onclick="setSchView(\'score\')" class="text-[11px] px-3 py-1.5 font-medium transition ' + (_schViewMode === 'score' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50') + '"><i class="fas fa-ranking-star mr-1"></i>추천순</button>' +
+    // 액션 영역: 모바일에서는 가로 스크롤, 데스크탑에서는 wrap
+    '<div class="flex gap-2 items-center overflow-x-auto sch-actions-bar pb-1 sm:flex-wrap sm:overflow-visible">' +
+      '<div class="flex rounded-lg overflow-hidden border border-gray-200 flex-shrink-0">' +
+        '<button onclick="setSchView(\'time\')" class="text-[12px] sm:text-[11px] px-3 py-2 sm:py-1.5 font-medium transition min-h-[40px] sm:min-h-[36px] ' + (_schViewMode === 'time' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50') + '"><i class="fas fa-clock mr-1"></i>시간순</button>' +
+        '<button onclick="setSchView(\'score\')" class="text-[12px] sm:text-[11px] px-3 py-2 sm:py-1.5 font-medium transition min-h-[40px] sm:min-h-[36px] ' + (_schViewMode === 'score' ? 'bg-blue-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50') + '"><i class="fas fa-ranking-star mr-1"></i>추천순</button>' +
       '</div>' +
-      '<button onclick="selectAllSchedule()" class="btn btn-outline btn-sm text-xs"><i class="fas fa-check-double mr-1"></i>전체 선택</button>' +
-      '<button onclick="optimizeScheduleRoute()" id="sch-route-btn" class="btn btn-outline btn-sm text-xs hidden" title="선택한 기관들의 최적 동선을 계산합니다"><i class="fas fa-route mr-1"></i>동선 최적화</button>' +
-      '<button onclick="createSchedulePlan()" id="sch-create-btn" class="btn btn-primary btn-sm text-xs hidden"><i class="fas fa-calendar-plus mr-1"></i>미팅 생성 (<span id="sch-sel-count">0</span>건)</button>' +
+      '<button onclick="selectAllSchedule()" class="btn btn-outline btn-sm text-xs flex-shrink-0 min-h-[40px] sm:min-h-[36px]"><i class="fas fa-check-double mr-1"></i>전체</button>' +
+      '<button onclick="optimizeScheduleRoute()" id="sch-route-btn" class="btn btn-outline btn-sm text-xs hidden flex-shrink-0 min-h-[40px] sm:min-h-[36px]" title="선택한 기관들의 최적 동선을 계산합니다"><i class="fas fa-route mr-1"></i>동선</button>' +
+      '<button onclick="createSchedulePlan()" id="sch-create-btn" class="btn btn-primary btn-sm text-xs hidden flex-shrink-0 min-h-[40px] sm:min-h-[36px]"><i class="fas fa-calendar-plus mr-1"></i>생성 <span id="sch-sel-count">0</span></button>' +
     '</div>' +
   '</div>';
   
@@ -6705,18 +6762,18 @@ function schTimeCard(s, list) {
   var stageColors = { contact: '#94a3b8', meeting: '#2563eb', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#ef4444', active_customer: '#059669' };
   var idx = list.indexOf(s);
   
-  var html = '<div id="sch-card-' + s.hospital_id + '" class="card mb-3 sm:ml-[48px] transition-all duration-200 cursor-pointer hover:shadow-md ' + (isSelected ? 'ring-2 ring-blue-500' : '') + '" onclick="toggleScheduleSelect(' + s.hospital_id + ')" style="' + (isSelected ? 'border-color:#2563eb40;background:linear-gradient(135deg,#eff6ff,#f8fafc)' : '') + '">' +
-    '<div class="p-4">' +
-      '<div class="flex items-start gap-3">' +
+  var html = '<div id="sch-card-' + s.hospital_id + '" class="card list-card mb-3 sm:ml-[48px] transition-all duration-200 cursor-pointer hover:shadow-md ' + (isSelected ? 'ring-2 ring-blue-500' : '') + '" onclick="toggleScheduleSelect(' + s.hospital_id + ')" style="' + (isSelected ? 'border-color:#2563eb40;background:linear-gradient(135deg,#eff6ff,#f8fafc)' : '') + '">' +
+    '<div class="p-4 sm:p-4">' +
+      '<div class="flex items-start gap-2.5 sm:gap-3">' +
         '<div class="flex flex-col items-center gap-1 flex-shrink-0">' +
-          '<div class="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold ' + (isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400') + '" id="sch-rank-' + s.hospital_id + '">' +
+          '<div class="w-9 h-9 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-sm sm:text-xs font-bold ' + (isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400') + '" id="sch-rank-' + s.hospital_id + '">' +
             (isSelected ? '<i class="fas fa-check"></i>' : (idx + 1)) +
           '</div>' +
           '<div class="text-[10px] font-bold text-slate-400">' + s.score + '점</div>' +
         '</div>' +
         '<div class="flex-1 min-w-0">' +
-          '<div class="flex items-center gap-2 flex-wrap">' +
-            '<h4 class="font-bold text-slate-800 text-sm">' + s.name + '</h4>' +
+          '<div class="flex items-center gap-1.5 flex-wrap">' +
+            '<h4 class="font-bold text-slate-800 text-[14px] sm:text-sm break-keep">' + s.name + '</h4>' +
             '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500"><i class="fas fa-map-marker-alt text-[8px] mr-0.5"></i>' + s.region + '</span>' +
             '<span class="text-[10px] font-medium px-1.5 py-0.5 rounded-md" style="background:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '12;color:' + (stageColors[s.pipeline_stage] || '#94a3b8') + '">' + (stageLabels[s.pipeline_stage] || s.pipeline_stage) + '</span>' +
             (s.visit_time ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-50 text-cyan-700 border border-cyan-100"><i class="fas fa-clock mr-0.5"></i>' + s.visit_label + '</span>' : '') +
@@ -6938,6 +6995,9 @@ function updateScheduleSelection() {
     btn.classList.add('hidden');
     if (routeBtn) routeBtn.classList.add('hidden');
   }
+
+  // 모바일 sticky bottom action bar 업데이트
+  updateSchStickyBar();
   
   var list = _schViewMode === 'time' ? _scheduleTimeOrdered : _scheduleSuggestions;
   list.forEach(function(s, idx) {
@@ -6958,6 +7018,55 @@ function updateScheduleSelection() {
     }
   });
 }
+
+// 모바일 sticky bottom action bar (선택된 기관이 있을 때만 표시)
+function updateSchStickyBar() {
+  var existing = document.getElementById('sch-sticky-bar');
+  var isMobile = window.matchMedia('(max-width: 1023px)').matches;
+  var count = _scheduleSelected.size;
+
+  // 일정 페이지가 아니거나, 모바일이 아니거나, 선택이 없으면 제거
+  var resultsDiv = document.getElementById('sch-results');
+  if (!resultsDiv || !isMobile || count === 0) {
+    if (existing) existing.remove();
+    return;
+  }
+
+  // 선택된 기관 정보 요약
+  var selList = (_schViewMode === 'time' ? _scheduleTimeOrdered : _scheduleSuggestions)
+    .filter(function(s) { return _scheduleSelected.has(s.hospital_id); });
+  var regionSet = {};
+  selList.forEach(function(s) { regionSet[s.region] = true; });
+  var regions = Object.keys(regionSet);
+  var regionLabel = regions.length === 1 ? regions[0]
+    : (regions.length > 1 ? regions[0] + ' 외 ' + (regions.length - 1) + '개 지역' : '');
+
+  var canRoute = count >= 2;
+  var html =
+    '<div class="sch-sticky-info">' +
+      '<b><i class="fas fa-check-circle text-blue-500 mr-1"></i>' + count + '곳 선택</b>' +
+      (regionLabel ? '<span><i class="fas fa-location-dot mr-0.5"></i>' + regionLabel + '</span>' : '') +
+    '</div>' +
+    (canRoute
+      ? '<button onclick="optimizeScheduleRoute()" class="btn btn-outline" title="최적 동선 계산"><i class="fas fa-route"></i></button>'
+      : '') +
+    '<button onclick="createSchedulePlan()" class="btn btn-primary"><i class="fas fa-calendar-plus mr-1"></i>일정 생성</button>';
+
+  if (existing) {
+    existing.innerHTML = html;
+  } else {
+    var bar = document.createElement('div');
+    bar.id = 'sch-sticky-bar';
+    bar.className = 'sch-sticky-bar';
+    bar.innerHTML = html;
+    document.body.appendChild(bar);
+  }
+}
+
+// 화면 전환/리사이즈 시 sticky bar 정리
+window.addEventListener('resize', function() {
+  if (typeof updateSchStickyBar === 'function') updateSchStickyBar();
+});
 
 // ===== 동선 최적화 (이동 경로 최적화) =====
 async function optimizeScheduleRoute() {
