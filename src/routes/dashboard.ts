@@ -646,7 +646,7 @@ dashboard.get('/report', async (c) => {
       ORDER BY m.next_meeting_date ASC LIMIT 30`).all(),
     c.env.DB.prepare('SELECT meeting_date as d, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date ORDER BY meeting_date ASC').bind(from, to).all(),
     // 기간 내 모든 미팅 상세 — 핵심: '어떤 곳과 무슨 미팅을 했는가'
-    c.env.DB.prepare(`SELECT m.id, m.meeting_date, m.meeting_type, m.purpose, m.summary, m.next_action, m.next_meeting_date,
+    c.env.DB.prepare(`SELECT m.id, m.meeting_date, m.meeting_type, m.purpose, m.content as summary, m.next_action, m.next_meeting_date,
       m.hospital_id, h.name as hospital_name, h.region, h.grade, h.pipeline_stage,
       d.name as doctor_name, d.position as doctor_position
       FROM meetings m
@@ -676,7 +676,7 @@ dashboard.get('/report', async (c) => {
     // 핵심 성과: 본 기간에 next_action이 명시된 (=후속 액션을 만들어낸) 미팅의 비율
     c.env.DB.prepare(`SELECT
       SUM(CASE WHEN next_action IS NOT NULL AND TRIM(next_action) != '' THEN 1 ELSE 0 END) as with_followup,
-      SUM(CASE WHEN summary IS NOT NULL AND TRIM(summary) != '' THEN 1 ELSE 0 END) as with_summary,
+      SUM(CASE WHEN content IS NOT NULL AND TRIM(content) != '' THEN 1 ELSE 0 END) as with_summary,
       COUNT(*) as total
       FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?`).bind(from, to).first<any>()
   ])
