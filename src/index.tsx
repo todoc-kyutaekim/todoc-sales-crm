@@ -210,18 +210,16 @@ const HTML = `<!DOCTYPE html>
 </aside>
 
 <!-- Main -->
-<main class="flex-1 flex flex-col overflow-hidden min-w-0" style="background:#f8f9fc">
+<main id="app-main-content" class="flex-1 flex flex-col overflow-hidden min-w-0">
   <a href="#content" class="skip-link">본문으로 건너뛰기</a>
-  <header id="app-header" role="banner" class="h-[48px] lg:h-[60px] bg-white/90 flex items-center px-3 lg:px-7 flex-shrink-0 gap-1.5 lg:gap-3 safe-top" style="min-height:48px;border-bottom:1px solid #eef0f5;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
+  <header id="app-header" role="banner" class="h-[48px] lg:h-[60px] flex items-center px-3 lg:px-7 flex-shrink-0 gap-1.5 lg:gap-3 safe-top" style="min-height:48px;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)">
     <div class="flex items-center gap-1.5 lg:gap-3 min-w-0 flex-1 overflow-hidden">
       <button class="lg:hidden text-slate-400 hover:text-slate-600 p-1 hidden" aria-label="사이드바 토글" onclick="toggleSidebar()"><i class="fas fa-bars text-lg" aria-hidden="true"></i></button>
       <h2 id="page-title" class="text-[14px] lg:text-[16px] font-bold text-slate-800 tracking-tight truncate leading-none"></h2>
       <span id="page-subtitle" class="text-xs text-slate-400 font-medium hidden sm:inline"></span>
     </div>
-    <!-- Mobile Search Button -->
-    <button id="mobile-search-btn" class="mobile-search-btn sm:hidden" aria-label="검색 열기" onclick="toggleMobileSearch()"><i class="fas fa-search" aria-hidden="true"></i></button>
-    <!-- Global Search -->
-    <div id="search-wrap-outer" class="flex-1 max-w-md mx-2 hidden sm:block" role="search">
+    <!-- Global Search (Desktop only) -->
+    <div id="search-wrap-outer" class="flex-1 max-w-md mx-2 hidden lg:block" role="search">
       <div class="relative" id="search-wrap">
         <i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs" aria-hidden="true"></i>
         <label for="global-search" class="sr-only">전역 검색</label>
@@ -229,12 +227,19 @@ const HTML = `<!DOCTYPE html>
         <div id="search-results" role="listbox" aria-label="검색 결과" class="absolute top-full left-0 right-0 mt-1.5 bg-white border border-gray-100 z-50 hidden max-h-[70vh] overflow-y-auto" style="border-radius:14px;box-shadow:0 12px 32px -4px rgba(16,24,40,.12),0 0 0 1px rgba(0,0,0,.03)"></div>
       </div>
     </div>
-    <div id="header-actions" class="flex items-center gap-1 lg:gap-2 flex-shrink-0" role="toolbar" aria-label="페이지 액션"></div>
+    <!-- Page-specific actions (e.g. 보고서/필터 등 — 데스크톱에서만 노출) -->
+    <div id="header-actions" class="hidden lg:flex items-center gap-1 lg:gap-2 flex-shrink-0" role="toolbar" aria-label="페이지 액션"></div>
+    <!-- Mention bell (always shown) -->
     <button id="mention-bell" class="theme-toggle flex-shrink-0 relative" onclick="toggleMentionPanel(event)" aria-label="멘션 알림" title="멘션 알림" aria-haspopup="true" aria-expanded="false"><i class="fas fa-bell" aria-hidden="true"></i><span id="mention-badge" class="absolute -top-1 -right-1 hidden min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-[16px] text-center" aria-live="polite">0</span></button>
-    <div id="mention-panel" class="hidden absolute z-50 bg-white border border-gray-100 rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
-    <button id="theme-toggle" class="theme-toggle flex-shrink-0" onclick="toggleTheme()" aria-label="다크 모드 전환" title="테마 전환"><i class="fas fa-moon" aria-hidden="true"></i></button>
+    <div id="mention-panel" class="hidden absolute z-50 rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
+    <!-- Mobile More Menu (테마/액션/유저 메뉴 통합) -->
+    <button id="header-more-btn" class="theme-toggle flex-shrink-0 lg:hidden" onclick="toggleHeaderMore(event)" aria-label="더보기" title="더보기" aria-haspopup="true" aria-expanded="false"><i class="fas fa-ellipsis-vertical" aria-hidden="true"></i></button>
+    <!-- Theme toggle (Desktop only) -->
+    <button id="theme-toggle" class="theme-toggle flex-shrink-0 hidden lg:inline-flex" onclick="toggleTheme()" aria-label="다크 모드 전환" title="테마 전환"><i class="fas fa-moon" aria-hidden="true"></i></button>
     <div class="h-5 w-px bg-gray-200 mx-1.5 hidden lg:block" aria-hidden="true"></div>
-    <div id="user-menu" class="relative flex-shrink-0"></div>
+    <div id="user-menu" class="relative flex-shrink-0 hidden lg:flex"></div>
+    <!-- Mobile More Menu Sheet -->
+    <div id="header-more-menu" class="hidden fixed z-50 rounded-xl shadow-xl" style="top:52px;right:8px;width:240px;overflow:hidden" role="menu" aria-label="더보기 메뉴"></div>
   </header>
   <div id="content" role="main" tabindex="-1" class="flex-1 overflow-y-auto overflow-x-hidden" style="padding-bottom:calc(64px + env(safe-area-inset-bottom, 0px))"></div>
   <style>@media(min-width:1024px){#content{padding-bottom:0!important}}</style>
@@ -255,8 +260,8 @@ const HTML = `<!DOCTYPE html>
   <div onclick="nav('schedule')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('schedule')}" id="bn-schedule" class="btm-nav-item" role="button" tabindex="0" aria-label="일정 플래너">
     <i class="fas fa-route" aria-hidden="true"></i><span>일정</span>
   </div>
-  <div onclick="openMobileSearchSheet()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openMobileSearchSheet()}" id="bn-search" class="btm-nav-item" role="button" tabindex="0" aria-label="검색">
-    <i class="fas fa-search" aria-hidden="true"></i><span>검색</span>
+  <div onclick="nav('doctors')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('doctors')}" id="bn-doctors" class="btm-nav-item" role="button" tabindex="0" aria-label="의료진">
+    <i class="fas fa-user-doctor" aria-hidden="true"></i><span>의료진</span>
   </div>
 </nav>
 

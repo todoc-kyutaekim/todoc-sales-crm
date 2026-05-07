@@ -595,19 +595,40 @@ dashboard.get('/report', async (c) => {
 
   const [
     totalMeetings, prevTotalMeetings,
+    uniqueHospitalsRaw, prevUniqueHospitalsRaw,
+    uniqueDoctorsRaw,
     typeBreakdownRaw,
     topHospitalsRaw,
     topUsersRaw,
     pipelineMovesRaw,
-    newHospitalsRaw,
-    newDoctorsRaw,
     upcomingNextActionsRaw,
-    dailyTrendRaw
+    dailyTrendRaw,
+    meetingDetailsRaw,
+    notMetHospitalsRaw,
+    regionBreakdownRaw,
+    keyOutcomesRaw
   ] = await Promise.all([
     c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(from, to).first<any>(),
     c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(prevFrom, prevTo).first<any>(),
+    // 미팅한 고유 기관 수
+    c.env.DB.prepare('SELECT COUNT(DISTINCT hospital_id) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(from, to).first<any>(),
+    c.env.DB.prepare('SELECT COUNT(DISTINCT hospital_id) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(prevFrom, prevTo).first<any>(),
+    // 미팅한 고유 의료진 수 (meeting_doctors 우선, 없으면 meetings.doctor_id)
+    c.env.DB.prepare(`SELECT COUNT(DISTINCT doctor_id) as c FROM (
+      SELECT md.doctor_id FROM meeting_doctors md
+        JOIN meetings m ON m.id = md.meeting_id
+        WHERE m.meeting_date >= ? AND m.meeting_date <= ?
+      UNION
+      SELECT m.doctor_id FROM meetings m
+        WHERE m.meeting_date >= ? AND m.meeting_date <= ? AND m.doctor_id IS NOT NULL
+    )`).bind(from, to, from, to).first<any>().catch(() => ({ c: 0 })),
     c.env.DB.prepare('SELECT meeting_type, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_type ORDER BY c DESC').bind(from, to).all(),
-    c.env.DB.prepare('SELECT h.id, h.name, h.region, h.grade, COUNT(m.id) as c FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id WHERE m.meeting_date >= ? AND m.meeting_date <= ? GROUP BY h.id ORDER BY c DESC LIMIT 10').bind(from, to).all(),
+    // 활동 상위 기관 — 마지막 미팅일/등급/단계 포함
+    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.grade, h.pipeline_stage,
+      COUNT(m.id) as c, MAX(m.meeting_date) as last_date
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.meeting_date >= ? AND m.meeting_date <= ?
+      GROUP BY h.id ORDER BY c DESC, last_date DESC LIMIT 12`).bind(from, to).all(),
     c.env.DB.prepare(`SELECT u.id, u.name, COUNT(DISTINCT mu.meeting_id) as c
       FROM meeting_users mu
       LEFT JOIN users u ON mu.user_id=u.id
@@ -618,19 +639,54 @@ dashboard.get('/report', async (c) => {
       FROM pipeline_transitions pt
       WHERE DATE(pt.created_at) >= ? AND DATE(pt.created_at) <= ?
       GROUP BY pt.from_stage, pt.to_stage ORDER BY c DESC`).bind(from, to).all().catch(() => ({ results: [] })),
-    c.env.DB.prepare('SELECT id, name, region, grade, created_at FROM hospitals WHERE DATE(created_at) >= ? AND DATE(created_at) <= ? ORDER BY created_at DESC LIMIT 20').bind(from, to).all(),
-    c.env.DB.prepare('SELECT d.id, d.name, d.position, h.name as hospital_name, d.created_at FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id WHERE DATE(d.created_at) >= ? AND DATE(d.created_at) <= ? ORDER BY d.created_at DESC LIMIT 20').bind(from, to).all(),
-    c.env.DB.prepare(`SELECT m.id, m.next_meeting_date, m.next_action, h.name as hospital_name
+    c.env.DB.prepare(`SELECT m.id, m.next_meeting_date, m.next_action, h.name as hospital_name, h.id as hospital_id
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
       WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
         AND m.next_meeting_date >= date('now',${KST}) AND m.next_meeting_date <= date('now',${KST},'+14 days')
       ORDER BY m.next_meeting_date ASC LIMIT 30`).all(),
-    c.env.DB.prepare('SELECT meeting_date as d, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date ORDER BY meeting_date ASC').bind(from, to).all()
+    c.env.DB.prepare('SELECT meeting_date as d, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date ORDER BY meeting_date ASC').bind(from, to).all(),
+    // 기간 내 모든 미팅 상세 — 핵심: '어떤 곳과 무슨 미팅을 했는가'
+    c.env.DB.prepare(`SELECT m.id, m.meeting_date, m.meeting_type, m.purpose, m.summary, m.next_action, m.next_meeting_date,
+      m.hospital_id, h.name as hospital_name, h.region, h.grade, h.pipeline_stage,
+      d.name as doctor_name, d.position as doctor_position
+      FROM meetings m
+      LEFT JOIN hospitals h ON m.hospital_id = h.id
+      LEFT JOIN doctors d ON m.doctor_id = d.id
+      WHERE m.meeting_date >= ? AND m.meeting_date <= ?
+      ORDER BY m.meeting_date DESC, m.id DESC LIMIT 100`).bind(from, to).all(),
+    // 한동안 미팅하지 못한 활성 기관 (소홀해진 거래처) — pipeline_stage가 active_customer/contract/proposal/demo/meeting인 곳 중 30일 이상 미접촉
+    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.grade, h.pipeline_stage,
+      (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) as last_date
+      FROM hospitals h
+      WHERE h.status = 'active'
+        AND COALESCE(h.pipeline_stage,'contact') IN ('active_customer','contract','proposal','demo','meeting')
+        AND (
+          (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) IS NULL
+          OR (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) < date('now',${KST},'-30 days')
+        )
+      ORDER BY last_date ASC NULLS FIRST LIMIT 15`).all().catch(() => ({ results: [] })),
+    // 지역별 미팅 분포
+    c.env.DB.prepare(`SELECT COALESCE(h.region,'기타') as region, COUNT(m.id) as c, COUNT(DISTINCT m.hospital_id) as hosp_count
+      FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
+      WHERE m.meeting_date >= ? AND m.meeting_date <= ?
+      GROUP BY h.region ORDER BY c DESC`).bind(from, to).all(),
+    // 핵심 성과: 본 기간에 next_action이 명시된 (=후속 액션을 만들어낸) 미팅의 비율
+    c.env.DB.prepare(`SELECT
+      SUM(CASE WHEN next_action IS NOT NULL AND TRIM(next_action) != '' THEN 1 ELSE 0 END) as with_followup,
+      SUM(CASE WHEN summary IS NOT NULL AND TRIM(summary) != '' THEN 1 ELSE 0 END) as with_summary,
+      COUNT(*) as total
+      FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?`).bind(from, to).first<any>()
   ])
 
   const total = Number(totalMeetings?.c || 0)
   const prevTotal = Number(prevTotalMeetings?.c || 0)
   const diffPct = prevTotal > 0 ? Math.round(((total - prevTotal) / prevTotal) * 100) : (total > 0 ? 100 : 0)
+  const uniqueHospitals = Number(uniqueHospitalsRaw?.c || 0)
+  const prevUniqueHospitals = Number(prevUniqueHospitalsRaw?.c || 0)
+  const uniqueDoctors = Number(uniqueDoctorsRaw?.c || 0)
+  const ko = keyOutcomesRaw || { with_followup: 0, with_summary: 0, total: 0 }
+  const followupRate = ko.total > 0 ? Math.round((Number(ko.with_followup) / Number(ko.total)) * 100) : 0
+  const summaryRate = ko.total > 0 ? Math.round((Number(ko.with_summary) / Number(ko.total)) * 100) : 0
 
   return c.json({
     data: {
@@ -641,16 +697,20 @@ dashboard.get('/report', async (c) => {
         totalMeetings: total,
         prevTotalMeetings: prevTotal,
         diffPct,
-        newHospitals: (newHospitalsRaw.results as any[]).length,
-        newDoctors: (newDoctorsRaw.results as any[]).length,
+        uniqueHospitals,
+        prevUniqueHospitals,
+        uniqueDoctors,
+        followupRate,
+        summaryRate,
         upcomingNextActions: (upcomingNextActionsRaw.results as any[]).length
       },
       typeBreakdown: typeBreakdownRaw.results,
       topHospitals: topHospitalsRaw.results,
       topUsers: topUsersRaw.results,
       pipelineMoves: pipelineMovesRaw.results || [],
-      newHospitals: newHospitalsRaw.results,
-      newDoctors: newDoctorsRaw.results,
+      meetingDetails: meetingDetailsRaw.results || [],
+      notMetHospitals: notMetHospitalsRaw.results || [],
+      regionBreakdown: regionBreakdownRaw.results || [],
       upcomingNextActions: upcomingNextActionsRaw.results,
       dailyTrend: dailyTrendRaw.results
     }

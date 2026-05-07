@@ -562,8 +562,10 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// ===== Mobile Search Toggle =====
+// ===== Mobile Search Toggle (모바일에서는 검색 비활성화 — 데스크톱 전용) =====
 function toggleMobileSearch(forceOpen) {
+  // 데스크톱에서만 동작 (모바일에서는 검색 UI 제거됨)
+  if (window.innerWidth < 1024) return;
   const sw = document.getElementById('search-wrap-outer');
   if (!sw) return;
   const isOpen = sw.classList.contains('mobile-search-open');
@@ -580,14 +582,97 @@ function toggleMobileSearch(forceOpen) {
   }
 }
 
-// Mobile bottom-nav search entry: opens the search overlay
+// 모바일 검색 시트 진입점 (현재는 비활성화 — 검색은 데스크톱에서만)
 function openMobileSearchSheet() {
-  // Highlight tab briefly
-  document.querySelectorAll('.btm-nav-item').forEach(e => e.classList.remove('active'));
-  var bn = document.getElementById('bn-search'); if (bn) bn.classList.add('active');
+  if (window.innerWidth < 1024) {
+    if (typeof toast === 'function') toast('검색은 PC에서 이용 가능합니다', 'info');
+    return;
+  }
   toggleMobileSearch(true);
 }
 window.openMobileSearchSheet = openMobileSearchSheet;
+
+// ===== Header More Menu (모바일 전용 더보기) =====
+function toggleHeaderMore(e) {
+  if (e) e.stopPropagation();
+  var menu = document.getElementById('header-more-menu');
+  var btn = document.getElementById('header-more-btn');
+  if (!menu || !btn) return;
+  var isOpen = !menu.classList.contains('hidden');
+  if (isOpen) {
+    menu.classList.add('hidden');
+    btn.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  // 메뉴 콘텐츠 빌드
+  var savedTheme = localStorage.getItem('todoc_theme') || 'auto';
+  var resolved = savedTheme === 'auto'
+    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : savedTheme;
+  var themeIcon = resolved === 'dark' ? 'fa-sun' : 'fa-moon';
+  var themeLabel = savedTheme === 'auto' ? '시스템 설정' : (resolved === 'dark' ? '다크 모드' : '라이트 모드');
+  var headerActions = document.getElementById('header-actions');
+  var pageActionsHtml = '';
+  if (headerActions && headerActions.children.length > 0) {
+    pageActionsHtml = '<div class="hm-section"><div class="hm-label">현재 페이지</div><div id="hm-page-actions" class="hm-page-actions"></div></div>';
+  }
+  menu.innerHTML =
+    pageActionsHtml +
+    '<div class="hm-section">' +
+      '<button class="hm-item" onclick="toggleTheme();toggleHeaderMore()">' +
+        '<i class="fas ' + themeIcon + ' hm-icon"></i>' +
+        '<span class="hm-text"><b>테마</b><span class="hm-sub">' + themeLabel + '</span></span>' +
+      '</button>' +
+    '</div>' +
+    '<div class="hm-section hm-user-section" id="hm-user-section"></div>';
+  menu.classList.remove('hidden');
+  btn.setAttribute('aria-expanded', 'true');
+
+  // 페이지 액션 복제 (헤더 액션 영역의 버튼들을 더보기 메뉴에 표시)
+  if (headerActions && headerActions.children.length > 0) {
+    var hmPageActions = document.getElementById('hm-page-actions');
+    if (hmPageActions) {
+      // 원본을 복제하지 않고 직접 이동했다가 복귀시키는 방식 대신, 단순 클론 + 이벤트 리프트
+      hmPageActions.innerHTML = headerActions.innerHTML;
+      // 클론된 버튼들을 풀-너비/모바일 친화적 스타일로 변환
+      Array.from(hmPageActions.querySelectorAll('button')).forEach(function(b) {
+        b.classList.remove('btn-sm');
+        b.classList.add('hm-action-btn');
+        // 클론에서 onclick 닫기 처리 추가
+        var orig = b.getAttribute('onclick') || '';
+        if (orig && !orig.includes('toggleHeaderMore')) {
+          b.setAttribute('onclick', orig + ';toggleHeaderMore()');
+        }
+      });
+    }
+  }
+
+  // 유저 메뉴 복제
+  var userMenu = document.getElementById('user-menu');
+  var hmUser = document.getElementById('hm-user-section');
+  if (userMenu && hmUser && currentUser) {
+    hmUser.innerHTML =
+      '<div class="hm-label">계정</div>' +
+      '<div class="hm-user-info">' +
+        '<div class="hm-user-name">' + (currentUser.name || '사용자') + '</div>' +
+        '<div class="hm-user-email">' + (currentUser.email || '') + '</div>' +
+      '</div>' +
+      '<button class="hm-item hm-item-danger" onclick="logout();toggleHeaderMore()">' +
+        '<i class="fas fa-right-from-bracket hm-icon"></i>' +
+        '<span class="hm-text"><b>로그아웃</b></span>' +
+      '</button>';
+  }
+}
+window.toggleHeaderMore = toggleHeaderMore;
+// 외부 클릭 시 더보기 메뉴 닫기
+document.addEventListener('click', function(e) {
+  var menu = document.getElementById('header-more-menu');
+  var btn = document.getElementById('header-more-btn');
+  if (!menu || menu.classList.contains('hidden')) return;
+  if (menu.contains(e.target) || (btn && btn.contains(e.target))) return;
+  menu.classList.add('hidden');
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+});
 
 // ===== Global Search =====
 function onGlobalSearch(q) {
@@ -650,6 +735,15 @@ function _parseDateOrDateTime(d) {
   return isNaN(dt3.getTime()) ? null : dt3;
 }
 function fmtDate(d) { var dt = _parseDateOrDateTime(d); if (!dt) return '-'; return dt.toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' }) }
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 function fmtShort(d) {
   var dt = _parseDateOrDateTime(d);
   if (!dt) return '-';
@@ -1327,81 +1421,156 @@ async function showReportPreview() {
 }
 function renderReportBody(d) {
   var typeLabels = { visit:'방문', phone:'전화', conference:'학회', email:'이메일', online:'온라인' };
-  var stageLabels = { contact:'접촉', meeting:'미팅', proposal:'제안', negotiation:'협상', closed_won:'성사', closed_lost:'실패', lost:'이탈', inactive:'휴면' };
+  var typeColors = { visit:'#2563eb', phone:'#10b981', conference:'#8b5cf6', email:'#f59e0b', online:'#6366f1' };
+  var stageLabels = { contact:'접촉', meeting:'미팅', demo:'데모', proposal:'제안', negotiation:'협상', contract:'계약', closed_won:'성사', closed_lost:'실패', lost:'이탈', inactive:'휴면', active_customer:'기존고객' };
+  var stageColors = { contact:'#94a3b8', meeting:'#2563eb', demo:'#8b5cf6', proposal:'#f59e0b', contract:'#ef4444', active_customer:'#059669' };
   var diffSign = d.summary.diffPct > 0 ? '+' : '';
   var diffColor = d.summary.diffPct > 0 ? 'text-emerald-600' : (d.summary.diffPct < 0 ? 'text-red-500' : 'text-slate-400');
   var diffIcon = d.summary.diffPct > 0 ? 'fa-arrow-trend-up' : (d.summary.diffPct < 0 ? 'fa-arrow-trend-down' : 'fa-minus');
+  var hospDiff = (d.summary.uniqueHospitals || 0) - (d.summary.prevUniqueHospitals || 0);
+  var hospDiffSign = hospDiff > 0 ? '+' : '';
+  var hospDiffColor = hospDiff > 0 ? 'text-emerald-600' : (hospDiff < 0 ? 'text-red-500' : 'text-slate-400');
 
   var html = '<div id="report-print-target" class="space-y-4">';
   // Title block
   html += '<div class="card-flat p-4">' +
     '<div class="flex items-center justify-between flex-wrap gap-2">' +
-      '<div><div class="font-extrabold text-slate-800 text-base">TODOC CRM 활동 보고서</div>' +
-        '<div class="text-xs text-slate-500 mt-0.5">' + d.from + ' ~ ' + d.to + ' (이전 기간: ' + (d.prevFrom || '-') + ' ~ ' + (d.prevTo || '-') + ')</div>' +
+      '<div><div class="font-extrabold text-slate-800 text-base">TODOC CRM 영업 활동 보고서</div>' +
+        '<div class="text-xs text-slate-500 mt-0.5">' + d.from + ' ~ ' + d.to + ' (비교: ' + (d.prevFrom || '-') + ' ~ ' + (d.prevTo || '-') + ')</div>' +
       '</div>' +
     '</div></div>';
-  // Summary KPIs
+
+  // ===== 1) 핵심 지표 (미팅 중심) =====
   html += '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3">' +
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">총 미팅</div><div class="text-lg font-extrabold text-slate-800">' + d.summary.totalMeetings + '<span class="text-[10px] text-slate-400 ml-0.5">건</span></div><div class="text-[10px] ' + diffColor + ' mt-0.5"><i class="fas ' + diffIcon + ' mr-0.5"></i>' + diffSign + d.summary.diffPct + '% (이전 ' + d.summary.prevTotalMeetings + '건)</div></div>' +
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">신규 기관</div><div class="text-lg font-extrabold text-blue-600">' + d.summary.newHospitals + '<span class="text-[10px] text-slate-400 ml-0.5">곳</span></div></div>' +
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">신규 의료진</div><div class="text-lg font-extrabold text-purple-600">' + d.summary.newDoctors + '<span class="text-[10px] text-slate-400 ml-0.5">명</span></div></div>' +
-    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5">2주내 후속 액션</div><div class="text-lg font-extrabold text-amber-600">' + d.summary.upcomingNextActions + '<span class="text-[10px] text-slate-400 ml-0.5">건</span></div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-handshake mr-1"></i>총 미팅</div><div class="text-lg font-extrabold text-slate-800">' + d.summary.totalMeetings + '<span class="text-[10px] text-slate-400 ml-0.5">건</span></div><div class="text-[10px] ' + diffColor + ' mt-0.5"><i class="fas ' + diffIcon + ' mr-0.5"></i>' + diffSign + d.summary.diffPct + '% (이전 ' + d.summary.prevTotalMeetings + '건)</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-hospital mr-1"></i>방문 기관 수</div><div class="text-lg font-extrabold text-blue-600">' + (d.summary.uniqueHospitals || 0) + '<span class="text-[10px] text-slate-400 ml-0.5">곳</span></div><div class="text-[10px] ' + hospDiffColor + ' mt-0.5">' + hospDiffSign + hospDiff + ' (이전 ' + (d.summary.prevUniqueHospitals || 0) + '곳)</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-user-doctor mr-1"></i>접촉 의료진</div><div class="text-lg font-extrabold text-purple-600">' + (d.summary.uniqueDoctors || 0) + '<span class="text-[10px] text-slate-400 ml-0.5">명</span></div><div class="text-[10px] text-slate-400 mt-0.5">기간 내 만난 의료진</div></div>' +
+    '<div class="sc !p-3"><div class="text-[10px] text-slate-400 mb-0.5"><i class="fas fa-flag mr-1"></i>후속 액션 생성률</div><div class="text-lg font-extrabold text-amber-600">' + (d.summary.followupRate || 0) + '<span class="text-[10px] text-slate-400 ml-0.5">%</span></div><div class="text-[10px] text-slate-400 mt-0.5">미팅 기록 ' + (d.summary.summaryRate || 0) + '%</div></div>' +
     '</div>';
-  // Two-column body
+
+  // ===== 2) 미팅 유형/지역 분포 + 활동 상위 기관 =====
   html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">';
   // Meeting type breakdown
   html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-chart-pie text-brand-500 mr-1.5"></i>미팅 유형별</div>';
-  if (!d.typeBreakdown.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  if (!d.typeBreakdown || !d.typeBreakdown.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
   else {
     var maxC = Math.max.apply(null, d.typeBreakdown.map(function(t){return t.c}));
     html += '<div class="space-y-1.5">' + d.typeBreakdown.map(function(t){
       var w = Math.round((t.c / maxC) * 100);
-      return '<div class="flex items-center gap-2"><span class="text-[11px] text-slate-600 w-12 flex-shrink-0">' + (typeLabels[t.meeting_type] || t.meeting_type) + '</span><div class="flex-1 bg-slate-100 rounded h-3 relative overflow-hidden"><div class="bg-brand-400 h-full" style="width:' + w + '%"></div></div><span class="text-[11px] font-bold text-slate-700 w-8 text-right">' + t.c + '</span></div>';
+      var col = typeColors[t.meeting_type] || '#94a3b8';
+      var pct = d.summary.totalMeetings > 0 ? Math.round((t.c / d.summary.totalMeetings) * 100) : 0;
+      return '<div class="flex items-center gap-2"><span class="text-[11px] text-slate-600 w-12 flex-shrink-0">' + (typeLabels[t.meeting_type] || t.meeting_type) + '</span><div class="flex-1 bg-slate-100 rounded h-3 relative overflow-hidden"><div class="h-full" style="width:' + w + '%;background:' + col + '"></div></div><span class="text-[11px] font-bold text-slate-700 w-14 text-right">' + t.c + '건 (' + pct + '%)</span></div>';
     }).join('') + '</div>';
   }
   html += '</div>';
-  // Top hospitals
-  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-trophy text-amber-500 mr-1.5"></i>활동 상위 기관</div>';
-  if (!d.topHospitals.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
-  else html += '<div class="space-y-1">' + d.topHospitals.slice(0,8).map(function(h, i){
-    return '<div class="flex items-center gap-2 py-0.5"><span class="text-[11px] font-bold text-slate-400 w-5 text-center">' + (i+1) + '</span><span class="text-[12px] font-semibold text-slate-700 flex-1 truncate cursor-pointer hover:text-brand-500" onclick="closeModal();viewHosp(' + h.id + ')">' + (h.name || '-') + '</span><span class="text-[10px] text-slate-400">' + (h.region || '') + '</span><span class="text-[11px] font-bold text-brand-600 w-10 text-right">' + h.c + '회</span></div>';
-  }).join('') + '</div>';
+
+  // 지역별 미팅 분포
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-map-location-dot text-emerald-500 mr-1.5"></i>지역별 활동</div>';
+  if (!d.regionBreakdown || !d.regionBreakdown.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  else {
+    var maxR = Math.max.apply(null, d.regionBreakdown.map(function(r){return r.c}));
+    html += '<div class="space-y-1.5">' + d.regionBreakdown.slice(0,8).map(function(r){
+      var w = Math.round((r.c / maxR) * 100);
+      return '<div class="flex items-center gap-2"><span class="text-[11px] text-slate-600 w-14 flex-shrink-0 truncate">' + (r.region || '기타') + '</span><div class="flex-1 bg-slate-100 rounded h-3 relative overflow-hidden"><div class="bg-emerald-400 h-full" style="width:' + w + '%"></div></div><span class="text-[11px] font-bold text-slate-700 w-20 text-right">' + r.c + '건 / ' + r.hosp_count + '곳</span></div>';
+    }).join('') + '</div>';
+  }
   html += '</div>';
+  html += '</div>';
+
+  // ===== 3) 핵심: 미팅한 기관 상세 (Top + 전체 리스트) =====
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2 flex items-center justify-between"><span><i class="fas fa-trophy text-amber-500 mr-1.5"></i>활동 상위 기관 (미팅한 곳)</span><span class="text-[10px] text-slate-400 font-medium">총 ' + (d.topHospitals ? d.topHospitals.length : 0) + '곳 표시</span></div>';
+  if (!d.topHospitals || !d.topHospitals.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  else {
+    html += '<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">' + d.topHospitals.slice(0, 12).map(function(h, i) {
+      var stageBg = stageColors[h.pipeline_stage] || '#94a3b8';
+      var stageLbl = stageLabels[h.pipeline_stage] || h.pipeline_stage || '-';
+      return '<div class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="closeModal();viewHosp(' + h.id + ')">' +
+        '<span class="text-[11px] font-bold text-slate-400 w-5 text-center flex-shrink-0">' + (i+1) + '</span>' +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="flex items-center gap-1.5 flex-wrap">' +
+            '<span class="text-[12px] font-semibold text-slate-700 truncate hover:text-brand-500">' + (h.name || '-') + '</span>' +
+            (h.grade ? '<span class="grade-' + h.grade + ' text-[9px] px-1 py-0.5 rounded font-bold">' + h.grade + '</span>' : '') +
+            '<span class="text-[9px] px-1.5 py-0.5 rounded font-medium" style="background:' + stageBg + '15;color:' + stageBg + '">' + stageLbl + '</span>' +
+          '</div>' +
+          '<div class="text-[10px] text-slate-400 mt-0.5"><i class="fas fa-map-marker-alt mr-0.5"></i>' + (h.region || '-') + ' · 마지막 ' + (h.last_date ? h.last_date.slice(5) : '-') + '</div>' +
+        '</div>' +
+        '<span class="text-[12px] font-extrabold text-brand-600 flex-shrink-0">' + h.c + '회</span>' +
+      '</div>';
+    }).join('') + '</div>';
+  }
+  html += '</div>';
+
+  // ===== 4) 핵심: 미팅 상세 내역 (어떤 곳과 무슨 미팅을 했는가) =====
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2 flex items-center justify-between"><span><i class="fas fa-list-check text-blue-500 mr-1.5"></i>미팅 상세 내역</span><span class="text-[10px] text-slate-400 font-medium">' + (d.meetingDetails ? d.meetingDetails.length : 0) + '건</span></div>';
+  if (!d.meetingDetails || !d.meetingDetails.length) html += '<div class="text-xs text-slate-400">기간 내 미팅이 없습니다</div>';
+  else {
+    html += '<div class="space-y-2 max-h-[400px] overflow-y-auto">';
+    d.meetingDetails.slice(0, 50).forEach(function(m) {
+      var typeCol = typeColors[m.meeting_type] || '#94a3b8';
+      var typeLbl = typeLabels[m.meeting_type] || m.meeting_type || '-';
+      html +=
+        '<div class="border-l-2 pl-3 py-1.5 hover:bg-slate-50 cursor-pointer rounded-r" style="border-color:' + typeCol + '" onclick="closeModal();viewHosp(' + m.hospital_id + ')">' +
+          '<div class="flex items-center gap-2 flex-wrap">' +
+            '<span class="text-[10px] font-bold text-slate-500">' + (m.meeting_date || '') + '</span>' +
+            '<span class="text-[9px] px-1.5 py-0.5 rounded font-medium" style="background:' + typeCol + '15;color:' + typeCol + '">' + typeLbl + '</span>' +
+            '<span class="text-[12px] font-bold text-slate-700 truncate">' + (m.hospital_name || '-') + '</span>' +
+            (m.region ? '<span class="text-[9px] text-slate-400">· ' + m.region + '</span>' : '') +
+            (m.doctor_name ? '<span class="text-[10px] text-purple-600 font-medium"><i class="fas fa-user-doctor mr-0.5"></i>' + m.doctor_name + (m.doctor_position ? ' ' + m.doctor_position : '') + '</span>' : '') +
+          '</div>' +
+          (m.purpose ? '<div class="text-[11px] text-slate-700 mt-1 font-medium">' + escapeHtml(m.purpose) + '</div>' : '') +
+          (m.summary ? '<div class="text-[11px] text-slate-500 mt-0.5 line-clamp-2">' + escapeHtml(m.summary).slice(0, 200) + (m.summary.length > 200 ? '...' : '') + '</div>' : '') +
+          (m.next_action ? '<div class="text-[10px] text-amber-700 bg-amber-50 px-2 py-1 rounded mt-1 inline-block"><i class="fas fa-flag mr-1"></i>다음: ' + escapeHtml(m.next_action) + (m.next_meeting_date ? ' (' + m.next_meeting_date + ')' : '') + '</div>' : '') +
+        '</div>';
+    });
+    if (d.meetingDetails.length > 50) {
+      html += '<div class="text-[11px] text-slate-400 text-center pt-2">... 외 ' + (d.meetingDetails.length - 50) + '건 (엑셀 다운로드로 전체 확인)</div>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // ===== 5) 담당자별 미팅 + 파이프라인 이동 =====
+  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">';
   // Top users
   html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-medal text-purple-500 mr-1.5"></i>담당자별 미팅</div>';
-  if (!d.topUsers.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  if (!d.topUsers || !d.topUsers.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
   else html += '<div class="space-y-1">' + d.topUsers.map(function(u, i){
     return '<div class="flex items-center gap-2 py-0.5"><span class="text-[11px] font-bold text-slate-400 w-5 text-center">' + (i+1) + '</span><span class="text-[12px] font-semibold text-slate-700 flex-1 truncate">' + (u.name || '-') + '</span><span class="text-[11px] font-bold text-purple-600 w-10 text-right">' + u.c + '회</span></div>';
   }).join('') + '</div>';
   html += '</div>';
   // Pipeline moves
   html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-arrows-turn-to-dots text-emerald-500 mr-1.5"></i>파이프라인 이동</div>';
-  if (!d.pipelineMoves || !d.pipelineMoves.length) html += '<div class="text-xs text-slate-400">데이터 없음</div>';
+  if (!d.pipelineMoves || !d.pipelineMoves.length) html += '<div class="text-xs text-slate-400">파이프라인 변경 없음</div>';
   else html += '<div class="space-y-1">' + d.pipelineMoves.slice(0,8).map(function(p){
     return '<div class="flex items-center gap-2 text-[11px] py-0.5"><span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">' + (stageLabels[p.from_stage] || p.from_stage || '-') + '</span><i class="fas fa-arrow-right text-slate-300 text-[9px]"></i><span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700">' + (stageLabels[p.to_stage] || p.to_stage || '-') + '</span><span class="ml-auto font-bold text-slate-700">' + p.c + '건</span></div>';
   }).join('') + '</div>';
   html += '</div>';
   html += '</div>';
-  // New hospitals & doctors lists
-  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">';
-  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-hospital text-blue-500 mr-1.5"></i>신규 기관 (' + d.newHospitals.length + ')</div>';
-  if (!d.newHospitals.length) html += '<div class="text-xs text-slate-400">없음</div>';
-  else html += '<div class="space-y-0.5 max-h-40 overflow-y-auto">' + d.newHospitals.slice(0,15).map(function(h){
-    return '<div class="text-[11px] text-slate-600 cursor-pointer hover:text-brand-500" onclick="closeModal();viewHosp(' + h.id + ')">• ' + h.name + ' <span class="text-slate-400">(' + (h.region || '-') + ')</span></div>';
-  }).join('') + '</div>';
-  html += '</div>';
-  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-user-doctor text-purple-500 mr-1.5"></i>신규 의료진 (' + d.newDoctors.length + ')</div>';
-  if (!d.newDoctors.length) html += '<div class="text-xs text-slate-400">없음</div>';
-  else html += '<div class="space-y-0.5 max-h-40 overflow-y-auto">' + d.newDoctors.slice(0,15).map(function(dc){
-    return '<div class="text-[11px] text-slate-600 cursor-pointer hover:text-brand-500" onclick="closeModal();viewDocProfile(' + dc.id + ')">• ' + dc.name + ' <span class="text-slate-400">' + (dc.position || '') + ' / ' + (dc.hospital_name || '-') + '</span></div>';
-  }).join('') + '</div>';
-  html += '</div>';
-  html += '</div>';
-  // Upcoming next actions
-  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-flag-checkered text-amber-500 mr-1.5"></i>2주 이내 예정 후속 액션 (' + d.upcomingNextActions.length + ')</div>';
-  if (!d.upcomingNextActions.length) html += '<div class="text-xs text-slate-400">없음</div>';
+
+  // ===== 6) 위험 신호: 한동안 만나지 못한 활성 기관 =====
+  if (d.notMetHospitals && d.notMetHospitals.length) {
+    html += '<div class="card-flat p-4 border-l-4 border-amber-400">' +
+      '<div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-triangle-exclamation text-amber-500 mr-1.5"></i>주의: 30일 이상 미접촉 기관 (' + d.notMetHospitals.length + ')</div>' +
+      '<div class="text-[11px] text-slate-500 mb-2">활성 거래처 중 한동안 만나지 못한 곳입니다. 후속 미팅을 잡아보세요.</div>' +
+      '<div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto">' +
+      d.notMetHospitals.map(function(h) {
+        var stageBg = stageColors[h.pipeline_stage] || '#94a3b8';
+        var stageLbl = stageLabels[h.pipeline_stage] || h.pipeline_stage || '-';
+        var daysAgo = h.last_date ? Math.floor((Date.now() - new Date(h.last_date).getTime()) / 86400000) : null;
+        return '<div class="flex items-center gap-2 p-1.5 rounded hover:bg-amber-50 cursor-pointer" onclick="closeModal();viewHosp(' + h.id + ')">' +
+          '<span class="text-[11px] font-semibold text-slate-700 truncate flex-1 hover:text-brand-500">' + h.name + '</span>' +
+          '<span class="text-[9px] px-1 py-0.5 rounded" style="background:' + stageBg + '15;color:' + stageBg + '">' + stageLbl + '</span>' +
+          '<span class="text-[10px] text-amber-600 font-bold">' + (daysAgo !== null ? daysAgo + '일 전' : '미방문') + '</span>' +
+        '</div>';
+      }).join('') +
+      '</div></div>';
+  }
+
+  // ===== 7) 2주 이내 예정 후속 액션 =====
+  html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-flag-checkered text-amber-500 mr-1.5"></i>2주 이내 예정 후속 액션 (' + (d.upcomingNextActions ? d.upcomingNextActions.length : 0) + ')</div>';
+  if (!d.upcomingNextActions || !d.upcomingNextActions.length) html += '<div class="text-xs text-slate-400">예정된 후속 액션 없음</div>';
   else html += '<div class="space-y-1 max-h-44 overflow-y-auto">' + d.upcomingNextActions.slice(0,20).map(function(n){
-    return '<div class="flex items-start gap-2 text-[11px] py-1 border-b border-slate-50 last:border-0"><span class="font-bold text-amber-600 w-20 flex-shrink-0">' + (n.next_meeting_date || '') + '</span><span class="font-semibold text-slate-700 w-32 truncate flex-shrink-0">' + (n.hospital_name || '-') + '</span><span class="text-slate-500 flex-1">' + (n.next_action || '-') + '</span></div>';
+    return '<div class="flex items-start gap-2 text-[11px] py-1 border-b border-slate-50 last:border-0 hover:bg-amber-50 cursor-pointer rounded" onclick="closeModal();viewHosp(' + (n.hospital_id || 0) + ')"><span class="font-bold text-amber-600 w-20 flex-shrink-0">' + (n.next_meeting_date || '') + '</span><span class="font-semibold text-slate-700 w-32 truncate flex-shrink-0">' + (n.hospital_name || '-') + '</span><span class="text-slate-500 flex-1">' + escapeHtml(n.next_action || '-') + '</span></div>';
   }).join('') + '</div>';
   html += '</div>';
   // Daily trend chart

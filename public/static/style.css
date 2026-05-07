@@ -1047,6 +1047,127 @@ html[data-theme="dark"] code, html[data-theme="dark"] pre { background: var(--su
 .theme-toggle:hover { background: var(--gray-100); color: var(--gray-800) }
 .theme-toggle:focus-visible { outline: 2px solid var(--brand-500); outline-offset: 2px }
 
+/* ===== Mobile Header More Menu ===== */
+#header-more-menu {
+  background: var(--surface-primary, #fff);
+  border: 1px solid var(--border-light, #eef0f5);
+  box-shadow: 0 16px 48px rgba(15,23,42,.18);
+  animation: hmFadeIn .18s var(--ease-smooth);
+}
+@keyframes hmFadeIn {
+  from { opacity: 0; transform: translateY(-6px) }
+  to { opacity: 1; transform: translateY(0) }
+}
+.hm-section { padding: 8px 6px; border-bottom: 1px solid var(--border-light, #eef0f5) }
+.hm-section:last-child { border-bottom: none }
+.hm-label {
+  font-size: 10px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--gray-400);
+  padding: 6px 10px 4px;
+}
+.hm-item {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: 10px; cursor: pointer;
+  background: transparent; border: none; text-align: left;
+  color: var(--gray-700); font-size: 13px; font-weight: 600;
+  transition: background .15s var(--ease-smooth);
+  min-height: 44px;
+}
+.hm-item:hover, .hm-item:active { background: var(--gray-50) }
+.hm-icon {
+  width: 22px; text-align: center; color: var(--gray-500); font-size: 14px;
+}
+.hm-text { display: flex; flex-direction: column; gap: 1px; flex: 1 }
+.hm-text b { font-weight: 700; font-size: 13px; color: var(--gray-800) }
+.hm-sub { font-size: 11px; color: var(--gray-400); font-weight: 500 }
+.hm-item-danger { color: #ef4444 }
+.hm-item-danger .hm-icon, .hm-item-danger .hm-text b { color: #ef4444 }
+.hm-user-info { padding: 8px 12px 4px }
+.hm-user-name { font-size: 13px; font-weight: 700; color: var(--gray-800) }
+.hm-user-email { font-size: 11px; color: var(--gray-400); margin-top: 2px }
+.hm-page-actions { display: flex; flex-direction: column; gap: 4px; padding: 0 6px }
+.hm-action-btn {
+  width: 100% !important;
+  justify-content: flex-start !important;
+  min-height: 44px !important;
+  padding: 10px 12px !important;
+  font-size: 13px !important;
+  border-radius: 10px !important;
+  gap: 12px !important;
+}
+.hm-action-btn .hidden { display: inline !important }
+.hm-action-btn span { display: inline !important }
+
+html[data-theme="dark"] #header-more-menu {
+  background: var(--surface-elevated);
+  border-color: var(--border-default);
+}
+html[data-theme="dark"] .hm-section { border-bottom-color: var(--border-light) }
+html[data-theme="dark"] .hm-item:hover, html[data-theme="dark"] .hm-item:active { background: var(--gray-100) }
+
+/* ===== Dark mode core layout fixes (인라인 스타일 보정) ===== */
+/* Main 영역 배경 (인라인 background:#f8f9fc 무력화) */
+#app-main-content { background: #f8f9fc }
+html[data-theme="dark"] #app-main-content { background: var(--surface-secondary) !important }
+
+/* App header — 다크모드 배경/보더 */
+#app-header { background: rgba(255,255,255,.9); border-bottom: 1px solid #eef0f5 }
+html[data-theme="dark"] #app-header {
+  background: rgba(20,24,32,.9) !important;
+  border-bottom-color: var(--border-light) !important;
+}
+
+/* Auth screen 배경 다크모드 보정 */
+html[data-theme="dark"] #auth-screen {
+  background: linear-gradient(135deg, #0f1218 0%, #161a23 50%, #1a1e29 100%) !important;
+}
+html[data-theme="dark"] #auth-box {
+  background: var(--surface-elevated) !important;
+  border-color: var(--border-light) !important;
+}
+
+/* Mention panel/popover 다크모드 */
+html[data-theme="dark"] #mention-panel {
+  background: var(--surface-elevated) !important;
+  border-color: var(--border-default) !important;
+  color: var(--gray-800);
+}
+
+/* Search results dropdown 다크모드 */
+html[data-theme="dark"] #search-results {
+  background: var(--surface-elevated) !important;
+  border-color: var(--border-default) !important;
+}
+
+/* Sidebar overlay (모바일) — 항상 어두운 배경이지만 다크모드에서 더 강하게 */
+html[data-theme="dark"] #sidebar-overlay { background: rgba(0,0,0,.65) }
+
+/* Tailwind bg-white/* 변형도 다크모드 처리 */
+html[data-theme="dark"] .bg-white\/90,
+html[data-theme="dark"] .bg-white\/80,
+html[data-theme="dark"] .bg-white\/70 {
+  background-color: rgba(20,24,32,.85) !important;
+}
+html[data-theme="dark"] .bg-gray-50\/80,
+html[data-theme="dark"] .bg-slate-50\/80 {
+  background-color: var(--surface-tertiary) !important;
+}
+
+/* 카드/표면 안에 들어간 보조 배경들 */
+html[data-theme="dark"] .bg-slate-50\/50,
+html[data-theme="dark"] .bg-gray-50\/50 {
+  background-color: rgba(28,32,48,.5) !important;
+}
+
+/* 보고서/모달 내부 카드 표면 */
+html[data-theme="dark"] .sc { background: var(--surface-elevated); border-color: var(--border-light) }
+
+/* Input focus bg-white -> 다크모드에서는 elevated */
+html[data-theme="dark"] .input.focus\:bg-white:focus { background-color: var(--surface-elevated) !important }
+
+/* gradient 텍스트/배지 안의 흰 텍스트 보존 */
+html[data-theme="dark"] .text-white { color: #fff !important }
+
 /* ==================== PRINT / PDF LAYOUT ==================== */
 @media print {
   @page { size: A4; margin: 14mm 12mm 16mm 12mm; }
