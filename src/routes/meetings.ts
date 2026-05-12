@@ -155,6 +155,17 @@ meetings.get('/', async (c) => {
   return c.json({ data })
 })
 
+// Quick list of hospitals + doctors + users for global meeting form
+// IMPORTANT: 이 라우트는 반드시 '/:id' 라우트보다 먼저 등록되어야 함 (그렇지 않으면 'form-data'가 :id로 매칭되어 400)
+meetings.get('/form-data', async (c) => {
+  const [hosps, docs, users] = await Promise.all([
+    c.env.DB.prepare('SELECT id, name, region FROM hospitals ORDER BY name').all(),
+    c.env.DB.prepare('SELECT d.id, d.name, d.hospital_id, d.position, h.name as hospital_name FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id ORDER BY d.name').all(),
+    c.env.DB.prepare('SELECT id, name, email FROM users ORDER BY name').all(),
+  ])
+  return c.json({ data: { hospitals: hosps.results, doctors: docs.results, users: users.results } })
+})
+
 // GET /api/meetings/:id - get a single meeting with doctors and users
 meetings.get('/:id', async (c) => {
   const id = Number(c.req.param('id'))
@@ -281,16 +292,6 @@ meetings.patch('/:id', async (c) => {
     }
   }
   return c.json({ data: { id: Number(id), updated: true } })
-})
-
-// Quick list of hospitals + doctors for global meeting form
-meetings.get('/form-data', async (c) => {
-  const [hosps, docs, users] = await Promise.all([
-    c.env.DB.prepare('SELECT id, name, region FROM hospitals ORDER BY name').all(),
-    c.env.DB.prepare('SELECT d.id, d.name, d.hospital_id, d.position, h.name as hospital_name FROM doctors d LEFT JOIN hospitals h ON d.hospital_id=h.id ORDER BY d.name').all(),
-    c.env.DB.prepare('SELECT id, name, email FROM users ORDER BY name').all(),
-  ])
-  return c.json({ data: { hospitals: hosps.results, doctors: docs.results, users: users.results } })
 })
 
 export default meetings
