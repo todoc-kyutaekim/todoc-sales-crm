@@ -7768,45 +7768,173 @@ async function renderProductUnits() {
       body.innerHTML = '<div class="empty"><div class="empty-icon"><i class="fas fa-box-open"></i></div><p class="font-medium text-slate-500 mb-1">등록된 유닛이 없습니다</p><p class="text-xs text-slate-400 mb-4">"유닛 입고" 버튼으로 새 제품을 등록하세요</p><button class="btn btn-primary btn-sm" onclick="showProductUnitForm()"><i class="fas fa-plus mr-1"></i>유닛 입고</button></div>';
       return;
     }
-    body.innerHTML = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">' + list.map(prodUnitCard).join('') + '</div>';
+    // 카테고리별 색상 정의
+    var catTheme = {
+      internal:   { name: '내부기',     bg: '#eff6ff', border: '#3b82f6', chip: '#dbeafe', chipFg: '#1e40af', icon: 'fa-building' },
+      external:   { name: '외부기',     bg: '#ecfdf5', border: '#10b981', chip: '#d1fae5', chipFg: '#065f46', icon: 'fa-truck-fast' },
+      carry_case: { name: '휴대보관함', bg: '#fffbeb', border: '#f59e0b', chip: '#fef3c7', chipFg: '#92400e', icon: 'fa-suitcase' }
+    };
+
+    // 전체 탭이면 카테고리별로 그룹화, 아니면 그대로 표시
+    if (window._prodTab === 'all') {
+      var grouped = { internal: [], external: [], carry_case: [] };
+      list.forEach(function(u) {
+        if (grouped[u.category]) grouped[u.category].push(u);
+      });
+      var sectionsHtml = '';
+      ['internal', 'external', 'carry_case'].forEach(function(cat) {
+        if (!grouped[cat].length) return;
+        var t = catTheme[cat];
+        sectionsHtml +=
+          '<div class="mb-4 last:mb-0">' +
+            '<div class="flex items-center gap-2 mb-2 pl-1" style="border-left:4px solid ' + t.border + ';padding-left:10px">' +
+              '<i class="fas ' + t.icon + '" style="color:' + t.border + '"></i>' +
+              '<span class="text-sm font-bold text-slate-800">' + t.name + '</span>' +
+              '<span class="text-[11px] text-slate-400">(' + grouped[cat].length + '개)</span>' +
+            '</div>' +
+            renderProdUnitList(grouped[cat], catTheme) +
+          '</div>';
+      });
+      body.innerHTML = sectionsHtml || '<div class="text-sm text-slate-400 p-4 text-center">표시할 유닛이 없습니다</div>';
+    } else {
+      body.innerHTML = renderProdUnitList(list, catTheme);
+    }
   } catch (e) {
     body.innerHTML = '<div class="text-sm text-red-400 p-4">유닛 목록을 불러올 수 없습니다</div>';
   }
 }
 
-function prodUnitCard(u) {
+// 유닛 리스트 (테이블형) 렌더링
+function renderProdUnitList(units, catTheme) {
+  if (!units.length) return '<div class="text-xs text-slate-400 p-3 text-center">표시할 유닛이 없습니다</div>';
+  // 테이블 헤더
+  var html = '<div class="overflow-x-auto border border-gray-100 rounded-xl">' +
+    '<table class="w-full text-xs">' +
+      '<thead class="bg-slate-50 text-slate-500">' +
+        '<tr>' +
+          '<th class="px-2 py-2 text-left font-semibold w-[88px]">카테고리</th>' +
+          '<th class="px-2 py-2 text-left font-semibold">시리얼번호 / 제품명</th>' +
+          '<th class="px-2 py-2 text-left font-semibold hidden md:table-cell">자산코드</th>' +
+          '<th class="px-2 py-2 text-left font-semibold w-[100px]">상태</th>' +
+          '<th class="px-2 py-2 text-left font-semibold hidden lg:table-cell">보유자</th>' +
+          '<th class="px-2 py-2 text-left font-semibold hidden lg:table-cell">현재 위치</th>' +
+          '<th class="px-2 py-2 text-right font-semibold w-[200px]">동작</th>' +
+        '</tr>' +
+      '</thead>' +
+      '<tbody>';
+  units.forEach(function(u) {
+    html += prodUnitRow(u, catTheme);
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+function prodUnitRow(u, catTheme) {
+  var t = catTheme[u.category] || { name: u.category, bg: '#f8fafc', border: '#94a3b8', chip: '#f1f5f9', chipFg: '#475569', icon: 'fa-box' };
   var st = PROD_STATUS_COLORS[u.status] || PROD_STATUS_COLORS.in_stock;
   var stLbl = PROD_STATUS_LABELS[u.status] || u.status;
   var canLoan = (u.status === 'in_stock' || u.status === 'with_user');
   var canReturn = (u.status === 'at_hospital' || u.status === 'with_user' || u.status === 'out');
-  return '<div class="card-flat p-4 hover:shadow-md transition cursor-pointer" onclick="showProductUnitDetail(' + u.id + ')">' +
-    '<div class="flex items-start justify-between mb-2 gap-2">' +
-      '<div class="flex-1 min-w-0">' +
-        '<div class="flex items-center gap-1.5 mb-1 flex-wrap">' +
-          '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:#e0e7ff;color:#3730a3">' + (PROD_CAT_LABELS[u.category] || u.category) + '</span>' +
-          (u.model && u.model !== 'default' ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:#f1f5f9;color:#475569">' + u.model + '</span>' : '') +
-          '<span class="prod-status-chip" style="background:' + st.bg + ';color:' + st.fg + ';border-color:' + st.bd + '">' + stLbl + '</span>' +
-        '</div>' +
-        '<div class="font-bold text-sm text-slate-800 truncate">' + (u.product_name || '') + '</div>' +
-        '<div class="text-[11px] text-slate-500 mt-0.5">' +
-          (u.asset_code ? '<span class="font-mono"><i class="fas fa-hashtag text-[9px]"></i> ' + u.asset_code + '</span>' : '') +
-          (u.serial_no ? '<span class="font-mono ml-2"><i class="fas fa-barcode text-[9px]"></i> ' + u.serial_no + '</span>' : '') +
-          (!u.asset_code && !u.serial_no ? '<span class="text-slate-400">자산코드 없음 (#' + u.id + ')</span>' : '') +
+  // 시리얼번호 우선, 없으면 자산코드, 둘 다 없으면 #id
+  var primary = u.serial_no || u.asset_code || ('#' + u.id);
+  return '<tr class="border-t border-gray-100 hover:bg-slate-50/70 cursor-pointer transition" style="border-left:4px solid ' + t.border + '" onclick="showProductUnitDetail(' + u.id + ')">' +
+    '<td class="px-2 py-2.5">' +
+      '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:' + t.chip + ';color:' + t.chipFg + '">' +
+        '<i class="fas ' + t.icon + ' text-[9px]"></i>' + t.name +
+      '</span>' +
+      (u.model && u.model !== 'default' ? '<div class="text-[10px] text-slate-500 mt-0.5">' + u.model + '</div>' : '') +
+    '</td>' +
+    '<td class="px-2 py-2.5">' +
+      '<div class="font-mono font-bold text-[13px] text-slate-800 truncate">' + primary + '</div>' +
+      '<div class="text-[11px] text-slate-500 truncate">' + (u.product_name || '') + '</div>' +
+    '</td>' +
+    '<td class="px-2 py-2.5 hidden md:table-cell">' +
+      (u.asset_code && u.asset_code !== primary ? '<span class="font-mono text-[11px] text-slate-600">' + u.asset_code + '</span>' : '<span class="text-slate-300 text-[11px]">—</span>') +
+    '</td>' +
+    '<td class="px-2 py-2.5">' +
+      '<span class="prod-status-chip" style="background:' + st.bg + ';color:' + st.fg + ';border-color:' + st.bd + '">' + stLbl + '</span>' +
+    '</td>' +
+    '<td class="px-2 py-2.5 hidden lg:table-cell">' +
+      (u.holders ? '<div class="text-[11px] text-slate-700 truncate" title="' + u.holders + '"><i class="fas fa-user text-slate-400 text-[9px] mr-1"></i>' + u.holders + '</div>' : '<span class="text-slate-300 text-[11px]">—</span>') +
+    '</td>' +
+    '<td class="px-2 py-2.5 hidden lg:table-cell">' +
+      (u.hospital_name ? '<div class="text-[11px] text-slate-700 truncate" title="' + u.hospital_name + '"><i class="fas fa-hospital text-slate-400 text-[9px] mr-1"></i>' + u.hospital_name + '</div>' : '<span class="text-slate-300 text-[11px]">—</span>') +
+    '</td>' +
+    '<td class="px-2 py-2.5 text-right" onclick="event.stopPropagation()">' +
+      '<div class="inline-flex items-center gap-1">' +
+        '<button class="btn btn-ghost btn-sm !p-1.5 !text-[10px]" onclick="showProductHolderEdit(' + u.id + ')" title="보유자 수정"><i class="fas fa-user-pen text-slate-500"></i></button>' +
+        (canLoan ? '<button class="btn btn-outline btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'checkout\')" title="반출"><i class="fas fa-arrow-up-from-bracket"></i></button>' : '') +
+        (u.status === 'in_stock' ? '<button class="btn btn-outline btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'deliver\')" title="납품"><i class="fas fa-gift"></i></button>' : '') +
+        (canReturn ? '<button class="btn btn-primary btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'return\')" title="회수"><i class="fas fa-arrow-down-to-bracket"></i></button>' : '') +
+        '<button class="btn btn-ghost btn-sm !p-1.5 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'\')" title="기타 이동"><i class="fas fa-ellipsis-h"></i></button>' +
+      '</div>' +
+    '</td>' +
+  '</tr>';
+}
+
+// 보유자 단독 수정 모달
+async function showProductHolderEdit(unitId) {
+  try {
+    var [unitR, usersR] = await Promise.all([
+      API.get('/products/units/' + unitId),
+      API.get('/users')
+    ]);
+    var u = unitR.data.data;
+    var users = usersR.data.data || [];
+    var currentIds = (u.holders || [])
+      .filter(function(h) { return !h.released_at; })
+      .map(function(h) { return Number(h.user_id); });
+
+    var html = '<form id="prod-holder-form" class="space-y-3">' +
+      '<div class="card-flat p-3 bg-slate-50">' +
+        '<div class="text-[11px] text-slate-500 mb-1">대상 유닛</div>' +
+        '<div class="text-sm font-bold text-slate-800">' + (u.product_name || '') + '</div>' +
+        '<div class="text-[11px] text-slate-500 font-mono mt-0.5">' +
+          (u.serial_no ? 'S/N: ' + u.serial_no : '') +
+          (u.asset_code ? (u.serial_no ? ' · ' : '') + '자산코드: ' + u.asset_code : '') +
+          (!u.serial_no && !u.asset_code ? '#' + u.id : '') +
         '</div>' +
       '</div>' +
-    '</div>' +
-    '<div class="text-[11px] text-slate-600 space-y-1 mt-2">' +
-      (u.holders ? '<div><i class="fas fa-user text-slate-400 mr-1"></i><strong>' + u.holders + '</strong></div>' : '') +
-      (u.hospital_name ? '<div><i class="fas fa-hospital text-slate-400 mr-1"></i>' + u.hospital_name + '</div>' : '') +
-      (u.notes ? '<div class="text-slate-400 truncate"><i class="fas fa-note-sticky mr-1"></i>' + u.notes + '</div>' : '') +
-    '</div>' +
-    '<div class="flex items-center gap-1 mt-3 pt-2 border-t border-gray-100" onclick="event.stopPropagation()">' +
-      (canLoan ? '<button class="btn btn-outline btn-sm flex-1 text-[11px]" onclick="showProductMoveForm(' + u.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i> 반출</button>' : '') +
-      (u.status === 'in_stock' ? '<button class="btn btn-outline btn-sm flex-1 text-[11px]" onclick="showProductMoveForm(' + u.id + ',\'deliver\')"><i class="fas fa-gift"></i> 납품</button>' : '') +
-      (canReturn ? '<button class="btn btn-primary btn-sm flex-1 text-[11px]" onclick="showProductMoveForm(' + u.id + ',\'return\')"><i class="fas fa-arrow-down-to-bracket"></i> 회수</button>' : '') +
-      '<button class="btn btn-ghost btn-sm text-[11px]" onclick="showProductMoveForm(' + u.id + ',\'\')" title="기타 이동"><i class="fas fa-ellipsis-h"></i></button>' +
-    '</div>' +
-  '</div>';
+      '<div>' +
+        '<label class="input-label">현재 보유자 <span class="text-[10px] text-slate-400 font-normal">(체크박스로 추가/해제 — 다중 보유 가능)</span></label>' +
+        '<div class="grid grid-cols-2 gap-1.5 p-2 border border-gray-200 rounded-lg max-h-56 overflow-y-auto">' +
+          users.map(function(usr) {
+            var checked = currentIds.indexOf(Number(usr.id)) >= 0;
+            return '<label class="flex items-center gap-1.5 text-xs cursor-pointer p-1 rounded hover:bg-brand-50' + (checked ? ' bg-emerald-50' : '') + '">' +
+              '<input type="checkbox" name="holder" value="' + usr.id + '" class="rounded"' + (checked ? ' checked' : '') + '>' +
+              '<span>' + usr.name + '</span>' +
+            '</label>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      '<div><label class="input-label">사유 / 메모 <span class="text-[10px] text-slate-400 font-normal">(이력에 기록됨)</span></label>' +
+        '<input type="text" name="reason" class="input" placeholder="예: 담당자 변경, 보유자 인계 등">' +
+      '</div>' +
+      '<div class="text-[11px] text-slate-500 bg-amber-50 rounded-lg p-2"><i class="fas fa-info-circle text-amber-500 mr-1"></i>저장 시 추가/해제 내역이 자동으로 이동 이력에 기록되며, 보유자 유/무에 따라 유닛 상태(재고/담당자 보유)가 자동 갱신됩니다.</div>' +
+      '<div class="flex justify-end gap-2 pt-3 border-t border-gray-100">' +
+        '<button type="button" class="btn btn-outline" onclick="closeModal()">취소</button>' +
+        '<button type="submit" class="btn btn-primary"><i class="fas fa-check mr-1"></i>저장</button>' +
+      '</div>' +
+    '</form>';
+    openModal('보유자 수정', html);
+    document.getElementById('prod-holder-form').onsubmit = async function(ev) {
+      ev.preventDefault();
+      var checks = ev.target.querySelectorAll('input[name="holder"]:checked');
+      var userIds = Array.from(checks).map(function(c) { return Number(c.value); });
+      var reason = ev.target.querySelector('input[name="reason"]').value || null;
+      try {
+        var res = await API.put('/products/units/' + unitId + '/holders', { user_ids: userIds, reason: reason });
+        var d = res.data && res.data.data || {};
+        var msg = '보유자 수정됨';
+        if ((d.added || []).length || (d.removed || []).length) {
+          msg += ' (추가 ' + (d.added || []).length + ' / 해제 ' + (d.removed || []).length + ')';
+        }
+        toast(msg);
+        closeModal();
+        refreshProductPage();
+      } catch (e) { toast('수정 실패', 'err'); }
+    };
+  } catch (e) { toast('데이터 로드 실패', 'err'); }
 }
 
 async function renderProductHistory() {
@@ -7911,58 +8039,194 @@ async function showProductUnitForm(id) {
     try { var rr = await API.get('/products/units/' + id); unit = rr.data.data; } catch (e) {}
   }
 
+  // 수정 모드는 기존 단일 폼 그대로
+  if (id) {
+    var htmlEdit = '<form id="prod-unit-form" class="space-y-3">' +
+      '<div><label class="input-label">제품 *</label>' +
+        '<select name="product_id" class="input" required>' +
+          '<option value="">선택하세요</option>' +
+          products.map(function(p) {
+            return '<option value="' + p.id + '"' + (p.id == unit.product_id ? ' selected' : '') + '>' + p.name + '</option>';
+          }).join('') +
+        '</select>' +
+      '</div>' +
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div><label class="input-label">자산코드</label><input type="text" name="asset_code" value="' + (unit.asset_code || '') + '" class="input" placeholder="예: TD-001"></div>' +
+        '<div><label class="input-label">S/N (일련번호)</label><input type="text" name="serial_no" value="' + (unit.serial_no || '') + '" class="input" placeholder="시리얼 번호"></div>' +
+      '</div>' +
+      '<div><label class="input-label">입고일</label><input type="date" name="acquired_at" value="' + (unit.acquired_at || '') + '" class="input"></div>' +
+      '<div><label class="input-label">비고</label><textarea name="notes" class="input" rows="2" placeholder="유닛 비고">' + (unit.notes || '') + '</textarea></div>' +
+      '<div class="flex justify-end gap-2 pt-3 border-t border-gray-100">' +
+        '<button type="button" class="btn btn-outline" onclick="closeModal()">취소</button>' +
+        '<button type="submit" class="btn btn-primary">저장</button>' +
+      '</div>' +
+    '</form>';
+    openModal('유닛 정보 수정', htmlEdit);
+    document.getElementById('prod-unit-form').onsubmit = async function(ev) {
+      ev.preventDefault();
+      var fd = new FormData(ev.target);
+      var payload = {
+        product_id: Number(fd.get('product_id')),
+        asset_code: fd.get('asset_code') || null,
+        serial_no: fd.get('serial_no') || null,
+        acquired_at: fd.get('acquired_at') || null,
+        notes: fd.get('notes') || null,
+      };
+      try {
+        await API.put('/products/units/' + id, payload);
+        toast('저장됨');
+        closeModal();
+        refreshProductPage();
+      } catch (e) { toast('저장 실패', 'err'); }
+    };
+    return;
+  }
+
+  // 신규 입고 — 단일/다량 토글 방식
+  var holderCb = users.map(function(u) {
+    return '<label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" name="holder" value="' + u.id + '" class="rounded"><span>' + u.name + '</span></label>';
+  }).join('');
+
   var html = '<form id="prod-unit-form" class="space-y-3">' +
+    // 모드 토글
+    '<div class="inline-flex rounded-lg bg-slate-100 p-1 mb-1" role="tablist">' +
+      '<button type="button" id="punit-mode-single" class="px-3 py-1.5 text-xs font-semibold rounded-md transition bg-white shadow text-slate-800" onclick="setProdUnitMode(\'single\')"><i class="fas fa-box mr-1"></i>단일 입고</button>' +
+      '<button type="button" id="punit-mode-bulk" class="px-3 py-1.5 text-xs font-semibold rounded-md transition text-slate-500" onclick="setProdUnitMode(\'bulk\')"><i class="fas fa-boxes-stacked mr-1"></i>다량 입고</button>' +
+    '</div>' +
     '<div><label class="input-label">제품 *</label>' +
       '<select name="product_id" class="input" required>' +
         '<option value="">선택하세요</option>' +
         products.map(function(p) {
-          return '<option value="' + p.id + '"' + (p.id == unit.product_id ? ' selected' : '') + '>' + p.name + '</option>';
+          return '<option value="' + p.id + '">' + p.name + '</option>';
         }).join('') +
       '</select>' +
     '</div>' +
-    '<div class="grid grid-cols-2 gap-3">' +
-      '<div><label class="input-label">자산코드</label><input type="text" name="asset_code" value="' + (unit.asset_code || '') + '" class="input" placeholder="예: TD-001"></div>' +
-      '<div><label class="input-label">S/N (일련번호)</label><input type="text" name="serial_no" value="' + (unit.serial_no || '') + '" class="input" placeholder="시리얼 번호"></div>' +
-    '</div>' +
-    '<div><label class="input-label">입고일</label><input type="date" name="acquired_at" value="' + (unit.acquired_at || '') + '" class="input"></div>' +
-    (!id ? '<div><label class="input-label">초기 보유자 (다중 선택 가능)</label>' +
-      '<div class="grid grid-cols-2 gap-1.5 p-2 border border-gray-200 rounded-lg max-h-40 overflow-y-auto">' +
-        users.map(function(u) {
-          return '<label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" name="holder" value="' + u.id + '" class="rounded"><span>' + u.name + '</span></label>';
-        }).join('') +
+    // 단일 모드 영역
+    '<div id="punit-single-fields" class="space-y-3">' +
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div><label class="input-label">자산코드</label><input type="text" name="asset_code" class="input" placeholder="예: TD-001"></div>' +
+        '<div><label class="input-label">S/N (일련번호)</label><input type="text" name="serial_no" class="input" placeholder="시리얼 번호"></div>' +
       '</div>' +
+    '</div>' +
+    // 다량 모드 영역
+    '<div id="punit-bulk-fields" class="space-y-2 hidden">' +
+      '<label class="input-label">시리얼번호 목록 * <span class="text-[10px] text-slate-400 font-normal">(한 줄에 하나씩 또는 쉼표로 구분)</span></label>' +
+      '<textarea name="bulk_serials" class="input font-mono text-xs" rows="6" placeholder="SN-001&#10;SN-002&#10;SN-003&#10;...&#10;&#10;또는 쉼표 구분: SN-001, SN-002, SN-003"></textarea>' +
+      '<div class="flex items-center justify-between text-[11px]">' +
+        '<span class="text-slate-500" id="punit-bulk-count">0개</span>' +
+        '<span class="text-slate-400">중복 시리얼번호는 자동 스킵됩니다</span>' +
+      '</div>' +
+      '<details class="mt-2">' +
+        '<summary class="text-[11px] text-slate-500 cursor-pointer hover:text-slate-700"><i class="fas fa-chevron-right text-[9px] mr-1"></i>자산코드도 함께 입력 (선택)</summary>' +
+        '<textarea name="bulk_asset_codes" class="input font-mono text-xs mt-2" rows="4" placeholder="시리얼번호와 같은 순서로 한 줄씩 입력&#10;자산코드 없는 행은 빈 줄로 두세요"></textarea>' +
+      '</details>' +
+    '</div>' +
+    '<div><label class="input-label">입고일</label><input type="date" name="acquired_at" value="' + new Date().toISOString().slice(0, 10) + '" class="input"></div>' +
+    '<div><label class="input-label">초기 보유자 <span class="text-[10px] text-slate-400 font-normal">(다중 선택 가능, 다량 입고 시 전체 유닛에 동일 적용)</span></label>' +
+      '<div class="grid grid-cols-2 gap-1.5 p-2 border border-gray-200 rounded-lg max-h-40 overflow-y-auto">' + holderCb + '</div>' +
       '<div class="text-[10px] text-slate-400 mt-1">선택하지 않으면 재고 상태로만 입고됩니다</div>' +
-    '</div>' : '') +
-    '<div><label class="input-label">비고</label><textarea name="notes" class="input" rows="2" placeholder="유닛 비고">' + (unit.notes || '') + '</textarea></div>' +
+    '</div>' +
+    '<div><label class="input-label">비고</label><textarea name="notes" class="input" rows="2" placeholder="유닛 비고"></textarea></div>' +
     '<div class="flex justify-end gap-2 pt-3 border-t border-gray-100">' +
       '<button type="button" class="btn btn-outline" onclick="closeModal()">취소</button>' +
-      '<button type="submit" class="btn btn-primary">' + (id ? '저장' : '입고 등록') + '</button>' +
+      '<button type="submit" class="btn btn-primary" id="punit-submit"><i class="fas fa-check mr-1"></i>입고 등록</button>' +
     '</div>' +
   '</form>';
 
-  openModal(id ? '유닛 정보 수정' : '신규 유닛 입고', html);
+  openModal('신규 유닛 입고', html);
+  window._prodUnitMode = 'single';
+  // 다량 시리얼 카운트 실시간 업데이트
+  setTimeout(function() {
+    var ta = document.querySelector('textarea[name="bulk_serials"]');
+    var cn = document.getElementById('punit-bulk-count');
+    if (ta && cn) {
+      ta.addEventListener('input', function() {
+        var lines = parseBulkSerials(ta.value);
+        cn.textContent = lines.length + '개';
+        cn.style.color = lines.length > 0 ? '#0f172a' : '#94a3b8';
+      });
+    }
+  }, 50);
+
   document.getElementById('prod-unit-form').onsubmit = async function(ev) {
     ev.preventDefault();
     var fd = new FormData(ev.target);
-    var payload = {
-      product_id: Number(fd.get('product_id')),
-      asset_code: fd.get('asset_code') || null,
-      serial_no: fd.get('serial_no') || null,
-      acquired_at: fd.get('acquired_at') || null,
-      notes: fd.get('notes') || null,
-    };
-    if (!id) {
-      var checks = ev.target.querySelectorAll('input[name="holder"]:checked');
-      payload.holder_user_ids = Array.from(checks).map(function(c) { return Number(c.value); });
+    var productId = Number(fd.get('product_id'));
+    if (!productId) { toast('제품을 선택하세요', 'warn'); return; }
+    var checks = ev.target.querySelectorAll('input[name="holder"]:checked');
+    var holderIds = Array.from(checks).map(function(c) { return Number(c.value); });
+
+    if (window._prodUnitMode === 'bulk') {
+      var serials = parseBulkSerials(fd.get('bulk_serials') || '');
+      var assetCodes = parseBulkSerials(fd.get('bulk_asset_codes') || '', true);
+      if (!serials.length) { toast('시리얼번호를 1개 이상 입력하세요', 'warn'); return; }
+      var payload = {
+        product_id: productId,
+        serial_nos: serials,
+        asset_codes: assetCodes,
+        acquired_at: fd.get('acquired_at') || null,
+        notes: fd.get('notes') || null,
+        holder_user_ids: holderIds,
+      };
+      try {
+        var res = await API.post('/products/units/bulk', payload);
+        var d = res.data && res.data.data || {};
+        var msg = '다량 입고 완료: ' + (d.created_count || 0) + '건';
+        if (d.skipped && d.skipped.length) msg += ' (중복 스킵: ' + d.skipped.length + '건)';
+        toast(msg);
+        closeModal();
+        refreshProductPage();
+      } catch (e) { toast('다량 입고 실패', 'err'); }
+    } else {
+      var payload2 = {
+        product_id: productId,
+        asset_code: fd.get('asset_code') || null,
+        serial_no: fd.get('serial_no') || null,
+        acquired_at: fd.get('acquired_at') || null,
+        notes: fd.get('notes') || null,
+        holder_user_ids: holderIds,
+      };
+      try {
+        await API.post('/products/units', payload2);
+        toast('입고 등록 완료');
+        closeModal();
+        refreshProductPage();
+      } catch (e) { toast('입고 실패', 'err'); }
     }
-    try {
-      if (id) await API.put('/products/units/' + id, payload);
-      else await API.post('/products/units', payload);
-      toast(id ? '저장됨' : '입고 등록 완료');
-      closeModal();
-      refreshProductPage();
-    } catch (e) { toast('저장 실패', 'err'); }
   };
+}
+
+function setProdUnitMode(mode) {
+  window._prodUnitMode = mode;
+  var bSingle = document.getElementById('punit-mode-single');
+  var bBulk = document.getElementById('punit-mode-bulk');
+  var sf = document.getElementById('punit-single-fields');
+  var bf = document.getElementById('punit-bulk-fields');
+  var sb = document.getElementById('punit-submit');
+  if (mode === 'bulk') {
+    bBulk.className = 'px-3 py-1.5 text-xs font-semibold rounded-md transition bg-white shadow text-slate-800';
+    bSingle.className = 'px-3 py-1.5 text-xs font-semibold rounded-md transition text-slate-500';
+    sf.classList.add('hidden');
+    bf.classList.remove('hidden');
+    if (sb) sb.innerHTML = '<i class="fas fa-boxes-stacked mr-1"></i>다량 입고 등록';
+  } else {
+    bSingle.className = 'px-3 py-1.5 text-xs font-semibold rounded-md transition bg-white shadow text-slate-800';
+    bBulk.className = 'px-3 py-1.5 text-xs font-semibold rounded-md transition text-slate-500';
+    sf.classList.remove('hidden');
+    bf.classList.add('hidden');
+    if (sb) sb.innerHTML = '<i class="fas fa-check mr-1"></i>입고 등록';
+  }
+}
+
+// 다량 시리얼 입력 파싱 — 줄바꿈/쉼표/탭/세미콜론 모두 구분자로 처리
+// preserveEmpty=true 시 빈 줄도 유지 (asset_codes 인덱스 정렬용)
+function parseBulkSerials(text, preserveEmpty) {
+  if (!text) return [];
+  // 쉼표/세미콜론/탭은 줄바꿈으로 변환
+  var normalized = String(text).replace(/[,;\t]/g, '\n');
+  var arr = normalized.split('\n').map(function(s) { return s.trim(); });
+  if (!preserveEmpty) arr = arr.filter(function(s) { return s.length > 0; });
+  return arr;
 }
 
 // ===== 이동(반출/회수/납품) 모달 =====
@@ -8067,7 +8331,10 @@ async function showProductUnitDetail(id) {
           (u.product_description ? '<div class="text-slate-400 italic">카테고리 설명: ' + u.product_description + '</div>' : '') +
         '</div>' +
         '<div class="mt-3 pt-3 border-t border-gray-100">' +
-          '<div class="text-[11px] text-slate-500 mb-1">현재 보유자</div>' +
+          '<div class="flex items-center justify-between mb-1">' +
+            '<div class="text-[11px] text-slate-500">현재 보유자</div>' +
+            '<button class="text-[10px] text-brand-600 hover:underline" onclick="closeModal();showProductHolderEdit(' + u.id + ')"><i class="fas fa-user-pen mr-0.5"></i>보유자 수정</button>' +
+          '</div>' +
           '<div class="flex flex-wrap gap-1.5">' + holdersHtml + '</div>' +
         '</div>' +
         '<div class="flex flex-wrap gap-1 mt-3 pt-3 border-t border-gray-100">' +

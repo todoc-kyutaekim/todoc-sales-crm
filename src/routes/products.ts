@@ -238,6 +238,126 @@ products.put('/units/:id', async (c) => {
   return c.json({ data: { id: Number(id) } })
 })
 
+// 다량 입고 — 시리얼번호 여러개를 한 번에 입고
+// body: { product_id, serial_nos: string[], asset_codes?: string[], acquired_at?, notes?, holder_user_ids? }
+products.post('/units/bulk', async (c) => {
+  const b = await c.req.json()
+  const userId = c.get('userId')
+  if (!b.product_id) return c.json({ error: 'product_id is required' }, 400)
+  const serialNos: string[] = Array.isArray(b.serial_nos)
+    ? b.serial_nos.map((s: any) => String(s || '').trim()).filter((s: string) => s)
+    : []
+  const assetCodes: string[] = Array.isArray(b.asset_codes)
+    ? b.asset_codes.map((s: any) => String(s || '').trim())
+    : []
+  if (!serialNos.length) return c.json({ error: 'serial_nos array is required (at least 1)' }, 400)
+
+  const acquiredAt = b.acquired_at || new Date().toISOString().slice(0, 10)
+  const notes = b.notes || null
+  const reason = b.reason || '신규 입고 (다량)'
+  const holderIds: number[] = Array.isArray(b.holder_user_ids)
+    ? b.holder_user_ids.map((x: any) => Number(x)).filter((x: number) => x > 0)
+    : []
+
+  const created: number[] = []
+  const skipped: { serial_no: string, reason: string }[] = []
+
+  for (let i = 0; i < serialNos.length; i++) {
+    const sn = serialNos[i]
+    const ac = assetCodes[i] || null
+    // 중복 시리얼번호 체크 (동일 product_id 내)
+    const dup = await c.env.DB.prepare(
+      `SELECT id FROM product_units WHERE product_id = ? AND serial_no = ? LIMIT 1`
+    ).bind(b.product_id, sn).first()
+    if (dup) { skipped.push({ serial_no: sn, reason: '중복 시리얼번호' }); continue }
+
+    const r = await c.env.DB.prepare(
+      `INSERT INTO product_units (product_id, serial_no, asset_code, status, acquired_at, notes)
+       VALUES (?, ?, ?, 'in_stock', ?, ?)`
+    ).bind(b.product_id, sn, ac, acquiredAt, notes).run()
+    const unitId = r.meta.last_row_id as number
+    created.push(unitId)
+
+    // 입고 이력
+    await c.env.DB.prepare(
+      `INSERT INTO product_movements (product_unit_id, movement_type, quantity, reason, performed_by)
+       VALUES (?, 'inbound', 1, ?, ?)`
+    ).bind(unitId, reason, userId).run()
+
+    // 초기 보유자
+    for (const uid of holderIds) {
+      await c.env.DB.prepare(
+        `INSERT INTO product_holders (product_unit_id, user_id) VALUES (?, ?)`
+      ).bind(unitId, uid).run()
+      await c.env.DB.prepare(
+        `INSERT INTO product_movements (product_unit_id, movement_type, to_user_id, reason, performed_by)
+         VALUES (?, 'assign', ?, '초기 보유자 지정', ?)`
+      ).bind(unitId, uid, userId).run()
+    }
+  }
+
+  await logActivity(c.env.DB, 'create', 'product_unit', 0, `다량 입고: ${created.length}건 (스킵 ${skipped.length}건)`)
+  return c.json({ data: { created_count: created.length, created_ids: created, skipped } }, 201)
+})
+
+// 유닛 보유자 일괄 수정 — 활성 보유자 전체를 새 목록으로 교체
+// body: { user_ids: number[], reason?: string }
+products.put('/units/:id/holders', async (c) => {
+  const id = Number(c.req.param('id'))
+  const b = await c.req.json()
+  const userId = c.get('userId')
+  const newHolderIds: number[] = Array.isArray(b.user_ids)
+    ? b.user_ids.map((x: any) => Number(x)).filter((x: number) => x > 0)
+    : []
+  const reason = b.reason || '보유자 수정'
+
+  // 현재 활성 보유자 조회
+  const currentR = await c.env.DB.prepare(
+    `SELECT user_id FROM product_holders WHERE product_unit_id=? AND released_at IS NULL`
+  ).bind(id).all()
+  const currentIds: number[] = (currentR.results as any[]).map(r => Number(r.user_id))
+  const currentSet = new Set(currentIds)
+  const newSet = new Set(newHolderIds)
+  const toRemove = currentIds.filter(x => !newSet.has(x))
+  const toAdd = newHolderIds.filter(x => !currentSet.has(x))
+
+  // 제거 (release)
+  for (const uid of toRemove) {
+    await c.env.DB.prepare(
+      `UPDATE product_holders SET released_at=CURRENT_TIMESTAMP WHERE product_unit_id=? AND user_id=? AND released_at IS NULL`
+    ).bind(id, uid).run()
+    await c.env.DB.prepare(
+      `INSERT INTO product_movements (product_unit_id, movement_type, from_user_id, reason, performed_by)
+       VALUES (?, 'release', ?, ?, ?)`
+    ).bind(id, uid, reason, userId).run()
+  }
+  // 추가 (assign)
+  for (const uid of toAdd) {
+    await c.env.DB.prepare(
+      `INSERT INTO product_holders (product_unit_id, user_id, notes) VALUES (?, ?, ?)`
+    ).bind(id, uid, reason).run()
+    await c.env.DB.prepare(
+      `INSERT INTO product_movements (product_unit_id, movement_type, to_user_id, reason, performed_by)
+       VALUES (?, 'assign', ?, ?, ?)`
+    ).bind(id, uid, reason, userId).run()
+  }
+
+  // 보유자 변경에 따라 유닛 상태 자동 조정
+  // - 새 보유자가 있고 현재 상태가 in_stock → with_user
+  // - 새 보유자가 없고 현재 상태가 with_user → in_stock
+  const unit = await c.env.DB.prepare(`SELECT status, current_hospital_id FROM product_units WHERE id=?`).bind(id).first<any>()
+  if (unit) {
+    if (newHolderIds.length > 0 && unit.status === 'in_stock') {
+      await c.env.DB.prepare(`UPDATE product_units SET status='with_user', updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(id).run()
+    } else if (newHolderIds.length === 0 && unit.status === 'with_user' && !unit.current_hospital_id) {
+      await c.env.DB.prepare(`UPDATE product_units SET status='in_stock', updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(id).run()
+    }
+  }
+
+  await logActivity(c.env.DB, 'update', 'product_unit', id, `보유자 수정: 추가 ${toAdd.length} / 제거 ${toRemove.length}`)
+  return c.json({ data: { id, added: toAdd, removed: toRemove } })
+})
+
 // 유닛 삭제 (영구 — 폐기와는 다름; 보통은 movement_type='retire' 사용 권장)
 products.delete('/units/:id', async (c) => {
   const id = c.req.param('id')
