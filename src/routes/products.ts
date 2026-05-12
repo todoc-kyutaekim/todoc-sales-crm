@@ -223,13 +223,14 @@ products.post('/units', async (c) => {
   const userId = c.get('userId')
   if (!b.product_id) return c.json({ error: 'product_id is required' }, 400)
 
-  // 시리얼번호 전역 중복 체크 (있을 때만)
+  // 시리얼번호 중복 체크 (있을 때만, 같은 제품 내에서만)
+  // 카테고리/모델별 시리얼 체계가 다르므로 product_id 스코프로만 체크
   const sn = (b.serial_no || '').trim()
   if (sn) {
     const dup = await c.env.DB.prepare(
-      `SELECT id FROM product_units WHERE serial_no = ? LIMIT 1`
-    ).bind(sn).first()
-    if (dup) return c.json({ error: '이미 등록된 시리얼번호입니다', code: 'DUPLICATE_SERIAL' }, 409)
+      `SELECT id FROM product_units WHERE product_id = ? AND serial_no = ? LIMIT 1`
+    ).bind(b.product_id, sn).first()
+    if (dup) return c.json({ error: '이미 등록된 시리얼번호입니다 (해당 제품 내)', code: 'DUPLICATE_SERIAL' }, 409)
   }
 
   // 자산코드 미입력 시 제품의 model_code 자동 적용
@@ -308,12 +309,26 @@ products.post('/units/bulk', async (c) => {
   const b = await c.req.json()
   const userId = c.get('userId')
   if (!b.product_id) return c.json({ error: 'product_id is required' }, 400)
-  const serialNos: string[] = Array.isArray(b.serial_nos)
+
+  // 시리얼번호 정규화 + 배치 내 중복 사전 제거 (먼저 입력된 것 우선)
+  const rawSerials: string[] = Array.isArray(b.serial_nos)
     ? b.serial_nos.map((s: any) => String(s || '').trim()).filter((s: string) => s)
     : []
-  const assetCodes: string[] = Array.isArray(b.asset_codes)
+  const rawAssetCodes: string[] = Array.isArray(b.asset_codes)
     ? b.asset_codes.map((s: any) => String(s || '').trim())
     : []
+  const seenInBatch = new Set<string>()
+  const serialNos: string[] = []
+  const assetCodes: string[] = []
+  const preDupSerials: string[] = []
+  for (let i = 0; i < rawSerials.length; i++) {
+    const s = rawSerials[i]
+    const key = s.toLowerCase()
+    if (seenInBatch.has(key)) { preDupSerials.push(s); continue }
+    seenInBatch.add(key)
+    serialNos.push(s)
+    assetCodes.push(rawAssetCodes[i] || '')
+  }
   if (!serialNos.length) return c.json({ error: 'serial_nos array is required (at least 1)' }, 400)
 
   const acquiredAt = b.acquired_at || new Date().toISOString().slice(0, 10)
@@ -329,6 +344,9 @@ products.post('/units/bulk', async (c) => {
 
   const created: number[] = []
   const skipped: { serial_no: string, reason: string }[] = []
+  // 배치 입력 내부의 중복은 미리 스킵 목록에 추가
+  for (const s of preDupSerials) skipped.push({ serial_no: s, reason: '입력 내 중복 시리얼' })
+
   // 신규 입고는 항상 in_stock(재고) 상태로 진입 (담당자 보유 상태 폐기)
   const initStatus = 'in_stock'
 
@@ -336,11 +354,12 @@ products.post('/units/bulk', async (c) => {
     const sn = serialNos[i]
     const ac = (assetCodes[i] || '').trim() || defaultAssetCode
     try {
-      // 전역 중복 시리얼번호 체크 (UNIQUE 인덱스가 product_id 무관 전역)
+      // 같은 제품 내 중복 시리얼번호 체크
+      // (카테고리/모델별 시리얼 체계가 달라 전역이 아니라 제품 스코프로만 체크)
       const dup = await c.env.DB.prepare(
-        `SELECT id FROM product_units WHERE serial_no = ? LIMIT 1`
-      ).bind(sn).first()
-      if (dup) { skipped.push({ serial_no: sn, reason: '중복 시리얼번호' }); continue }
+        `SELECT id FROM product_units WHERE product_id = ? AND serial_no = ? LIMIT 1`
+      ).bind(b.product_id, sn).first()
+      if (dup) { skipped.push({ serial_no: sn, reason: '이미 등록된 시리얼번호' }); continue }
 
       const r = await c.env.DB.prepare(
         `INSERT INTO product_units (product_id, serial_no, asset_code, status, acquired_at, notes)
@@ -372,7 +391,7 @@ products.post('/units/bulk', async (c) => {
       const msg = String(e?.message || e || 'unknown error')
       // UNIQUE 충돌 등은 중복으로 처리하고 계속 진행
       if (/UNIQUE|constraint/i.test(msg)) {
-        skipped.push({ serial_no: sn, reason: '중복 시리얼번호' })
+        skipped.push({ serial_no: sn, reason: '이미 등록된 시리얼번호' })
       } else {
         skipped.push({ serial_no: sn, reason: msg.slice(0, 200) })
       }

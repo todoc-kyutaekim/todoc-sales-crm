@@ -514,6 +514,9 @@ function closeModal() {
   window._modalLastFocus = null;
 }
 function tryCloseModal() {
+  // 제출 진행 중이면 닫지 않음
+  var mc0 = document.getElementById('modal-content');
+  if (mc0 && mc0.classList.contains('modal-submitting')) return;
   var form = document.querySelector('#modal-body form');
   if (form) {
     var inputs = form.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=checkbox]):not([type=radio]), textarea');
@@ -529,6 +532,76 @@ function tryCloseModal() {
   }
   closeModal();
 }
+
+// ===== 모달 form 제출 진행 표시 (progress bar + 버튼 스피너 + 입력 잠금) =====
+// 모든 모달 내부의 onsubmit 핸들러를 감싸 자동으로 UX 진행 상태를 적용
+function _setModalSubmitting(form, isSubmitting) {
+  var modal = document.getElementById('modal');
+  if (!modal || modal.classList.contains('hidden')) return;
+  var mc = document.getElementById('modal-content');
+  var pb = document.getElementById('modal-progress');
+  var submitBtns = form.querySelectorAll('button[type="submit"]');
+  if (isSubmitting) {
+    if (mc) mc.classList.add('modal-submitting');
+    if (pb) pb.classList.remove('hidden');
+    submitBtns.forEach(function(btn) {
+      if (btn._origHtml === undefined) btn._origHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.setAttribute('aria-busy', 'true');
+      // 기존 아이콘 제거하고 스피너 + "처리 중..." 으로 교체
+      btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>처리 중...';
+    });
+  } else {
+    if (mc) mc.classList.remove('modal-submitting');
+    if (pb) pb.classList.add('hidden');
+    submitBtns.forEach(function(btn) {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      if (btn._origHtml !== undefined) { btn.innerHTML = btn._origHtml; btn._origHtml = undefined; }
+    });
+  }
+}
+
+// 캡처 단계에서 submit 이벤트를 가로채 진행 UI를 적용하고
+// 기존 핸들러가 반환한 Promise(또는 비동기 작업)가 끝나면 해제
+document.addEventListener('submit', function(e) {
+  var form = e.target;
+  if (!form || form.tagName !== 'FORM') return;
+  // modal-body 내부의 form만 대상
+  if (!form.closest('#modal-body')) return;
+  // 이미 진행 중이면 중복 제출 차단
+  var mc = document.getElementById('modal-content');
+  if (mc && mc.classList.contains('modal-submitting')) {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    return;
+  }
+  _setModalSubmitting(form, true);
+
+  // 안전장치: 기존 핸들러가 Promise를 반환하지 않더라도
+  // (a) closeModal 호출 시 자동 해제, (b) 15초 후 자동 해제, (c) DOM 교체 시 자동 해제
+  var releaseTimer = setTimeout(function() {
+    try { _setModalSubmitting(form, false); } catch (e) {}
+  }, 15000);
+
+  // 다음 마이크로/매크로태스크에 form이 여전히 DOM에 있는지 확인해서 풀어줌
+  var poll = setInterval(function() {
+    var stillThere = document.body.contains(form);
+    var modalHidden = !mc || mc.classList.contains('hidden') || document.getElementById('modal').classList.contains('hidden');
+    if (!stillThere || modalHidden) {
+      clearInterval(poll);
+      clearTimeout(releaseTimer);
+      try { _setModalSubmitting(form, false); } catch (e) {}
+    }
+  }, 200);
+
+  // form에 풀기 함수 노출 (필요 시 핸들러가 명시적으로 호출 가능)
+  form._releaseSubmitting = function() {
+    clearInterval(poll);
+    clearTimeout(releaseTimer);
+    try { _setModalSubmitting(form, false); } catch (e) {}
+  };
+}, true);
 
 // ===== Keyboard Shortcuts =====
 document.addEventListener('keydown', e => {

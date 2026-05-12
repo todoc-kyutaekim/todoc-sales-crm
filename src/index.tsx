@@ -234,7 +234,7 @@ const HTML = `<!DOCTYPE html>
     <div id="header-actions" class="hidden lg:flex items-center gap-1 lg:gap-2 flex-shrink-0" role="toolbar" aria-label="페이지 액션"></div>
     <!-- Mention bell (always shown) -->
     <button id="mention-bell" class="theme-toggle flex-shrink-0 relative" onclick="toggleMentionPanel(event)" aria-label="멘션 알림" title="멘션 알림" aria-haspopup="true" aria-expanded="false"><i class="fas fa-bell" aria-hidden="true"></i><span id="mention-badge" class="absolute -top-1 -right-1 hidden min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-[16px] text-center" aria-live="polite">0</span></button>
-    <div id="mention-panel" class="hidden absolute z-50 rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
+    <div id="mention-panel" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
     <!-- Mobile More Menu (테마/액션/유저 메뉴 통합) -->
     <button id="header-more-btn" class="theme-toggle flex-shrink-0 lg:hidden" onclick="toggleHeaderMore(event)" aria-label="더보기" title="더보기" aria-haspopup="true" aria-expanded="false"><i class="fas fa-ellipsis-vertical" aria-hidden="true"></i></button>
     <!-- Theme toggle (Desktop only) -->
@@ -242,7 +242,7 @@ const HTML = `<!DOCTYPE html>
     <div class="h-5 w-px bg-gray-200 mx-1.5 hidden lg:block" aria-hidden="true"></div>
     <div id="user-menu" class="relative flex-shrink-0 hidden lg:flex"></div>
     <!-- Mobile More Menu Sheet -->
-    <div id="header-more-menu" class="hidden fixed z-50 rounded-xl shadow-xl" style="top:52px;right:8px;width:240px;overflow:hidden" role="menu" aria-label="더보기 메뉴"></div>
+    <div id="header-more-menu" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:52px;right:8px;width:240px;overflow:hidden" role="menu" aria-label="더보기 메뉴"></div>
   </header>
   <div id="content" role="main" tabindex="-1" class="flex-1 overflow-y-auto overflow-x-hidden" style="padding-bottom:calc(64px + env(safe-area-inset-bottom, 0px))"></div>
   <style>@media(min-width:1024px){#content{padding-bottom:0!important}}</style>
@@ -304,10 +304,14 @@ const HTML = `<!DOCTYPE html>
 
 <!-- Modal (z-[70]: above bottom nav z-45, FAB z-55/56, search overlay z-55) -->
 <div id="modal" class="fixed inset-0 modal-bg z-[70] hidden items-end lg:items-center justify-center lg:p-4" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true" onclick="if(event.target===this)tryCloseModal()">
-  <div id="modal-content" class="modal-box bg-white w-full max-w-lg overflow-y-auto" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)" tabindex="-1" onclick="event.stopPropagation()">
+  <div id="modal-content" class="modal-box bg-white w-full max-w-lg overflow-y-auto relative" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)" tabindex="-1" onclick="event.stopPropagation()">
     <div class="flex items-center justify-between px-5 lg:px-6 py-3.5 lg:py-4 sticky top-0 bg-white z-10" style="border-bottom:1px solid #eef0f5;border-radius:20px 20px 0 0">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px] tracking-tight"></h3>
       <button type="button" aria-label="모달 닫기" onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg" aria-hidden="true"></i></button>
+    </div>
+    {/* 상단 무한 진행 바 (form 제출 중에만 표시) */}
+    <div id="modal-progress" class="hidden absolute left-0 right-0 top-[60px] h-[3px] overflow-hidden pointer-events-none" aria-hidden="true">
+      <div class="modal-progress-bar h-full w-1/3" style="background:linear-gradient(90deg,#6366f1,#22d3ee,#6366f1)"></div>
     </div>
     <div id="modal-body" class="p-5 lg:p-6"></div>
   </div>

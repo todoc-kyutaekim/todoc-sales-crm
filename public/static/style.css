@@ -1406,3 +1406,51 @@ html[data-theme="dark"] #widget-settings-list label:hover { background: var(--gr
 html[data-theme="dark"] #header-actions .btn-outline { background: var(--surface-tertiary); }
 html[data-theme="dark"] #header-actions .btn-ghost { color: var(--gray-700); }
 html[data-theme="dark"] #header-actions .btn-ghost:hover { background: var(--gray-100); }
+
+/* ===== Modal Loading / Progress Bar (form 제출 중 UX) ===== */
+#modal-progress {
+  z-index: 20;
+  background: rgba(99, 102, 241, 0.08);
+}
+.modal-progress-bar {
+  animation: modalProgressSlide 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  border-radius: 0 999px 999px 0;
+  box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
+}
+@keyframes modalProgressSlide {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(150%); }
+  100% { transform: translateX(350%); }
+}
+/* form 제출 중일 때 모달 내부 입력 잠금 */
+.modal-submitting {
+  pointer-events: none;
+  position: relative;
+}
+.modal-submitting input,
+.modal-submitting select,
+.modal-submitting textarea,
+.modal-submitting button {
+  opacity: 0.6;
+  cursor: wait !important;
+}
+.modal-submitting button[type="submit"] {
+  opacity: 0.85;
+  position: relative;
+}
+/* submit 버튼 내부 스피너 */
+.btn-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 6px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: btnSpinnerSpin 0.7s linear infinite;
+  vertical-align: -2px;
+}
+@keyframes btnSpinnerSpin {
+  to { transform: rotate(360deg); }
+}
+html[data-theme="dark"] #modal-progress { background: rgba(99, 102, 241, 0.15); }
