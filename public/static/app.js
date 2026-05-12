@@ -8082,9 +8082,9 @@ async function showProductUnitForm(id) {
     return;
   }
 
-  // 신규 입고 — 단일/다량 토글 방식
+  // 신규 입고 — 단일/다량 토글 방식 (초기 보유자: 기본 전체 선택)
   var holderCb = users.map(function(u) {
-    return '<label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" name="holder" value="' + u.id + '" class="rounded"><span>' + u.name + '</span></label>';
+    return '<label class="flex items-center gap-1.5 text-xs cursor-pointer"><input type="checkbox" name="holder" value="' + u.id + '" class="rounded" checked><span>' + u.name + '</span></label>';
   }).join('');
 
   var html = '<form id="prod-unit-form" class="space-y-3">' +
@@ -8318,7 +8318,7 @@ async function showProductUnitDetail(id) {
       '<div class="card-flat p-4">' +
         '<div class="flex items-center gap-2 mb-2 flex-wrap">' +
           '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:#e0e7ff;color:#3730a3">' + (PROD_CAT_LABELS[u.category] || u.category) + '</span>' +
-          (u.model && u.model !== 'default' ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:#f1f5f9;color:#475569">' + u.model + '</span>' : '') +
+          (u.model && u.model !== 'default' && u.model !== 'sullivan_implant' ? '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:#f1f5f9;color:#475569">' + u.model + '</span>' : '') +
           '<span class="prod-status-chip" style="background:' + st.bg + ';color:' + st.fg + ';border-color:' + st.bd + '">' + stLbl + '</span>' +
         '</div>' +
         '<div class="font-bold text-base text-slate-800 mb-1">' + (u.product_name || '') + '</div>' +
