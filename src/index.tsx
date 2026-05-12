@@ -309,7 +309,7 @@ const HTML = `<!DOCTYPE html>
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px] tracking-tight"></h3>
       <button type="button" aria-label="모달 닫기" onclick="tryCloseModal()" class="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:bg-slate-100 hover:text-slate-500 transition"><i class="fas fa-xmark text-lg" aria-hidden="true"></i></button>
     </div>
-    {/* 상단 무한 진행 바 (form 제출 중에만 표시) */}
+    <!-- 상단 무한 진행 바 (form 제출 중에만 표시) -->
     <div id="modal-progress" class="hidden absolute left-0 right-0 top-[60px] h-[3px] overflow-hidden pointer-events-none" aria-hidden="true">
       <div class="modal-progress-bar h-full w-1/3" style="background:linear-gradient(90deg,#6366f1,#22d3ee,#6366f1)"></div>
     </div>
