@@ -217,6 +217,63 @@ body {
 
 .btn-sm { padding: 5px 11px; font-size: 12px; gap: 4px; border-radius: var(--radius-sm) }
 
+/* ===== Product Action Buttons — Larger, mobile-friendly ===== */
+.prod-act-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  gap: 5px;
+  padding: 7px 11px;
+  font-size: 12px; font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-primary);
+  color: var(--gray-700);
+  cursor: pointer;
+  transition: all .15s var(--ease-smooth);
+  min-height: 34px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-xs);
+  -webkit-tap-highlight-color: transparent;
+}
+.prod-act-btn:hover { background: var(--gray-50); border-color: var(--border-strong) }
+.prod-act-btn:active { transform: scale(.96) }
+.prod-act-btn i { font-size: 12px }
+.prod-act-btn-label { font-size: 12px; font-weight: 600 }
+
+.prod-act-btn-primary { background: var(--brand-500); color: #fff; border-color: var(--brand-500) }
+.prod-act-btn-primary:hover { background: var(--brand-600); border-color: var(--brand-600) }
+.prod-act-btn-outline { background: var(--surface-primary); color: var(--brand-600); border-color: var(--brand-200, #c7d7fe) }
+.prod-act-btn-outline:hover { background: var(--brand-50, #eff4ff); border-color: var(--brand-300, #a5b8fc) }
+.prod-act-btn-ghost { background: transparent; color: var(--gray-600); border-color: transparent; box-shadow: none }
+.prod-act-btn-ghost:hover { background: var(--gray-100); color: var(--gray-800) }
+
+@media (max-width: 1023px) {
+  .prod-act-btn { padding: 8px 11px; font-size: 12.5px; min-height: 38px }
+  .prod-act-btn-label { display: inline }
+}
+@media (max-width: 640px) {
+  .prod-act-btn { padding: 9px 12px; font-size: 13px; min-height: 42px; gap: 6px; border-radius: 10px }
+  .prod-act-btn i { font-size: 13px }
+}
+@media (max-width: 380px) {
+  .prod-act-btn { padding: 8px 10px; font-size: 12px; min-height: 40px }
+  .prod-act-btn-label { display: none }
+  .prod-act-btn { padding: 9px; min-width: 40px }
+}
+
+/* ===== Product Status Chip ===== */
+.prod-status-chip {
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid;
+  white-space: nowrap;
+  letter-spacing: -.01em;
+}
+@media (max-width: 640px) {
+  .prod-status-chip { font-size: 11.5px; padding: 4px 10px }
+}
+
 /* ===== Form Controls — Clean, professional ===== */
 .input {
   width: 100%; padding: 9px 13px;

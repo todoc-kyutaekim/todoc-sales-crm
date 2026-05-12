@@ -5,6 +5,23 @@ type Bindings = { DB: D1Database }
 type Variables = { userId: number }
 const products = new Hono<{ Bindings: Bindings, Variables: Variables }>()
 
+// 재고(in_stock) 상태의 기본 보유자: 김규태(id=3), 도재민(id=4)
+const DEFAULT_STOCK_HOLDERS: number[] = [3, 4]
+
+// 유닛이 in_stock 상태일 때 기본 보유자(김규태/도재민)가 활성 상태로 존재하도록 보장
+async function ensureDefaultStockHolders(db: D1Database, unitId: number) {
+  for (const uid of DEFAULT_STOCK_HOLDERS) {
+    const existing = await db.prepare(
+      `SELECT id FROM product_holders WHERE product_unit_id=? AND user_id=? AND released_at IS NULL LIMIT 1`
+    ).bind(unitId, uid).first()
+    if (!existing) {
+      await db.prepare(
+        `INSERT INTO product_holders (product_unit_id, user_id, notes) VALUES (?, ?, '재고 기본 보유자 자동 지정')`
+      ).bind(unitId, uid).run()
+    }
+  }
+}
+
 // ============================================================
 // 제품 마스터: 카테고리/모델 정의 (카테고리별 비고 description 포함)
 // ============================================================
@@ -13,7 +30,7 @@ products.get('/', async (c) => {
     `SELECT p.*,
       (SELECT COUNT(*) FROM product_units pu WHERE pu.product_id = p.id) as total_count,
       (SELECT COUNT(*) FROM product_units pu WHERE pu.product_id = p.id AND pu.status = 'in_stock') as in_stock_count,
-      (SELECT COUNT(*) FROM product_units pu WHERE pu.product_id = p.id AND pu.status IN ('with_user','at_hospital','out')) as out_count,
+      (SELECT COUNT(*) FROM product_units pu WHERE pu.product_id = p.id AND pu.status IN ('at_hospital','out')) as out_count,
       (SELECT COUNT(*) FROM product_units pu WHERE pu.product_id = p.id AND pu.status = 'delivered') as delivered_count
      FROM products p
      WHERE p.active = 1
@@ -57,7 +74,7 @@ products.get('/dashboard', async (c) => {
       `SELECT p.category, p.model, p.name,
         COUNT(pu.id) as total,
         SUM(CASE WHEN pu.status = 'in_stock' THEN 1 ELSE 0 END) as in_stock,
-        SUM(CASE WHEN pu.status IN ('with_user','at_hospital','out') THEN 1 ELSE 0 END) as out,
+        SUM(CASE WHEN pu.status IN ('at_hospital','out') THEN 1 ELSE 0 END) as out,
         SUM(CASE WHEN pu.status = 'delivered' THEN 1 ELSE 0 END) as delivered,
         SUM(CASE WHEN pu.status IN ('lost','repair','retired') THEN 1 ELSE 0 END) as inactive
        FROM products p
@@ -70,7 +87,7 @@ products.get('/dashboard', async (c) => {
       `SELECT
         COUNT(*) as total,
         SUM(CASE WHEN status = 'in_stock' THEN 1 ELSE 0 END) as in_stock,
-        SUM(CASE WHEN status IN ('with_user','at_hospital','out') THEN 1 ELSE 0 END) as out,
+        SUM(CASE WHEN status IN ('at_hospital','out') THEN 1 ELSE 0 END) as out,
         SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
         SUM(CASE WHEN status IN ('lost','repair','retired') THEN 1 ELSE 0 END) as inactive
        FROM product_units`
@@ -225,8 +242,8 @@ products.post('/units', async (c) => {
   const holderIds: number[] = Array.isArray(b.holder_user_ids)
     ? b.holder_user_ids.map((x: any) => Number(x)).filter((x: number) => x > 0)
     : []
-  // 보유자가 있으면 입고 시점부터 with_user 상태로 (Task 3: 상태 전이 정확화)
-  const initStatus = holderIds.length > 0 ? 'with_user' : 'in_stock'
+  // 신규 입고는 항상 in_stock(재고) 상태로 진입 (담당자 보유 상태 폐기)
+  const initStatus = 'in_stock'
 
   try {
     const r = await c.env.DB.prepare(
@@ -258,6 +275,9 @@ products.post('/units', async (c) => {
          VALUES (?, 'assign', ?, '초기 보유자 지정', ?)`
       ).bind(unitId, uid, userId).run()
     }
+
+    // 재고 상태이므로 기본 보유자(김규태/도재민)를 자동 추가 (사용자 지정 보유자와 중복 시 스킵)
+    await ensureDefaultStockHolders(c.env.DB, unitId)
 
     await logActivity(c.env.DB, 'create', 'product_unit', unitId, `유닛 #${unitId} 입고`)
     return c.json({ data: { id: unitId } }, 201)
@@ -309,8 +329,8 @@ products.post('/units/bulk', async (c) => {
 
   const created: number[] = []
   const skipped: { serial_no: string, reason: string }[] = []
-  // 보유자가 있으면 입고 시점부터 with_user 상태로 (Task 3: 상태 전이 정확화)
-  const initStatus = holderIds.length > 0 ? 'with_user' : 'in_stock'
+  // 신규 입고는 항상 in_stock(재고) 상태로 진입 (담당자 보유 상태 폐기)
+  const initStatus = 'in_stock'
 
   for (let i = 0; i < serialNos.length; i++) {
     const sn = serialNos[i]
@@ -345,6 +365,9 @@ products.post('/units/bulk', async (c) => {
            VALUES (?, 'assign', ?, '초기 보유자 지정', ?)`
         ).bind(unitId, uid, userId).run()
       }
+
+      // 재고 상태이므로 기본 보유자(김규태/도재민) 자동 추가
+      await ensureDefaultStockHolders(c.env.DB, unitId)
     } catch (e: any) {
       const msg = String(e?.message || e || 'unknown error')
       // UNIQUE 충돌 등은 중복으로 처리하고 계속 진행
@@ -402,21 +425,12 @@ products.put('/units/:id/holders', async (c) => {
     ).bind(id, uid, reason, userId).run()
   }
 
-  // 보유자 변경에 따라 유닛 상태 자동 조정 (Task 3: 명확한 상태 전이)
-  // 종료/특수 상태(delivered, retired, lost, repair, at_hospital)는 단순 보유자 변경으로 변경하지 않음
-  // 보유자만 바뀌는 케이스에서:
-  //   - 보유자 있음 + 상태가 in_stock|with_user  → with_user
-  //   - 보유자 없음 + 상태가 in_stock|with_user  → in_stock
+  // '담당자 보유' 상태(with_user) 폐기: in_stock 상태에서는 보유자 유무와 무관하게 상태 유지
   // at_hospital 상태에서 보유자 변경은 "현장 담당자 인계"로 보고 상태는 유지
-  const unit = await c.env.DB.prepare(`SELECT status, current_hospital_id FROM product_units WHERE id=?`).bind(id).first<any>()
-  if (unit) {
-    const transitionable = unit.status === 'in_stock' || unit.status === 'with_user'
-    if (transitionable) {
-      const next = newHolderIds.length > 0 ? 'with_user' : 'in_stock'
-      if (next !== unit.status) {
-        await c.env.DB.prepare(`UPDATE product_units SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(next, id).run()
-      }
-    }
+  // 재고 상태이면 기본 보유자(김규태/도재민) 자동 보장
+  const unit = await c.env.DB.prepare(`SELECT status FROM product_units WHERE id=?`).bind(id).first<any>()
+  if (unit && unit.status === 'in_stock') {
+    await ensureDefaultStockHolders(c.env.DB, id)
   }
 
   await logActivity(c.env.DB, 'update', 'product_unit', id, `보유자 수정: 추가 ${toAdd.length} / 제거 ${toRemove.length}`)
@@ -467,10 +481,10 @@ products.post('/movements', async (c) => {
 
   // 2) 유닛 상태/위치 갱신
   if (type === 'checkout') {
-    // 대여 반출 (외부)
+    // 대여 반출 — 기관 있으면 at_hospital, 없으면 out(외부)
     await c.env.DB.prepare(
       `UPDATE product_units SET status=?, current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-    ).bind(hospitalId ? 'at_hospital' : 'with_user', hospitalId, unitId).run()
+    ).bind(hospitalId ? 'at_hospital' : 'out', hospitalId, unitId).run()
     // 보유자 추가
     if (toUserId) {
       await c.env.DB.prepare(
@@ -511,6 +525,8 @@ products.post('/movements', async (c) => {
          ORDER BY performed_at DESC LIMIT 1
        )`
     ).bind(b.actual_return_date || null, unitId).run()
+    // 재고 복귀 시 기본 보유자(김규태/도재민) 자동 추가
+    await ensureDefaultStockHolders(c.env.DB, unitId)
   } else if (type === 'demo') {
     // 시연 후 복귀 (상태는 in_stock 유지, 이력만 기록)
     // 별도 상태 변경 없음
@@ -667,7 +683,7 @@ products.get('/available-for-meeting', async (c) => {
         THEN 1 ELSE 0 END) as is_mine
      FROM product_units pu
      JOIN products p ON p.id = pu.product_id
-     WHERE pu.status IN ('in_stock','with_user','at_hospital','out')
+     WHERE pu.status IN ('in_stock','at_hospital','out')
      ORDER BY is_mine DESC, p.category, p.model, pu.asset_code`
   ).bind(userId).all()
   return c.json({ data: r.results })
@@ -721,7 +737,7 @@ products.post('/link-to-meeting', async (c) => {
     } else if (action === 'checkout') {
       await c.env.DB.prepare(
         `UPDATE product_units SET status=?, current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-      ).bind(meet.hospital_id ? 'at_hospital' : 'with_user', meet.hospital_id || null, unitId).run()
+      ).bind(meet.hospital_id ? 'at_hospital' : 'out', meet.hospital_id || null, unitId).run()
     }
     linked.push(unitId)
   }
@@ -1006,7 +1022,7 @@ products.post('/sets/:id/movements', async (c) => {
     if (type === 'checkout') {
       await c.env.DB.prepare(
         `UPDATE product_units SET status=?, current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-      ).bind(hospitalId ? 'at_hospital' : 'with_user', hospitalId, unitId).run()
+      ).bind(hospitalId ? 'at_hospital' : 'out', hospitalId, unitId).run()
       if (toUserId) {
         await c.env.DB.prepare(
           `INSERT INTO product_holders (product_unit_id, user_id, notes) VALUES (?, ?, ?)`
@@ -1035,6 +1051,8 @@ products.post('/sets/:id/movements', async (c) => {
            ORDER BY performed_at DESC LIMIT 1
          )`
       ).bind(b.actual_return_date || null, unitId).run()
+      // 재고 복귀 시 기본 보유자(김규태/도재민) 자동 추가
+      await ensureDefaultStockHolders(c.env.DB, unitId)
     }
     // demo는 상태 변경 없음
 
@@ -1056,7 +1074,7 @@ products.post('/sets/:id/movements', async (c) => {
   if (type === 'checkout') {
     await c.env.DB.prepare(
       `UPDATE product_sets SET status=?, current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
-    ).bind(hospitalId ? 'at_hospital' : 'with_user', hospitalId, setId).run()
+    ).bind(hospitalId ? 'at_hospital' : 'out', hospitalId, setId).run()
   } else if (type === 'deliver') {
     await c.env.DB.prepare(
       `UPDATE product_sets SET status='delivered', current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`

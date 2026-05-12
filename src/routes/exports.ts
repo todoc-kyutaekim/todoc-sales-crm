@@ -235,7 +235,7 @@ exports.get('/xlsx/:type', async (c) => {
     const r = await c.env.DB.prepare(sql).bind(...params).all()
     const catMap: Record<string,string> = { internal: '내부기', external: '외부기', carry_case: '휴대보관함' }
     const stMap: Record<string,string> = {
-      in_stock: '재고', with_user: '담당자 보유', at_hospital: '기관 비치', out: '반출',
+      in_stock: '재고', at_hospital: '기관 비치', out: '반출',
       delivered: '납품완료', lost: '분실', repair: '수리', retired: '폐기'
     }
     const movMap: Record<string,string> = {
@@ -266,7 +266,7 @@ exports.get('/xlsx/:type', async (c) => {
       `SELECT p.category, p.model, p.name as product_name,
         COUNT(pu.id) as total,
         SUM(CASE WHEN pu.status='in_stock' THEN 1 ELSE 0 END) as in_stock,
-        SUM(CASE WHEN pu.status IN ('with_user','at_hospital','out') THEN 1 ELSE 0 END) as out,
+        SUM(CASE WHEN pu.status IN ('at_hospital','out') THEN 1 ELSE 0 END) as out,
         SUM(CASE WHEN pu.status='delivered' THEN 1 ELSE 0 END) as delivered,
         SUM(CASE WHEN pu.status IN ('lost','repair','retired') THEN 1 ELSE 0 END) as inactive
        FROM products p

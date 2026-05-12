@@ -7599,7 +7599,7 @@ window._prodFormData = null;    // hospitals/users cache for movement modal
 
 var PROD_STATUS_LABELS = {
   in_stock: '재고',
-  with_user: '담당자 보유',
+  with_user: '재고',            // 레거시 호환: 담당자 보유 → 재고로 표시
   at_hospital: '기관 반출중',
   out: '외부',
   delivered: '납품완료',
@@ -7609,7 +7609,7 @@ var PROD_STATUS_LABELS = {
 };
 var PROD_STATUS_COLORS = {
   in_stock:    { bg: '#dcfce7', fg: '#166534', bd: '#bbf7d0' },
-  with_user:   { bg: '#dbeafe', fg: '#1e40af', bd: '#bfdbfe' },
+  with_user:   { bg: '#dcfce7', fg: '#166534', bd: '#bbf7d0' },  // in_stock과 동일
   at_hospital: { bg: '#fef3c7', fg: '#92400e', bd: '#fde68a' },
   out:         { bg: '#fef3c7', fg: '#92400e', bd: '#fde68a' },
   delivered:   { bg: '#e9d5ff', fg: '#6b21a8', bd: '#d8b4fe' },
@@ -7617,6 +7617,19 @@ var PROD_STATUS_COLORS = {
   repair:      { bg: '#fee2e2', fg: '#991b1b', bd: '#fecaca' },
   retired:     { bg: '#f1f5f9', fg: '#475569', bd: '#cbd5e1' }
 };
+// 유닛의 현재 위치를 사람이 읽을 수 있는 형태로 변환 (재고 상태이면 "회사")
+function prodLocationLabel(u) {
+  if (!u) return '-';
+  if (u.status === 'in_stock' || u.status === 'with_user') return '회사';
+  if (u.current_hospital_name) return u.current_hospital_name;
+  if (u.status === 'delivered') return '납품완료';
+  if (u.status === 'at_hospital') return '기관 반출중';
+  if (u.status === 'out') return '외부';
+  if (u.status === 'lost') return '분실';
+  if (u.status === 'repair') return '수리중';
+  if (u.status === 'retired') return '폐기';
+  return '-';
+}
 var PROD_CAT_LABELS = { internal: '내부기', external: '외부기', carry_case: '휴대보관함' };
 var PROD_CAT_THEMES = {
   internal:   { name: '내부기',     bg: '#eff6ff', border: '#3b82f6', chip: '#dbeafe', chipFg: '#1e40af', icon: 'fa-building' },
@@ -7674,7 +7687,23 @@ async function loadProducts() {
       '.prod-sub-btn.active{background:#0f172a;color:#fff;border-color:#0f172a}' +
       '.prod-kpi-card{padding:14px;border-radius:14px;border:1px solid #e2e8f0;background:#fff;display:flex;flex-direction:column;gap:6px}' +
       'html[data-theme="dark"] .prod-kpi-card{background:#0f1218;border-color:#1f242e}' +
-      '.prod-status-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid}';
+      '.prod-status-chip{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;border:1px solid}' +
+      /* 제품 관리 액션 버튼 — 데스크탑에서는 라벨 표시, 모바일에서는 아이콘만 */
+      '.prod-act-btn{display:inline-flex;align-items:center;gap:5px;padding:7px 11px;font-size:12px;font-weight:600;border-radius:8px;border:1px solid transparent;cursor:pointer;line-height:1;white-space:nowrap;transition:all .15s ease;min-height:34px}' +
+      '.prod-act-btn i{font-size:12px}' +
+      '.prod-act-btn-ghost{background:#f8fafc;color:#475569;border-color:#e2e8f0}' +
+      '.prod-act-btn-ghost:hover{background:#f1f5f9;color:#0f172a}' +
+      '.prod-act-btn-outline{background:#fff;color:#2563eb;border-color:#bfdbfe}' +
+      '.prod-act-btn-outline:hover{background:#eff6ff;border-color:#3b82f6}' +
+      '.prod-act-btn-primary{background:#2563eb;color:#fff;border-color:#2563eb}' +
+      '.prod-act-btn-primary:hover{background:#1d4ed8}' +
+      'html[data-theme="dark"] .prod-act-btn-ghost{background:#1a1f29;color:#cbd5e1;border-color:#2a313d}' +
+      'html[data-theme="dark"] .prod-act-btn-outline{background:#0f1218;color:#60a5fa;border-color:#1e3a8a}' +
+      '@media (max-width: 640px){.prod-act-btn{padding:8px 10px;min-width:36px;justify-content:center}.prod-act-btn-label{display:none}.prod-act-btn i{font-size:13px}}' +
+      /* 모바일 모달 z-index 강화 + 가독성 */
+      '.modal-overlay{z-index:9990 !important}' +
+      '.modal-container{z-index:9991 !important}' +
+      '@media (max-width: 640px){.modal-container{width:96vw !important;max-width:96vw !important;max-height:92vh !important;margin:0 auto}.modal-container .input,.modal-container .select{font-size:14px;padding:9px 11px}.modal-container .input-label{font-size:12px}.modal-container .btn{min-height:40px;padding:9px 14px;font-size:13px}}';
     document.head.appendChild(st);
   }
 
@@ -7843,9 +7872,14 @@ function prodUnitRow(u, catTheme) {
   var st = PROD_STATUS_COLORS[u.status] || PROD_STATUS_COLORS.in_stock;
   var stLbl = PROD_STATUS_LABELS[u.status] || u.status;
   var canLoan = (u.status === 'in_stock' || u.status === 'with_user');
-  var canReturn = (u.status === 'at_hospital' || u.status === 'with_user' || u.status === 'out');
+  var canReturn = (u.status === 'at_hospital' || u.status === 'out');
   // 시리얼번호 우선, 없으면 모델명, 둘 다 없으면 #id
   var primary = u.serial_no || u.asset_code || ('#' + u.id);
+  var locLabel = (u.status === 'in_stock' || u.status === 'with_user')
+    ? '<span class="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700"><i class="fas fa-building text-emerald-500 text-[10px]"></i>회사</span>'
+    : (u.hospital_name
+        ? '<div class="text-[11px] text-slate-700 truncate" title="' + u.hospital_name + '"><i class="fas fa-hospital text-slate-400 text-[9px] mr-1"></i>' + u.hospital_name + '</div>'
+        : '<span class="text-slate-300 text-[11px]">—</span>');
   return '<tr class="border-t border-gray-100 hover:bg-slate-50/70 cursor-pointer transition" style="border-left:4px solid ' + t.border + '" onclick="showProductUnitDetail(' + u.id + ')">' +
     '<td class="px-2 py-2.5">' +
       '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:' + t.chip + ';color:' + t.chipFg + '">' +
@@ -7866,20 +7900,55 @@ function prodUnitRow(u, catTheme) {
     '<td class="px-2 py-2.5 hidden lg:table-cell">' +
       (u.holders ? '<div class="text-[11px] text-slate-700 truncate" title="' + u.holders + '"><i class="fas fa-user text-slate-400 text-[9px] mr-1"></i>' + u.holders + '</div>' : '<span class="text-slate-300 text-[11px]">—</span>') +
     '</td>' +
-    '<td class="px-2 py-2.5 hidden lg:table-cell">' +
-      (u.hospital_name ? '<div class="text-[11px] text-slate-700 truncate" title="' + u.hospital_name + '"><i class="fas fa-hospital text-slate-400 text-[9px] mr-1"></i>' + u.hospital_name + '</div>' : '<span class="text-slate-300 text-[11px]">—</span>') +
-    '</td>' +
+    '<td class="px-2 py-2.5 hidden lg:table-cell">' + locLabel + '</td>' +
     '<td class="px-2 py-2.5 text-right" onclick="event.stopPropagation()">' +
-      '<div class="inline-flex items-center gap-1">' +
-        '<button class="btn btn-ghost btn-sm !p-1.5 !text-[10px]" onclick="showProductHolderEdit(' + u.id + ')" title="보유자 수정"><i class="fas fa-user-pen text-slate-500"></i></button>' +
-        (canLoan ? '<button class="btn btn-outline btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'checkout\')" title="반출"><i class="fas fa-arrow-up-from-bracket"></i></button>' : '') +
-        (u.status === 'in_stock' ? '<button class="btn btn-outline btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'deliver\')" title="납품"><i class="fas fa-gift"></i></button>' : '') +
-        (canReturn ? '<button class="btn btn-primary btn-sm !px-2 !py-1 !text-[10px]" onclick="quickReturnProductUnit(' + u.id + ')" title="회수"><i class="fas fa-arrow-down-to-bracket"></i></button>' : '') +
-        '<button class="btn btn-ghost btn-sm !p-1.5 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'\')" title="기타 이동"><i class="fas fa-ellipsis-h"></i></button>' +
+      '<div class="inline-flex items-center gap-1 sm:gap-1.5 flex-wrap justify-end">' +
+        '<button class="prod-act-btn prod-act-btn-ghost" onclick="showProductHolderEdit(' + u.id + ')" title="보유자 수정"><i class="fas fa-user-pen"></i><span class="prod-act-btn-label">보유자</span></button>' +
+        (canLoan ? '<button class="prod-act-btn prod-act-btn-outline" onclick="showProductMoveForm(' + u.id + ',\'checkout\')" title="반출"><i class="fas fa-arrow-up-from-bracket"></i><span class="prod-act-btn-label">반출</span></button>' : '') +
+        (u.status === 'in_stock' || u.status === 'with_user' ? '<button class="prod-act-btn prod-act-btn-outline" onclick="showProductMoveForm(' + u.id + ',\'deliver\')" title="납품"><i class="fas fa-gift"></i><span class="prod-act-btn-label">납품</span></button>' : '') +
+        (canReturn ? '<button class="prod-act-btn prod-act-btn-primary" onclick="quickReturnProductUnit(' + u.id + ')" title="회수"><i class="fas fa-arrow-down-to-bracket"></i><span class="prod-act-btn-label">회수</span></button>' : '') +
+        '<button class="prod-act-btn prod-act-btn-ghost" onclick="showProductMoreActions(' + u.id + ')" title="더보기"><i class="fas fa-ellipsis-h"></i><span class="prod-act-btn-label">더보기</span></button>' +
       '</div>' +
     '</td>' +
   '</tr>';
 }
+
+// 제품 유닛 - "더보기" 액션 시트 (모바일 친화적, 큰 터치 영역)
+function showProductMoreActions(unitId) {
+  // 유닛 정보를 가볍게 가져와 가능한 액션만 표시
+  API.get('/products/units/' + unitId).then(function(r) {
+    var u = (r.data && r.data.data) || {};
+    var canLoan = (u.status === 'in_stock' || u.status === 'with_user');
+    var canReturn = (u.status === 'at_hospital' || u.status === 'out');
+    var primary = u.serial_no || u.asset_code || ('#' + u.id);
+    var stLbl = (PROD_STATUS_LABELS[u.status] || u.status);
+
+    var actions = [];
+    actions.push({ icon: 'fa-user-pen', label: '보유자 수정', fn: 'showProductHolderEdit(' + unitId + ')' });
+    if (canLoan) actions.push({ icon: 'fa-arrow-up-from-bracket', label: '대여 반출', fn: 'showProductMoveForm(' + unitId + ",'checkout')" });
+    if (u.status === 'in_stock' || u.status === 'with_user') actions.push({ icon: 'fa-gift', label: '영구 납품', fn: 'showProductMoveForm(' + unitId + ",'deliver')" });
+    if (u.status === 'in_stock' || u.status === 'with_user') actions.push({ icon: 'fa-eye', label: '시연 (복귀)', fn: 'showProductMoveForm(' + unitId + ",'demo')" });
+    if (canReturn) actions.push({ icon: 'fa-arrow-down-to-bracket', label: '회수', fn: 'quickReturnProductUnit(' + unitId + ')', cls: 'primary' });
+    actions.push({ icon: 'fa-arrow-right-arrow-left', label: '담당자 이전', fn: 'showProductMoveForm(' + unitId + ",'transfer')" });
+    actions.push({ icon: 'fa-pen', label: '유닛 정보 수정', fn: 'showProductUnitForm(' + unitId + ')' });
+    actions.push({ icon: 'fa-wrench', label: '수리 처리', fn: 'showProductMoveForm(' + unitId + ",'repair')" });
+    actions.push({ icon: 'fa-triangle-exclamation', label: '분실 처리', fn: 'showProductMoveForm(' + unitId + ",'lost')", cls: 'danger' });
+    actions.push({ icon: 'fa-trash', label: '폐기 처리', fn: 'showProductMoveForm(' + unitId + ",'retire')", cls: 'danger' });
+
+    var html = '<div class="card-flat p-3 bg-slate-50 mb-3">' +
+      '<div class="text-[11px] text-slate-500 mb-1">대상 유닛</div>' +
+      '<div class="text-sm font-bold text-slate-800">' + (u.product_name || '') + '</div>' +
+      '<div class="text-[11px] text-slate-500 font-mono mt-0.5">' + primary + ' · 상태: ' + stLbl + '</div>' +
+    '</div>' +
+    '<div class="prod-mobile-action-sheet">' +
+      actions.map(function(a) {
+        return '<button class="' + (a.cls || '') + '" onclick="closeModal();' + a.fn + '"><i class="fas ' + a.icon + '"></i><span>' + a.label + '</span></button>';
+      }).join('') +
+    '</div>';
+    openModal('<i class="fas fa-ellipsis-h text-slate-400 mr-2"></i>더보기', html, 'narrow');
+  }).catch(function() { toast('유닛 정보 로드 실패', 'err'); });
+}
+window.showProductMoreActions = showProductMoreActions;
 
 // 보유자 단독 수정 모달
 async function showProductHolderEdit(unitId) {
@@ -7919,7 +7988,7 @@ async function showProductHolderEdit(unitId) {
       '<div><label class="input-label">사유 / 메모 <span class="text-[10px] text-slate-400 font-normal">(이력에 기록됨)</span></label>' +
         '<input type="text" name="reason" class="input" placeholder="예: 담당자 변경, 보유자 인계 등">' +
       '</div>' +
-      '<div class="text-[11px] text-slate-500 bg-amber-50 rounded-lg p-2"><i class="fas fa-info-circle text-amber-500 mr-1"></i>저장 시 추가/해제 내역이 자동으로 이동 이력에 기록되며, 보유자 유/무에 따라 유닛 상태(재고/담당자 보유)가 자동 갱신됩니다.</div>' +
+      '<div class="text-[11px] text-slate-500 bg-amber-50 rounded-lg p-2"><i class="fas fa-info-circle text-amber-500 mr-1"></i>저장 시 추가/해제 내역이 자동으로 이동 이력에 기록됩니다. 재고 상태에서는 기본적으로 김규태·도재민이 보유자로 자동 설정되며, 필요 시 추가 보유자를 더할 수 있습니다.</div>' +
       '<div class="flex justify-end gap-2 pt-3 border-t border-gray-100">' +
         '<button type="button" class="btn btn-outline" onclick="closeModal()">취소</button>' +
         '<button type="submit" class="btn btn-primary"><i class="fas fa-check mr-1"></i>저장</button>' +
@@ -7987,7 +8056,7 @@ function prodSetCard(s) {
   }).join(' ');
 
   var canCheckout = (s.status === 'in_stock' || s.status === 'with_user');
-  var canReturn = (s.status === 'at_hospital' || s.status === 'with_user' || s.status === 'out');
+  var canReturn = (s.status === 'at_hospital' || s.status === 'out');
 
   return '<div class="card-flat p-4">' +
     '<div class="flex items-start justify-between gap-3 mb-2">' +
@@ -8002,12 +8071,12 @@ function prodSetCard(s) {
       '</div>' +
     '</div>' +
     (compChips ? '<div class="flex flex-wrap gap-1 mb-3">' + compChips + '</div>' : '') +
-    '<div class="flex flex-wrap gap-1 pt-3 border-t border-gray-100">' +
-      '<button class="btn btn-outline btn-sm text-[11px]" onclick="showProductSetDetail(' + s.id + ')"><i class="fas fa-list"></i> 상세</button>' +
-      (canCheckout ? '<button class="btn btn-outline btn-sm text-[11px]" onclick="showProductSetMoveForm(' + s.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i> 세트 반출</button>' : '') +
-      (canReturn ? '<button class="btn btn-primary btn-sm text-[11px]" onclick="quickReturnProductSet(' + s.id + ')"><i class="fas fa-arrow-down-to-bracket"></i> 세트 회수</button>' : '') +
-      '<button class="btn btn-outline btn-sm text-[11px]" onclick="showProductSetForm(' + s.id + ')"><i class="fas fa-pen"></i> 수정</button>' +
-      '<button class="btn btn-ghost btn-sm text-[11px] !text-red-500" onclick="deleteProductSet(' + s.id + ')"><i class="fas fa-trash"></i></button>' +
+    '<div class="flex flex-wrap gap-1.5 pt-3 border-t border-gray-100">' +
+      '<button class="prod-act-btn prod-act-btn-outline" onclick="showProductSetDetail(' + s.id + ')"><i class="fas fa-list"></i><span class="prod-act-btn-label">상세</span></button>' +
+      (canCheckout ? '<button class="prod-act-btn prod-act-btn-outline" onclick="showProductSetMoveForm(' + s.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i><span class="prod-act-btn-label">세트 반출</span></button>' : '') +
+      (canReturn ? '<button class="prod-act-btn prod-act-btn-primary" onclick="quickReturnProductSet(' + s.id + ')"><i class="fas fa-arrow-down-to-bracket"></i><span class="prod-act-btn-label">세트 회수</span></button>' : '') +
+      '<button class="prod-act-btn prod-act-btn-outline" onclick="showProductSetForm(' + s.id + ')"><i class="fas fa-pen"></i><span class="prod-act-btn-label">수정</span></button>' +
+      '<button class="prod-act-btn prod-act-btn-ghost !text-red-500" onclick="deleteProductSet(' + s.id + ')" title="삭제"><i class="fas fa-trash"></i></button>' +
     '</div>' +
   '</div>';
 }
@@ -8115,7 +8184,7 @@ async function showProductSetDetail(setId) {
     }).join('');
 
     var canCheckout = (s.status === 'in_stock' || s.status === 'with_user');
-    var canReturn = (s.status === 'at_hospital' || s.status === 'with_user' || s.status === 'out');
+    var canReturn = (s.status === 'at_hospital' || s.status === 'out');
 
     var html = '<div class="space-y-4">' +
       '<div class="card-flat p-4">' +
@@ -8125,10 +8194,10 @@ async function showProductSetDetail(setId) {
         '</div>' +
         (s.description ? '<div class="text-[12px] text-slate-600 mb-1">' + s.description + '</div>' : '') +
         (s.hospital_name ? '<div class="text-[11px] text-slate-600"><i class="fas fa-hospital text-slate-400 text-[9px] mr-1"></i>' + s.hospital_name + '</div>' : '') +
-        '<div class="flex flex-wrap gap-1 mt-3 pt-3 border-t border-gray-100">' +
-          (canCheckout ? '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductSetMoveForm(' + s.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i> 세트 반출</button>' : '') +
-          (canReturn ? '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();quickReturnProductSet(' + s.id + ')"><i class="fas fa-arrow-down-to-bracket"></i> 세트 회수</button>' : '') +
-          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductSetForm(' + s.id + ')"><i class="fas fa-pen"></i> 수정</button>' +
+        '<div class="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100">' +
+          (canCheckout ? '<button class="prod-act-btn prod-act-btn-outline" onclick="closeModal();showProductSetMoveForm(' + s.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i><span class="prod-act-btn-label">세트 반출</span></button>' : '') +
+          (canReturn ? '<button class="prod-act-btn prod-act-btn-primary" onclick="closeModal();quickReturnProductSet(' + s.id + ')"><i class="fas fa-arrow-down-to-bracket"></i><span class="prod-act-btn-label">세트 회수</span></button>' : '') +
+          '<button class="prod-act-btn prod-act-btn-outline" onclick="closeModal();showProductSetForm(' + s.id + ')"><i class="fas fa-pen"></i><span class="prod-act-btn-label">수정</span></button>' +
         '</div>' +
       '</div>' +
       '<div class="card-flat p-4">' +
@@ -8302,7 +8371,7 @@ async function showProductCatalog() {
           '</div>' +
         '</div>' +
         '<textarea class="input !py-2 !text-xs w-full" data-field="description" rows="2" placeholder="비고 / 메모">' + (p.description || '') + '</textarea>' +
-        '<button class="btn btn-outline btn-sm text-[11px] mt-2" onclick="saveProductCatalog(' + p.id + ',this)"><i class="fas fa-save mr-1"></i>저장</button>' +
+        '<div class="flex justify-end mt-2"><button class="prod-act-btn prod-act-btn-primary" onclick="saveProductCatalog(' + p.id + ',this)"><i class="fas fa-save"></i><span class="prod-act-btn-label">저장</span></button></div>' +
       '</div>';
     }).join('') + '</div>';
     openModal('카테고리·모델 관리', html);
@@ -8660,7 +8729,9 @@ async function showProductUnitDetail(id) {
           (u.asset_code ? '<div>모델명: <strong class="font-mono">' + u.asset_code + '</strong></div>' : '') +
           (u.serial_no ? '<div>S/N: <strong class="font-mono">' + u.serial_no + '</strong></div>' : '') +
           (u.acquired_at ? '<div>입고일: ' + u.acquired_at + '</div>' : '') +
-          (u.hospital_name ? '<div>현재 위치: ' + u.hospital_name + '</div>' : '') +
+          ((u.status === 'in_stock' || u.status === 'with_user')
+            ? '<div>현재 위치: <strong class="text-emerald-700"><i class="fas fa-building text-emerald-500 text-[10px] mr-0.5"></i>회사</strong></div>'
+            : (u.hospital_name ? '<div>현재 위치: ' + u.hospital_name + '</div>' : '')) +
           (u.notes ? '<div class="mt-1 pt-1 border-t border-gray-100">비고: ' + u.notes + '</div>' : '') +
           (u.product_description ? '<div class="text-slate-400 italic">카테고리 설명: ' + u.product_description + '</div>' : '') +
         '</div>' +
@@ -8671,12 +8742,12 @@ async function showProductUnitDetail(id) {
           '</div>' +
           '<div class="flex flex-wrap gap-1.5">' + holdersHtml + '</div>' +
         '</div>' +
-        '<div class="flex flex-wrap gap-1 mt-3 pt-3 border-t border-gray-100">' +
-          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductMoveForm(' + u.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i> 반출</button>' +
-          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();quickReturnProductUnit(' + u.id + ')"><i class="fas fa-arrow-down-to-bracket"></i> 회수</button>' +
-          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductMoveForm(' + u.id + ',\'deliver\')"><i class="fas fa-gift"></i> 납품</button>' +
-          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductMoveForm(' + u.id + ',\'transfer\')"><i class="fas fa-arrow-right-arrow-left"></i> 이전</button>' +
-          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductUnitForm(' + u.id + ')"><i class="fas fa-pen"></i> 수정</button>' +
+        '<div class="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-gray-100">' +
+          '<button class="prod-act-btn prod-act-btn-outline" onclick="closeModal();showProductMoveForm(' + u.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i><span class="prod-act-btn-label">반출</span></button>' +
+          '<button class="prod-act-btn prod-act-btn-primary" onclick="closeModal();quickReturnProductUnit(' + u.id + ')"><i class="fas fa-arrow-down-to-bracket"></i><span class="prod-act-btn-label">회수</span></button>' +
+          '<button class="prod-act-btn prod-act-btn-outline" onclick="closeModal();showProductMoveForm(' + u.id + ',\'deliver\')"><i class="fas fa-gift"></i><span class="prod-act-btn-label">납품</span></button>' +
+          '<button class="prod-act-btn prod-act-btn-outline" onclick="closeModal();showProductMoveForm(' + u.id + ',\'transfer\')"><i class="fas fa-arrow-right-arrow-left"></i><span class="prod-act-btn-label">이전</span></button>' +
+          '<button class="prod-act-btn prod-act-btn-ghost" onclick="closeModal();showProductUnitForm(' + u.id + ')"><i class="fas fa-pen"></i><span class="prod-act-btn-label">수정</span></button>' +
         '</div>' +
       '</div>' +
       '<div class="card-flat p-4">' +
