@@ -70,6 +70,17 @@
 - 건강보험심사평가원 보건의료빅데이터 기반
 - 연도별/성별/연령대별/지역별/기관종별 분석
 
+#### 제품 관리 (데모기 입출고)
+- **카테고리별 관리**: 내부기 / 외부기 (Sullivan, Sound1) / 휴대보관함 (Sullivan/Sound1 충전 케이스)
+- **개별 S/N 단위 추적**: 유닛별 시리얼/자산코드 관리
+- **공유 보유자**: 한 유닛을 여러 영업담당자가 동시 보유 가능 (M:N)
+- **입출고 이력 타임라인**: 입고/반출/회수/납품/이전/보유자 추가·해제/분실/수리/폐기
+- **영구 납품 vs 대여**: is_loan 플래그로 구분, 반환 예정일 추적
+- **회수 지연 알림**: 반환 예정일 경과 유닛 자동 강조
+- **미팅 자동 연계**: 미팅 폼에서 동반 반출 제품 선택 → meeting_products 자동 매핑
+- **카테고리별 비고**: 카탈로그 모달에서 카테고리/모델별 메모 관리
+- **이력 CSV 내보내기**: 기간/유형/병원 필터로 movements 엑셀 호환 CSV 다운로드
+
 ### 데이터 모델
 | 테이블 | 주요 필드 |
 |--------|----------|
@@ -126,6 +137,20 @@
 | POST | `/api/ai/hospital-doctors` | AI 의료진 자동 조회 |
 | POST | `/api/ai/doctor-profile` | AI 프로필 조회 |
 | POST | `/api/ai/doctor-papers` | PubMed 논문 검색 |
+| GET | `/api/products` | 제품 카탈로그 (카테고리/모델별 비고 포함) |
+| PUT | `/api/products/:id` | 카테고리 비고/이름 수정 |
+| GET | `/api/products/dashboard` | 제품 대시보드 요약 |
+| GET/POST | `/api/products/units` | 유닛 목록/입고 |
+| GET/PUT/DELETE | `/api/products/units/:id` | 유닛 상세/수정/삭제 |
+| POST | `/api/products/movements` | 입출고 이동 처리 (checkout/deliver/return/transfer/assign/release/lost/repair/retire) |
+| GET | `/api/products/movements` | 이동 이력 (필터링) |
+| GET | `/api/products/movements/export.csv` | 이동 이력 CSV 다운로드 |
+| GET | `/api/products/by-user` | 영업담당자별 보유 현황 |
+| GET | `/api/products/by-hospital/:id` | 기관 보유 데모기 |
+| GET | `/api/products/by-meeting/:id` | 미팅 동반 반출 제품 |
+| GET | `/api/products/available-for-meeting` | 미팅 폼용 가용 유닛 |
+| POST | `/api/products/link-to-meeting` | 미팅-제품 일괄 연계 (자동 movement 생성) |
+| DELETE | `/api/products/meeting-product/:id` | 미팅-제품 연계 해제 |
 
 ### API 에러 응답 형식 (표준화)
 ```json
@@ -166,7 +191,7 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-04-06
+- **Last Updated**: 2026-05-12
 
 ### Migration 이력
 | 번호 | 파일명 | 내용 |
@@ -175,6 +200,8 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 | 0011 | merge_clinics_into_hospitals | 의원→병원 통합 (필드추가, 데이터 이전) |
 | 0012 | tags_favorites_templates_pipeline | 태그, 즐겨찾기, 템플릿, 파이프라인, KPI, 이적, 관계 |
 | 0013 | doctor_clinic_hours | 의료진 외래 시간 컬럼 추가 (clinic_hours TEXT) |
+| 0014-0021 | (이전 기능 단계별 추가) | 사진/논문/대시보드/검색 등 점진적 확장 |
+| 0022 | products | 제품 관리: products, product_units, product_holders, product_movements, meeting_products + 5종 시드 (내부기, 외부기 Sullivan/Sound1, 휴대보관함 Sullivan/Sound1) |
 
 ### 권장 다음 개발 사항
 - **프론트엔드 모듈화**: app.js를 Vite + TypeScript 기반 모듈로 분리 (pages/, components/, utils/)

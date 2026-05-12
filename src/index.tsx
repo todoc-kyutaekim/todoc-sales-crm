@@ -15,6 +15,7 @@ import templates from './routes/templates'
 import pipeline from './routes/pipeline'
 import schedule from './routes/schedule'
 import comments from './routes/comments'
+import products from './routes/products'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number; user?: { id: number, name: string, email: string } }
@@ -71,6 +72,7 @@ app.route('/api/templates', templates)
 app.route('/api/pipeline', pipeline)
 app.route('/api/schedule', schedule)
 app.route('/api/comments', comments)
+app.route('/api/products', products)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
@@ -197,6 +199,7 @@ const HTML = `<!DOCTYPE html>
     <div onclick="nav('doctors')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('doctors')}" id="n-doctors" class="nav-item" role="link" tabindex="0" aria-label="의료진 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
     <div onclick="nav('meetings')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('meetings')}" id="n-meetings" class="nav-item" role="link" tabindex="0" aria-label="미팅 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-calendar-check"></i></span>미팅 관리</div>
     <div onclick="nav('schedule')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('schedule')}" id="n-schedule" class="nav-item" role="link" tabindex="0" aria-label="일정 플래너"><span class="nav-icon" aria-hidden="true"><i class="fas fa-route"></i></span>일정 플래너</div>
+    <div onclick="nav('products')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('products')}" id="n-products" class="nav-item" role="link" tabindex="0" aria-label="제품 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-box-archive"></i></span>제품 관리</div>
     <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
     <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Analytics</span></div>
     <div onclick="nav('cistats')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cistats')}" id="n-cistats" class="nav-item" role="link" tabindex="0" aria-label="인공와우 통계"><span class="nav-icon" aria-hidden="true"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
@@ -260,8 +263,8 @@ const HTML = `<!DOCTYPE html>
   <div onclick="nav('schedule')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('schedule')}" id="bn-schedule" class="btm-nav-item" role="button" tabindex="0" aria-label="일정 플래너">
     <i class="fas fa-route" aria-hidden="true"></i><span>일정</span>
   </div>
-  <div onclick="nav('doctors')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('doctors')}" id="bn-doctors" class="btm-nav-item" role="button" tabindex="0" aria-label="의료진">
-    <i class="fas fa-user-doctor" aria-hidden="true"></i><span>의료진</span>
+  <div onclick="nav('products')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('products')}" id="bn-products" class="btm-nav-item" role="button" tabindex="0" aria-label="제품 관리">
+    <i class="fas fa-box-archive" aria-hidden="true"></i><span>제품</span>
   </div>
 </nav>
 
