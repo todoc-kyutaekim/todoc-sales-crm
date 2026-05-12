@@ -207,6 +207,150 @@ exports.get('/xlsx/:type', async (c) => {
       headers: ['일시', '액션', '대상유형', '대상명', '대상ID', '상세'],
       rows: (r.results as any[]).map(a => [a.created_at, actMap[a.action] || a.action, entMap[a.entity_type] || a.entity_type, a.entity_name || '', a.entity_id || '', a.details || ''])
     })
+  } else if (type === 'products') {
+    // 제품 재고 현황 (유닛 + 보유자) + 카테고리별 요약
+    const category = c.req.query('category') || ''
+    const status = c.req.query('status') || ''
+    const where: string[] = []
+    const params: any[] = []
+    if (category) { where.push('p.category = ?'); params.push(category) }
+    if (status) { where.push('pu.status = ?'); params.push(status) }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : ''
+    const sql = `SELECT pu.*, p.category, p.model, p.name as product_name, p.description as product_desc,
+        h.name as hospital_name,
+        (SELECT GROUP_CONCAT(u.name, ', ') FROM product_holders ph LEFT JOIN users u ON u.id=ph.user_id
+         WHERE ph.product_unit_id=pu.id AND ph.released_at IS NULL) as holders,
+        (SELECT pm.performed_at FROM product_movements pm WHERE pm.product_unit_id=pu.id
+         ORDER BY pm.performed_at DESC LIMIT 1) as last_movement_at,
+        (SELECT pm.movement_type FROM product_movements pm WHERE pm.product_unit_id=pu.id
+         ORDER BY pm.performed_at DESC LIMIT 1) as last_movement_type,
+        (SELECT pm.expected_return_date FROM product_movements pm
+         WHERE pm.product_unit_id=pu.id AND pm.is_loan=1 AND pm.actual_return_date IS NULL
+         ORDER BY pm.performed_at DESC LIMIT 1) as expected_return_date
+       FROM product_units pu
+       JOIN products p ON p.id = pu.product_id
+       LEFT JOIN hospitals h ON h.id = pu.current_hospital_id
+       ${whereSql}
+       ORDER BY p.category, p.model, pu.asset_code, pu.serial_no`
+    const r = await c.env.DB.prepare(sql).bind(...params).all()
+    const catMap: Record<string,string> = { internal: '내부기', external: '외부기', carry_case: '휴대보관함' }
+    const stMap: Record<string,string> = {
+      in_stock: '재고', with_user: '담당자 보유', at_hospital: '기관 비치', out: '반출',
+      delivered: '납품완료', lost: '분실', repair: '수리', retired: '폐기'
+    }
+    const movMap: Record<string,string> = {
+      inbound: '입고', checkout: '반출', demo: '시연', deliver: '납품', return: '회수',
+      transfer: '이전', assign: '보유추가', release: '보유해제', lost: '분실', repair: '수리', retire: '폐기'
+    }
+    sheets.push({
+      name: '제품_재고_현황',
+      headers: ['카테고리', '모델', '제품명', 'S/N', '자산코드', '상태', '현재 위치(기관)', '보유자', '대여 반환예정일', '마지막 이동', '마지막 이동 유형', '취득일', '비고'],
+      rows: (r.results as any[]).map(u => [
+        catMap[u.category] || u.category,
+        u.model || '',
+        u.product_name || '',
+        u.serial_no || '',
+        u.asset_code || '',
+        stMap[u.status] || u.status,
+        u.hospital_name || '',
+        u.holders || '',
+        u.expected_return_date || '',
+        u.last_movement_at || '',
+        movMap[u.last_movement_type] || u.last_movement_type || '',
+        u.acquired_at || '',
+        u.notes || ''
+      ])
+    })
+    // 카테고리별 요약 시트
+    const sumR = await c.env.DB.prepare(
+      `SELECT p.category, p.model, p.name as product_name,
+        COUNT(pu.id) as total,
+        SUM(CASE WHEN pu.status='in_stock' THEN 1 ELSE 0 END) as in_stock,
+        SUM(CASE WHEN pu.status IN ('with_user','at_hospital','out') THEN 1 ELSE 0 END) as out,
+        SUM(CASE WHEN pu.status='delivered' THEN 1 ELSE 0 END) as delivered,
+        SUM(CASE WHEN pu.status IN ('lost','repair','retired') THEN 1 ELSE 0 END) as inactive
+       FROM products p
+       LEFT JOIN product_units pu ON pu.product_id=p.id
+       WHERE p.active=1
+       GROUP BY p.id
+       ORDER BY p.category, p.model`
+    ).all()
+    sheets.push({
+      name: '카테고리별_요약',
+      headers: ['카테고리', '모델', '제품명', '전체', '재고', '반출중', '납품완료', '비활성(분실/수리/폐기)'],
+      rows: (sumR.results as any[]).map(s => [
+        catMap[s.category] || s.category,
+        s.model || '',
+        s.product_name || '',
+        s.total || 0,
+        s.in_stock || 0,
+        s.out || 0,
+        s.delivered || 0,
+        s.inactive || 0
+      ])
+    })
+  } else if (type === 'product_movements') {
+    // 제품 이동 이력
+    const from = c.req.query('from') || ''
+    const to = c.req.query('to') || ''
+    const mtype = c.req.query('movement_type') || ''
+    const hospitalId = c.req.query('hospital_id') || ''
+    const where: string[] = []
+    const params: any[] = []
+    if (from) { where.push('DATE(pm.performed_at) >= ?'); params.push(from) }
+    if (to) { where.push('DATE(pm.performed_at) <= ?'); params.push(to) }
+    if (mtype) { where.push('pm.movement_type = ?'); params.push(mtype) }
+    if (hospitalId) { where.push('pm.hospital_id = ?'); params.push(Number(hospitalId)) }
+    const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : ''
+    const sql = `SELECT pm.*,
+        p.category, p.model, p.name as product_name,
+        pu.serial_no, pu.asset_code,
+        h.name as hospital_name, d.name as doctor_name,
+        fu.name as from_user_name, tu.name as to_user_name,
+        per.name as performed_by_name,
+        m.meeting_date
+       FROM product_movements pm
+       JOIN product_units pu ON pu.id = pm.product_unit_id
+       JOIN products p ON p.id = pu.product_id
+       LEFT JOIN hospitals h ON h.id = pm.hospital_id
+       LEFT JOIN doctors d ON d.id = pm.doctor_id
+       LEFT JOIN users fu ON fu.id = pm.from_user_id
+       LEFT JOIN users tu ON tu.id = pm.to_user_id
+       LEFT JOIN users per ON per.id = pm.performed_by
+       LEFT JOIN meetings m ON m.id = pm.meeting_id
+       ${whereSql}
+       ORDER BY pm.performed_at DESC
+       LIMIT 5000`
+    const r = await c.env.DB.prepare(sql).bind(...params).all()
+    const catMap: Record<string,string> = { internal: '내부기', external: '외부기', carry_case: '휴대보관함' }
+    const movMap: Record<string,string> = {
+      inbound: '입고', checkout: '반출', demo: '시연', deliver: '납품', return: '회수',
+      transfer: '이전', assign: '보유추가', release: '보유해제', lost: '분실', repair: '수리', retire: '폐기'
+    }
+    sheets.push({
+      name: '제품_이동_이력',
+      headers: ['일시', '이동유형', '카테고리', '모델', '제품명', 'S/N', '자산코드', '기관', '의사', '반출자', '반입자', '처리자', '대여여부', '반환예정일', '실반환일', '미팅일자', '미팅ID', '비고'],
+      rows: (r.results as any[]).map(row => [
+        row.performed_at || '',
+        movMap[row.movement_type] || row.movement_type,
+        catMap[row.category] || row.category,
+        row.model || '',
+        row.product_name || '',
+        row.serial_no || '',
+        row.asset_code || '',
+        row.hospital_name || '',
+        row.doctor_name || '',
+        row.from_user_name || '',
+        row.to_user_name || '',
+        row.performed_by_name || '',
+        row.is_loan ? '대여' : '',
+        row.expected_return_date || '',
+        row.actual_return_date || '',
+        row.meeting_date || '',
+        row.meeting_id || '',
+        row.reason || ''
+      ])
+    })
   } else {
     return c.json({ error: 'Invalid type' }, 400)
   }

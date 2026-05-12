@@ -978,6 +978,45 @@ function downloadFullReport() {
   var q = _withSid('');
   window.open('/api/export/report/full' + (q ? ('?' + q) : ''), '_blank');
 }
+// 제품 관리 전용 내보내기 메뉴 (재고 현황 + 이동 이력)
+function productExportMenu() {
+  var id = 'expmenu_products_' + Math.random().toString(36).slice(2,7);
+  return '<div class="relative inline-block" id="' + id + '">'
+    + '<button class="btn btn-outline btn-sm" onclick="(function(e){e.stopPropagation();var m=document.getElementById(\''+id+'\').querySelector(\'.exp-menu\');var open=!m.classList.contains(\'hidden\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')});if(!open)m.classList.remove(\'hidden\');})(event)" aria-label="제품 내보내기" title="Excel/CSV 내보내기"><i class="fas fa-file-export text-xs" aria-hidden="true"></i><span class="hidden sm:inline ml-1">내보내기</span></button>'
+    + '<div class="exp-menu hidden absolute right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-50" style="min-width:220px" role="menu">'
+    + '<div class="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">제품 재고 현황</div>'
+    + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadProductExport(\'products\',\'xlsx\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-excel text-emerald-600" aria-hidden="true"></i>Excel (.xls) — 현재 필터 반영</button>'
+    + '<div class="border-t border-slate-100 my-1"></div>'
+    + '<div class="px-3 py-1.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">제품 이동 이력</div>'
+    + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadProductExport(\'product_movements\',\'xlsx\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-excel text-emerald-600" aria-hidden="true"></i>Excel (.xls)</button>'
+    + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadProductMovementsCsv();document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-csv text-slate-600" aria-hidden="true"></i>CSV (.csv)</button>'
+    + '</div></div>';
+}
+function downloadProductExport(type, fmt) {
+  var qs = [];
+  // 현재 탭(카테고리) 필터를 반영 (재고에만 적용)
+  if (type === 'products' && window._prodTab && window._prodTab !== 'all') {
+    qs.push('category=' + encodeURIComponent(window._prodTab));
+  }
+  // 이력 화면의 날짜/유형 필터 반영
+  if (type === 'product_movements') {
+    var f = window._prodFilter || {};
+    if (f.from) qs.push('from=' + encodeURIComponent(f.from));
+    if (f.to) qs.push('to=' + encodeURIComponent(f.to));
+    if (f.movement_type) qs.push('movement_type=' + encodeURIComponent(f.movement_type));
+  }
+  var q = _withSid(qs.join('&'));
+  window.open('/api/export/xlsx/' + type + (q ? ('?' + q) : ''), '_blank');
+}
+function downloadProductMovementsCsv() {
+  var qs = [];
+  var f = window._prodFilter || {};
+  if (f.from) qs.push('from=' + encodeURIComponent(f.from));
+  if (f.to) qs.push('to=' + encodeURIComponent(f.to));
+  if (f.movement_type) qs.push('type=' + encodeURIComponent(f.movement_type));
+  var q = _withSid(qs.join('&'));
+  window.open('/api/products/movements/export.csv' + (q ? ('?' + q) : ''), '_blank');
+}
 function exportMenu(type, label) {
   // Returns HTML for a unified export dropdown button
   const id = 'expmenu_' + type + '_' + Math.random().toString(36).slice(2,7);
@@ -7595,6 +7634,7 @@ async function loadProducts() {
   document.getElementById('page-title').textContent = '제품 관리';
   document.getElementById('page-subtitle').textContent = '데모 제품 재고 및 입출고 관리';
   document.getElementById('header-actions').innerHTML =
+    productExportMenu() +
     '<button class="btn btn-outline btn-sm" onclick="showProductCatalog()" title="카테고리/모델 비고 관리"><i class="fas fa-tags text-xs"></i><span class="hidden sm:inline ml-1">카테고리</span></button>' +
     '<button class="btn btn-primary btn-sm" onclick="showProductUnitForm()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline ml-1">유닛 입고</span></button>';
 
