@@ -4779,16 +4779,37 @@ async function showMeetFormFromProfile(hid, did, mid) {
     field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
+    // 동행 제품 선택 패널 (의료진 프로필 미팅 폼)
+    '<div class="col-span-full" id="meet-products-panel"><label class="input-label"><i class="fas fa-box-archive mr-1 text-slate-400"></i>동행 반출 제품 <span class="text-[10px] text-slate-400 font-normal">(선택 사항 — 내부기/외부기/휴대보관함 단일 또는 복수)</span></label><div id="meet-products-list" class="border border-gray-200 rounded-xl p-2 text-xs text-slate-400 text-center">로딩 중...</div></div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (mid ? '저장' : '추가') + '</button></div></form>');
   var dateInput = document.querySelector('#fm input[name="meeting_date"]');
   if (dateInput) dateInput.addEventListener('change', updateMeetSchedulePreview);
+  // 동행 제품 picker 로드
+  loadMeetProductPicker(mid);
   document.getElementById('fm').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
     if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
+    // 동행 제품 수집
+    var prodUnitIds = Array.from(document.querySelectorAll('#fm input[name="meet_product_unit"]:checked:not(:disabled)')).map(cb => Number(cb.value));
+    var prodAction = (document.querySelector('#fm select[name="meet_product_action"]') || {}).value || 'demo';
+    var prodIsLoan = !!(document.querySelector('#fm input[name="meet_product_is_loan"]') || {}).checked;
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
-    try { if (mid) { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨') } else { await API.post('/meetings', payload); toast('미팅 등록됨') } closeModal(); viewDocProfile(did) } catch (e) { toast('저장 실패', 'err') }
+    delete payload.meet_product_action;
+    delete payload.meet_product_is_loan;
+    try {
+      let savedMid;
+      if (mid) { await API.put('/meetings/' + mid, payload); savedMid = mid; toast('미팅 수정됨') }
+      else { const res = await API.post('/meetings', payload); savedMid = res.data && res.data.data && res.data.data.id; toast('미팅 등록됨') }
+      if (savedMid && prodUnitIds.length) {
+        try {
+          await API.post('/products/link-to-meeting', { meeting_id: savedMid, product_unit_ids: prodUnitIds, action: prodAction, is_loan: prodIsLoan ? 1 : 0 });
+          toast('제품 ' + prodUnitIds.length + '개 연계됨');
+        } catch (e2) { toast('제품 연계 실패', 'warn'); }
+      }
+      closeModal(); viewDocProfile(did);
+    } catch (e) { toast('저장 실패', 'err') }
   };
   setTimeout(updateMeetSchedulePreview, 50);
 }
@@ -4826,15 +4847,35 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
     field('목적', 'purpose', 'text', m.purpose || '') +
     field('미팅 내용', 'content', 'textarea', m.content || '') + field('결과', 'result', 'textarea', m.result || '') + field('후속 액션', 'next_action', 'textarea', m.next_action || '') +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
+    // 동행 제품 선택 패널 (수정 모드 — 기존 연계 표시 + 추가 선택)
+    '<div class="col-span-full" id="meet-products-panel"><label class="input-label"><i class="fas fa-box-archive mr-1 text-slate-400"></i>동행 반출 제품 <span class="text-[10px] text-slate-400 font-normal">(이미 연계된 제품은 체크 잠금 — 추가 제품 선택 가능)</span></label><div id="meet-products-list" class="border border-gray-200 rounded-xl p-2 text-xs text-slate-400 text-center">로딩 중...</div></div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">저장</button></div></form>');
+  // 동행 제품 picker 로드 (기존 연계 포함)
+  loadMeetProductPicker(mid);
   document.getElementById('fm').onsubmit = async e => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     const selectedIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
     if (!selectedIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const selectedUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
+    // 동행 제품 (disabled=기존 연계는 제외, 신규만 추출)
+    var prodUnitIds = Array.from(document.querySelectorAll('#fm input[name="meet_product_unit"]:checked:not(:disabled)')).map(cb => Number(cb.value));
+    var prodAction = (document.querySelector('#fm select[name="meet_product_action"]') || {}).value || 'demo';
+    var prodIsLoan = !!(document.querySelector('#fm input[name="meet_product_is_loan"]') || {}).checked;
     const payload = { ...f, doctor_ids: selectedIds, user_ids: selectedUserIds, hospital_id: hid };
-    try { await API.put('/meetings/' + mid, payload); toast('미팅 수정됨'); closeModal(); loadMeet() } catch (e) { toast('저장 실패', 'err') }
+    delete payload.meet_product_action;
+    delete payload.meet_product_is_loan;
+    try {
+      await API.put('/meetings/' + mid, payload);
+      toast('미팅 수정됨');
+      if (prodUnitIds.length) {
+        try {
+          await API.post('/products/link-to-meeting', { meeting_id: mid, product_unit_ids: prodUnitIds, action: prodAction, is_loan: prodIsLoan ? 1 : 0 });
+          toast('제품 ' + prodUnitIds.length + '개 연계됨');
+        } catch (e2) { toast('제품 연계 실패', 'warn'); }
+      }
+      closeModal(); loadMeet();
+    } catch (e) { toast('저장 실패', 'err') }
   };
 }
 
@@ -4861,8 +4902,12 @@ async function showNewMeetGlobal() {
       field('목적', 'purpose', 'text', '') +
       field('미팅 내용', 'content', 'textarea', '') + field('결과', 'result', 'textarea', '') + field('후속 액션', 'next_action', 'textarea', '') +
       '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" class="input"></div>' +
+      // 동행 제품 선택 패널 (내부기/외부기/휴대보관함 단일 또는 복수)
+      '<div class="col-span-full" id="meet-products-panel"><label class="input-label"><i class="fas fa-box-archive mr-1 text-slate-400"></i>동행 반출 제품 <span class="text-[10px] text-slate-400 font-normal">(선택 사항 — 내부기/외부기/휴대보관함 단일 또는 복수 선택)</span></label><div id="meet-products-list" class="border border-gray-200 rounded-xl p-2 text-xs text-slate-400 text-center">로딩 중...</div></div>' +
       '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">추가</button></div></form>';
     window._newMeetDocs = allDocs;
+    // 동행 제품 picker 로드
+    loadMeetProductPicker(null);
     document.getElementById('fm').onsubmit = async e => {
       e.preventDefault();
       const f = Object.fromEntries(new FormData(e.target));
@@ -4871,8 +4916,26 @@ async function showNewMeetGlobal() {
       if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
       const selUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
+      // 동행 제품 수집
+      var prodUnitIds = Array.from(document.querySelectorAll('#fm input[name="meet_product_unit"]:checked:not(:disabled)')).map(cb => Number(cb.value));
+      var prodAction = (document.querySelector('#fm select[name="meet_product_action"]') || {}).value || 'demo';
+      var prodIsLoan = !!(document.querySelector('#fm input[name="meet_product_is_loan"]') || {}).checked;
       const payload = { ...f, doctor_ids: doctorIds, user_ids: selUserIds };
-      try { await API.post('/meetings', payload); toast('미팅 등록됨'); closeModal(); window._calPrefill = null; if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); else if (curPage === 'calendar') renderCalendar(); } catch (e) { toast('저장 실패', 'err') }
+      delete payload.meet_product_action;
+      delete payload.meet_product_is_loan;
+      try {
+        const res = await API.post('/meetings', payload);
+        const savedMid = res.data && res.data.data && res.data.data.id;
+        toast('미팅 등록됨');
+        if (savedMid && prodUnitIds.length) {
+          try {
+            await API.post('/products/link-to-meeting', { meeting_id: savedMid, product_unit_ids: prodUnitIds, action: prodAction, is_loan: prodIsLoan ? 1 : 0 });
+            toast('제품 ' + prodUnitIds.length + '개 연계됨');
+          } catch (e2) { toast('제품 연계 실패', 'warn'); }
+        }
+        closeModal(); window._calPrefill = null;
+        if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); else if (curPage === 'calendar') renderCalendar();
+      } catch (e) { toast('저장 실패', 'err') }
     };
   } catch (e) { toast('데이터를 불러올 수 없습니다', 'err'); closeModal(); }
 }
@@ -4974,6 +5037,8 @@ function showMeetDetail(m) {
         (m.visit_time ? vtBadge(m.visit_time) : '') + '</div>' +
         '<div class="text-xs text-slate-400 mt-0.5"><i class="fas fa-clock mr-1"></i>' + fmtShort(m.meeting_date) + (m.visit_time ? ' <span class="font-semibold text-slate-500">' + (visitTimeLabels[m.visit_time] || '') + '</span>' : '') + ' · ' + daysAgo(m.meeting_date) + ' · <i class="fas fa-user-tie mr-0.5"></i>' + (m.user_names || m.user_name || (currentUser ? currentUser.name : '')) + '</div></div></div>' +
     doctorCards + sections +
+    // 동행 반출 제품 영역 (비동기 로드)
+    '<div id="meet-detail-products" class="mb-4"></div>' +
     '<div class="flex justify-end gap-2 mt-5 pt-4 border-t border-gray-100">' +
       '<button class="btn btn-outline btn-sm" onclick="printMeetDetail(' + m.id + ')"><i class="fas fa-file-pdf mr-1.5 text-xs"></i>PDF</button>' +
       '<button class="btn btn-outline btn-sm" onclick="closeModal();showMeetFormGlobal(' + m.hospital_id + ',' + JSON.stringify(m.doctor_ids || [m.doctor_id]).replace(/"/g, '&quot;') + ',' + m.id + ')"><i class="fas fa-pen mr-1.5 text-xs"></i>수정</button>' +
@@ -4983,6 +5048,34 @@ function showMeetDetail(m) {
   openModal('미팅 상세', body);
   window._meetDetailCache = m;
   loadComments(m.id);
+  loadMeetDetailProducts(m.id);
+}
+
+// 미팅 상세에서 동행 반출 제품 로드 및 렌더
+async function loadMeetDetailProducts(meetingId) {
+  var el = document.getElementById('meet-detail-products');
+  if (!el) return;
+  try {
+    var r = (await API.get('/products/by-meeting/' + meetingId)).data.data || [];
+    if (!r.length) { el.innerHTML = ''; return; }
+    var catLabel = { internal: '내부기', external: '외부기', carry_case: '휴대보관함' };
+    var catColor = { internal: 'bg-blue-50 text-blue-700', external: 'bg-emerald-50 text-emerald-700', carry_case: 'bg-amber-50 text-amber-700' };
+    var actLabel = { demo: '시연', checkout: '반출(대여)', deliver: '납품', return: '회수' };
+    var actColor = { demo: 'bg-sky-50 text-sky-600', checkout: 'bg-orange-50 text-orange-600', deliver: 'bg-purple-50 text-purple-600', return: 'bg-slate-50 text-slate-600' };
+    el.innerHTML = '<div class="text-xs font-semibold text-slate-400 mb-1.5 uppercase tracking-wider"><i class="fas fa-box-archive mr-1.5"></i>동행 반출 제품 <span class="text-slate-300">·</span> <span class="text-slate-400">' + r.length + '개</span></div>' +
+      '<div class="bg-gray-50 rounded-xl p-3 space-y-1.5">' +
+      r.map(function(p) {
+        var label = p.asset_code || p.serial_no || ('#' + p.product_unit_id);
+        return '<div class="flex items-center gap-2 text-xs">' +
+          '<span class="px-1.5 py-0.5 rounded text-[10px] font-bold ' + (catColor[p.category] || 'bg-gray-100 text-gray-600') + '">' + (catLabel[p.category] || p.category) + '</span>' +
+          '<span class="font-medium text-slate-700">' + (p.product_name || p.model) + '</span>' +
+          '<span class="text-slate-400">·</span>' +
+          '<span class="font-mono text-slate-600">' + label + '</span>' +
+          '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold ' + (actColor[p.action] || 'bg-gray-100 text-gray-600') + '">' + (actLabel[p.action] || p.action) + '</span>' +
+          (p.notes ? '<span class="text-slate-400 text-[11px] truncate">· ' + p.notes + '</span>' : '') +
+        '</div>';
+      }).join('') + '</div>';
+  } catch (e) { el.innerHTML = ''; }
 }
 
 // ===== Print / PDF: Doctor profile =====
