@@ -7618,6 +7618,12 @@ var PROD_STATUS_COLORS = {
   retired:     { bg: '#f1f5f9', fg: '#475569', bd: '#cbd5e1' }
 };
 var PROD_CAT_LABELS = { internal: '내부기', external: '외부기', carry_case: '휴대보관함' };
+var PROD_CAT_THEMES = {
+  internal:   { name: '내부기',     bg: '#eff6ff', border: '#3b82f6', chip: '#dbeafe', chipFg: '#1e40af', icon: 'fa-building' },
+  external:   { name: '외부기',     bg: '#ecfdf5', border: '#10b981', chip: '#d1fae5', chipFg: '#065f46', icon: 'fa-truck-fast' },
+  carry_case: { name: '휴대보관함', bg: '#fffbeb', border: '#f59e0b', chip: '#fef3c7', chipFg: '#92400e', icon: 'fa-suitcase' }
+};
+var PROD_STATUS_STYLES = PROD_STATUS_COLORS;
 var PROD_MOV_LABELS = {
   inbound: '입고', checkout: '대여반출', demo: '시연(복귀)', deliver: '영구납품',
   return: '회수', transfer: '담당자이전', assign: '보유자추가', release: '보유자해제',
@@ -7650,6 +7656,7 @@ async function loadProducts() {
           '<button class="prod-tab-btn" data-tab="carry_case" onclick="setProdTab(\'carry_case\')"><i class="fas fa-suitcase mr-1"></i>휴대보관함</button>' +
           '<div class="flex-1"></div>' +
           '<button class="prod-sub-btn" data-sub="units" onclick="setProdSubTab(\'units\')"><i class="fas fa-box mr-1"></i>유닛</button>' +
+          '<button class="prod-sub-btn" data-sub="sets" onclick="setProdSubTab(\'sets\')"><i class="fas fa-cubes mr-1"></i>세트</button>' +
           '<button class="prod-sub-btn" data-sub="history" onclick="setProdSubTab(\'history\')"><i class="fas fa-clock-rotate-left mr-1"></i>이력</button>' +
         '</div>' +
         '<div id="prod-filter-bar" class="p-3 border-b border-gray-100 bg-slate-50/50"></div>' +
@@ -7698,7 +7705,7 @@ async function refreshProductPage() {
             '<span class="text-slate-400">' + (o.serial_no || o.asset_code || '#' + o.product_unit_id) + '</span>' +
             (o.hospital_name ? '<span class="text-slate-500">@ ' + o.hospital_name + '</span>' : '') +
             '<span class="ml-auto font-bold text-red-600">' + o.days_overdue + '일 지연</span>' +
-            '<button class="btn btn-outline btn-sm text-[10px]" onclick="showProductMoveForm(' + o.product_unit_id + ',\'return\')"><i class="fas fa-arrow-down-to-bracket"></i> 회수</button>' +
+            '<button class="btn btn-outline btn-sm text-[10px]" onclick="quickReturnProductUnit(' + o.product_unit_id + ')"><i class="fas fa-arrow-down-to-bracket"></i> 회수</button>' +
           '</div>';
         }).join('') + '</div></div>';
     } else {
@@ -7719,6 +7726,8 @@ async function refreshProductPage() {
 
   if (window._prodSubTab === 'units') {
     await renderProductUnits();
+  } else if (window._prodSubTab === 'sets') {
+    await renderProductSets();
   } else {
     await renderProductHistory();
   }
@@ -7865,7 +7874,7 @@ function prodUnitRow(u, catTheme) {
         '<button class="btn btn-ghost btn-sm !p-1.5 !text-[10px]" onclick="showProductHolderEdit(' + u.id + ')" title="보유자 수정"><i class="fas fa-user-pen text-slate-500"></i></button>' +
         (canLoan ? '<button class="btn btn-outline btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'checkout\')" title="반출"><i class="fas fa-arrow-up-from-bracket"></i></button>' : '') +
         (u.status === 'in_stock' ? '<button class="btn btn-outline btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'deliver\')" title="납품"><i class="fas fa-gift"></i></button>' : '') +
-        (canReturn ? '<button class="btn btn-primary btn-sm !px-2 !py-1 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'return\')" title="회수"><i class="fas fa-arrow-down-to-bracket"></i></button>' : '') +
+        (canReturn ? '<button class="btn btn-primary btn-sm !px-2 !py-1 !text-[10px]" onclick="quickReturnProductUnit(' + u.id + ')" title="회수"><i class="fas fa-arrow-down-to-bracket"></i></button>' : '') +
         '<button class="btn btn-ghost btn-sm !p-1.5 !text-[10px]" onclick="showProductMoveForm(' + u.id + ',\'\')" title="기타 이동"><i class="fas fa-ellipsis-h"></i></button>' +
       '</div>' +
     '</td>' +
@@ -7935,6 +7944,278 @@ async function showProductHolderEdit(unitId) {
       } catch (e) { toast('수정 실패', 'err'); }
     };
   } catch (e) { toast('데이터 로드 실패', 'err'); }
+}
+
+// ============================================================
+// 제품 세트 관리 UI
+// ============================================================
+async function renderProductSets() {
+  var fb = document.getElementById('prod-filter-bar');
+  fb.innerHTML = '<div class="flex flex-wrap items-center gap-2">' +
+    '<button class="btn btn-primary btn-sm" onclick="showProductSetForm()"><i class="fas fa-plus mr-1"></i>새 세트 만들기</button>' +
+    '<span class="text-[11px] text-slate-500 ml-2">내부기 + 외부기 + 휴대보관함 등을 묶어 한번에 반출/회수할 수 있습니다</span>' +
+  '</div>';
+
+  var body = document.getElementById('prod-body');
+  body.innerHTML = skeleton(3);
+  try {
+    var r = await API.get('/products/sets');
+    var sets = r.data.data || [];
+    if (!sets.length) {
+      body.innerHTML = '<div class="empty"><div class="empty-icon"><i class="fas fa-cubes"></i></div>' +
+        '<p class="font-medium text-slate-500 mb-1">등록된 세트가 없습니다</p>' +
+        '<p class="text-xs text-slate-400 mb-4">"새 세트 만들기"로 유닛들을 묶어 세트를 구성하세요</p>' +
+        '<button class="btn btn-primary btn-sm" onclick="showProductSetForm()"><i class="fas fa-plus mr-1"></i>새 세트 만들기</button></div>';
+      return;
+    }
+    body.innerHTML = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">' + sets.map(prodSetCard).join('') + '</div>';
+  } catch (e) {
+    body.innerHTML = '<div class="text-sm text-red-400 p-4">세트 목록을 불러올 수 없습니다</div>';
+  }
+}
+
+function prodSetCard(s) {
+  var st = PROD_STATUS_STYLES[s.status] || { bg:'#f1f5f9', fg:'#475569', bd:'#e2e8f0' };
+  var stLbl = (s.status === 'mixed' ? '혼합' : (PROD_STATUS_LABELS[s.status] || s.status));
+  var comp = (s.composition || '').split(',').filter(Boolean);
+  var compChips = comp.map(function(c) {
+    var parts = c.split(':');
+    var cat = parts[0], model = parts[1] || '';
+    var t = PROD_CAT_THEMES[cat] || { chip:'#f1f5f9', chipFg:'#475569', icon:'fa-box' };
+    var nm = (PROD_CAT_LABELS[cat] || cat) + (model && model !== 'default' && model !== 'sullivan_implant' ? ' · ' + model : '');
+    return '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:' + t.chip + ';color:' + t.chipFg + '"><i class="fas ' + t.icon + ' text-[9px]"></i>' + nm + '</span>';
+  }).join(' ');
+
+  var canCheckout = (s.status === 'in_stock' || s.status === 'with_user');
+  var canReturn = (s.status === 'at_hospital' || s.status === 'with_user' || s.status === 'out');
+
+  return '<div class="card-flat p-4">' +
+    '<div class="flex items-start justify-between gap-3 mb-2">' +
+      '<div class="flex-1 min-w-0">' +
+        '<div class="flex items-center gap-2 flex-wrap">' +
+          '<span class="font-bold text-slate-800 text-[14px]">' + (s.name || '') + '</span>' +
+          '<span class="prod-status-chip" style="background:' + st.bg + ';color:' + st.fg + ';border-color:' + st.bd + '">' + stLbl + '</span>' +
+          '<span class="text-[10px] text-slate-500"><i class="fas fa-cube mr-0.5"></i>유닛 ' + (s.unit_count || 0) + '개</span>' +
+        '</div>' +
+        (s.description ? '<div class="text-[11px] text-slate-500 mt-1">' + s.description + '</div>' : '') +
+        (s.hospital_name ? '<div class="text-[11px] text-slate-600 mt-1"><i class="fas fa-hospital text-slate-400 text-[9px] mr-1"></i>' + s.hospital_name + '</div>' : '') +
+      '</div>' +
+    '</div>' +
+    (compChips ? '<div class="flex flex-wrap gap-1 mb-3">' + compChips + '</div>' : '') +
+    '<div class="flex flex-wrap gap-1 pt-3 border-t border-gray-100">' +
+      '<button class="btn btn-outline btn-sm text-[11px]" onclick="showProductSetDetail(' + s.id + ')"><i class="fas fa-list"></i> 상세</button>' +
+      (canCheckout ? '<button class="btn btn-outline btn-sm text-[11px]" onclick="showProductSetMoveForm(' + s.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i> 세트 반출</button>' : '') +
+      (canReturn ? '<button class="btn btn-primary btn-sm text-[11px]" onclick="quickReturnProductSet(' + s.id + ')"><i class="fas fa-arrow-down-to-bracket"></i> 세트 회수</button>' : '') +
+      '<button class="btn btn-outline btn-sm text-[11px]" onclick="showProductSetForm(' + s.id + ')"><i class="fas fa-pen"></i> 수정</button>' +
+      '<button class="btn btn-ghost btn-sm text-[11px] !text-red-500" onclick="deleteProductSet(' + s.id + ')"><i class="fas fa-trash"></i></button>' +
+    '</div>' +
+  '</div>';
+}
+
+async function showProductSetForm(setId) {
+  // 가용 유닛 + 세트 정보 로드
+  try {
+    var unitsR = await API.get('/products/units');
+    var allUnits = unitsR.data.data || [];
+    var setData = null;
+    if (setId) {
+      var sr = await API.get('/products/sets/' + setId);
+      setData = sr.data.data;
+    }
+    var currentUnitIds = setData && setData.items ? setData.items.map(function(it) { return it.id; }) : [];
+    var currentSet = new Set(currentUnitIds);
+
+    // 정렬: 카테고리 → 모델 → S/N
+    allUnits.sort(function(a, b) {
+      var co = { internal:1, external:2, carry_case:3 };
+      var ac = co[a.category] || 9, bc = co[b.category] || 9;
+      if (ac !== bc) return ac - bc;
+      return String(a.serial_no || a.asset_code || a.id).localeCompare(String(b.serial_no || b.asset_code || b.id));
+    });
+
+    var unitOpts = allUnits.map(function(u) {
+      var disabled = (u.in_other_set && !currentSet.has(u.id));
+      var checked = currentSet.has(u.id);
+      var label = (PROD_CAT_LABELS[u.category] || u.category) +
+        (u.model && u.model !== 'default' && u.model !== 'sullivan_implant' ? ' · ' + u.model : '') +
+        ' · ' + (u.serial_no || u.asset_code || '#' + u.id) +
+        ' [' + (PROD_STATUS_LABELS[u.status] || u.status) + ']';
+      return '<label class="flex items-center gap-2 text-xs cursor-pointer py-1 px-2 hover:bg-slate-50 rounded ' + (disabled ? 'opacity-40' : '') + '">' +
+        '<input type="checkbox" name="unit_id" value="' + u.id + '" class="rounded"' + (checked ? ' checked' : '') + (disabled ? ' disabled' : '') + '>' +
+        '<span class="truncate">' + label + '</span>' +
+      '</label>';
+    }).join('');
+
+    var html = '<form id="prod-set-form" class="space-y-3">' +
+      '<div><label class="input-label">세트 이름 *</label>' +
+        '<input type="text" name="name" class="input" required value="' + (setData ? (setData.name || '').replace(/"/g, '&quot;') : '') + '" placeholder="예: Sullivan 풀세트 #1">' +
+      '</div>' +
+      '<div><label class="input-label">설명</label>' +
+        '<input type="text" name="description" class="input" value="' + (setData ? (setData.description || '').replace(/"/g, '&quot;') : '') + '" placeholder="세트 용도/특징">' +
+      '</div>' +
+      '<div>' +
+        '<label class="input-label">구성 유닛 * <span class="text-[10px] text-slate-400 font-normal">(다른 세트에 속한 유닛은 선택 불가)</span></label>' +
+        '<div class="border border-gray-200 rounded-lg max-h-72 overflow-y-auto">' + (unitOpts || '<div class="text-xs text-slate-400 p-3">유닛이 없습니다</div>') + '</div>' +
+      '</div>' +
+      '<div><label class="input-label">비고</label><textarea name="notes" class="input" rows="2">' + (setData ? (setData.notes || '') : '') + '</textarea></div>' +
+      '<div class="flex justify-end gap-2 pt-3 border-t border-gray-100">' +
+        '<button type="button" class="btn btn-outline" onclick="closeModal()">취소</button>' +
+        '<button type="submit" class="btn btn-primary"><i class="fas fa-check mr-1"></i>' + (setId ? '수정' : '세트 만들기') + '</button>' +
+      '</div>' +
+    '</form>';
+
+    openModal(setId ? '세트 수정' : '새 세트 만들기', html);
+    document.getElementById('prod-set-form').onsubmit = async function(ev) {
+      ev.preventDefault();
+      var f = new FormData(ev.target);
+      var checks = ev.target.querySelectorAll('input[name="unit_id"]:checked');
+      var unitIds = Array.from(checks).map(function(c) { return Number(c.value); });
+      if (!unitIds.length) { toast('유닛을 1개 이상 선택하세요', 'warn'); return; }
+      var payload = {
+        name: f.get('name'),
+        description: f.get('description') || null,
+        notes: f.get('notes') || null,
+        unit_ids: unitIds,
+      };
+      try {
+        if (setId) {
+          await API.put('/products/sets/' + setId, payload);
+          toast('세트 수정 완료');
+        } else {
+          await API.post('/products/sets', payload);
+          toast('세트 생성 완료');
+        }
+        closeModal();
+        refreshProductPage();
+      } catch (e) {
+        var msg = (e.response && e.response.data && e.response.data.error) || '저장 실패';
+        toast(msg, 'err');
+      }
+    };
+  } catch (e) { toast('폼 로드 실패', 'err'); }
+}
+
+async function showProductSetDetail(setId) {
+  try {
+    var r = await API.get('/products/sets/' + setId);
+    var s = r.data.data;
+    var st = PROD_STATUS_STYLES[s.status] || { bg:'#f1f5f9', fg:'#475569', bd:'#e2e8f0' };
+    var stLbl = (s.status === 'mixed' ? '혼합' : (PROD_STATUS_LABELS[s.status] || s.status));
+
+    var itemsHtml = (s.items || []).map(function(it) {
+      var t = PROD_CAT_THEMES[it.category] || { chip:'#f1f5f9', chipFg:'#475569', icon:'fa-box' };
+      var its = PROD_STATUS_STYLES[it.status] || { bg:'#f1f5f9', fg:'#475569', bd:'#e2e8f0' };
+      return '<div class="flex items-center gap-2 py-2 border-b border-gray-100 last:border-0">' +
+        '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:' + t.chip + ';color:' + t.chipFg + '"><i class="fas ' + t.icon + ' text-[9px]"></i>' + (PROD_CAT_LABELS[it.category] || it.category) + '</span>' +
+        '<span class="font-mono text-[12px] font-bold">' + (it.serial_no || it.asset_code || '#' + it.id) + '</span>' +
+        '<span class="text-[11px] text-slate-500 truncate flex-1">' + (it.product_name || '') + '</span>' +
+        '<span class="prod-status-chip" style="background:' + its.bg + ';color:' + its.fg + ';border-color:' + its.bd + '">' + (PROD_STATUS_LABELS[it.status] || it.status) + '</span>' +
+        (it.holders ? '<span class="text-[10px] text-slate-500 hidden sm:inline"><i class="fas fa-user text-[9px] mr-0.5"></i>' + it.holders + '</span>' : '') +
+      '</div>';
+    }).join('');
+
+    var canCheckout = (s.status === 'in_stock' || s.status === 'with_user');
+    var canReturn = (s.status === 'at_hospital' || s.status === 'with_user' || s.status === 'out');
+
+    var html = '<div class="space-y-4">' +
+      '<div class="card-flat p-4">' +
+        '<div class="flex items-center gap-2 flex-wrap mb-2">' +
+          '<span class="font-bold text-base text-slate-800">' + (s.name || '') + '</span>' +
+          '<span class="prod-status-chip" style="background:' + st.bg + ';color:' + st.fg + ';border-color:' + st.bd + '">' + stLbl + '</span>' +
+        '</div>' +
+        (s.description ? '<div class="text-[12px] text-slate-600 mb-1">' + s.description + '</div>' : '') +
+        (s.hospital_name ? '<div class="text-[11px] text-slate-600"><i class="fas fa-hospital text-slate-400 text-[9px] mr-1"></i>' + s.hospital_name + '</div>' : '') +
+        '<div class="flex flex-wrap gap-1 mt-3 pt-3 border-t border-gray-100">' +
+          (canCheckout ? '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductSetMoveForm(' + s.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i> 세트 반출</button>' : '') +
+          (canReturn ? '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();quickReturnProductSet(' + s.id + ')"><i class="fas fa-arrow-down-to-bracket"></i> 세트 회수</button>' : '') +
+          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductSetForm(' + s.id + ')"><i class="fas fa-pen"></i> 수정</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="card-flat p-4">' +
+        '<div class="text-xs font-bold text-slate-700 mb-2"><i class="fas fa-cube mr-1"></i>구성 유닛 (' + (s.items || []).length + ')</div>' +
+        (itemsHtml || '<div class="text-xs text-slate-400">구성 유닛 없음</div>') +
+      '</div>' +
+    '</div>';
+    openModal('세트 #' + s.id, html);
+  } catch (e) { toast('세트 정보 로드 실패', 'err'); }
+}
+
+async function showProductSetMoveForm(setId, defaultType) {
+  if (!window._prodFormData) {
+    try { var fd0 = await API.get('/meetings/form-data'); window._prodFormData = fd0.data.data; }
+    catch (e) { window._prodFormData = { hospitals: [], doctors: [], users: [] }; }
+  }
+  var fd = window._prodFormData;
+  var hospOpts = '<option value="">선택 안함</option>' + fd.hospitals.map(function(h) { return '<option value="' + h.id + '">' + h.name + '</option>'; }).join('');
+  var userOpts = '<option value="">선택 안함</option>' + fd.users.map(function(u) { return '<option value="' + u.id + '">' + u.name + '</option>'; }).join('');
+
+  var html = '<form id="prod-set-move-form" class="space-y-3">' +
+    '<div class="text-[11px] text-slate-500 bg-amber-50 border border-amber-200 rounded p-2">' +
+      '<i class="fas fa-circle-info mr-1 text-amber-600"></i>세트의 모든 구성 유닛에 동일하게 적용됩니다' +
+    '</div>' +
+    '<div><label class="input-label">유형</label>' +
+      '<select name="movement_type" class="input">' +
+        '<option value="checkout"' + (defaultType === 'checkout' ? ' selected' : '') + '>반출 (대여)</option>' +
+        '<option value="deliver"' + (defaultType === 'deliver' ? ' selected' : '') + '>영구 납품</option>' +
+        '<option value="demo"' + (defaultType === 'demo' ? ' selected' : '') + '>시연 (회수)</option>' +
+      '</select>' +
+    '</div>' +
+    '<label class="flex items-center gap-2 text-sm"><input type="checkbox" name="is_loan" value="1" checked class="rounded"><span>대여 (반납 예정)</span></label>' +
+    '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+      '<div><label class="input-label">대상 기관</label><select name="hospital_id" class="input">' + hospOpts + '</select></div>' +
+      '<div><label class="input-label">담당자 (To)</label><select name="to_user_id" class="input">' + userOpts + '</select></div>' +
+    '</div>' +
+    '<div><label class="input-label">예상 회수일</label><input type="date" name="expected_return_date" class="input"></div>' +
+    '<div><label class="input-label">사유 / 비고</label><textarea name="reason" class="input" rows="2"></textarea></div>' +
+    '<div class="flex justify-end gap-2 pt-3 border-t border-gray-100">' +
+      '<button type="button" class="btn btn-outline" onclick="closeModal()">취소</button>' +
+      '<button type="submit" class="btn btn-primary"><i class="fas fa-check mr-1"></i>세트 반출 처리</button>' +
+    '</div>' +
+  '</form>';
+  openModal('세트 이동 처리', html);
+  document.getElementById('prod-set-move-form').onsubmit = async function(ev) {
+    ev.preventDefault();
+    var f = new FormData(ev.target);
+    var payload = {
+      movement_type: f.get('movement_type'),
+      is_loan: f.get('is_loan') ? 1 : 0,
+      hospital_id: f.get('hospital_id') ? Number(f.get('hospital_id')) : null,
+      to_user_id: f.get('to_user_id') ? Number(f.get('to_user_id')) : null,
+      expected_return_date: f.get('expected_return_date') || null,
+      reason: f.get('reason') || null,
+    };
+    try {
+      var res = await API.post('/products/sets/' + setId + '/movements', payload);
+      toast('세트 처리 완료 (' + (res.data.data.affected_units || 0) + '개 유닛 적용)');
+      closeModal();
+      refreshProductPage();
+    } catch (e) { toast('처리 실패', 'err'); }
+  };
+}
+
+async function quickReturnProductSet(setId) {
+  if (!confirm('이 세트를 회수 처리하시겠습니까?\n구성된 모든 유닛이 한 번에 회수됩니다.')) return;
+  try {
+    var sr = await API.get('/products/sets/' + setId);
+    var s = sr.data.data;
+    var payload = {
+      movement_type: 'return',
+      hospital_id: s.current_hospital_id || null,
+      reason: '세트 회수' + (s.hospital_name ? ' (' + s.hospital_name + ')' : ''),
+    };
+    var res = await API.post('/products/sets/' + setId + '/movements', payload);
+    toast('세트 회수 완료 (' + (res.data.data.affected_units || 0) + '개 유닛)');
+    refreshProductPage();
+  } catch (e) { toast('회수 실패', 'err'); }
+}
+
+async function deleteProductSet(setId) {
+  if (!confirm('이 세트를 삭제하시겠습니까?\n(구성 유닛은 유지되며, 세트 묶음만 해제됩니다)')) return;
+  try {
+    await API.delete('/products/sets/' + setId);
+    toast('세트 삭제 완료');
+    refreshProductPage();
+  } catch (e) { toast('삭제 실패', 'err'); }
 }
 
 async function renderProductHistory() {
@@ -8229,6 +8510,39 @@ function parseBulkSerials(text, preserveEmpty) {
   return arr;
 }
 
+// ===== 회수 빠른 처리 (직전 반출 이력 기반 자동) =====
+async function quickReturnProductUnit(unitId) {
+  if (!confirm('이 유닛을 회수 처리하시겠습니까?\n(직전 반출 이력의 기관/담당자가 자동 적용됩니다)')) return;
+  try {
+    // 직전 미회수 반출 이력 조회 (선택사항: 정보 표시용)
+    var detail;
+    try {
+      var dr = await API.get('/products/units/' + unitId);
+      detail = dr.data.data;
+    } catch (e) {}
+
+    var lastLoan = null;
+    if (detail && Array.isArray(detail.movements)) {
+      lastLoan = detail.movements.find(function(m) {
+        return (m.movement_type === 'checkout' || m.movement_type === 'demo') && m.is_loan && !m.actual_return_date;
+      });
+    }
+
+    var payload = {
+      product_unit_id: unitId,
+      movement_type: 'return',
+      hospital_id: (lastLoan && lastLoan.hospital_id) || null,
+      from_user_id: (lastLoan && lastLoan.to_user_id) || null,
+      reason: lastLoan ? '회수 (' + (lastLoan.hospital_name || '') + ')' : '회수',
+    };
+    await API.post('/products/movements', payload);
+    toast('회수 완료');
+    refreshProductPage();
+  } catch (e) {
+    toast('회수 실패', 'err');
+  }
+}
+
 // ===== 이동(반출/회수/납품) 모달 =====
 async function showProductMoveForm(unitId, defaultType) {
   if (!window._prodFormData) {
@@ -8339,7 +8653,7 @@ async function showProductUnitDetail(id) {
         '</div>' +
         '<div class="flex flex-wrap gap-1 mt-3 pt-3 border-t border-gray-100">' +
           '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductMoveForm(' + u.id + ',\'checkout\')"><i class="fas fa-arrow-up-from-bracket"></i> 반출</button>' +
-          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductMoveForm(' + u.id + ',\'return\')"><i class="fas fa-arrow-down-to-bracket"></i> 회수</button>' +
+          '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();quickReturnProductUnit(' + u.id + ')"><i class="fas fa-arrow-down-to-bracket"></i> 회수</button>' +
           '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductMoveForm(' + u.id + ',\'deliver\')"><i class="fas fa-gift"></i> 납품</button>' +
           '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductMoveForm(' + u.id + ',\'transfer\')"><i class="fas fa-arrow-right-arrow-left"></i> 이전</button>' +
           '<button class="btn btn-outline btn-sm text-[11px]" onclick="closeModal();showProductUnitForm(' + u.id + ')"><i class="fas fa-pen"></i> 수정</button>' +
