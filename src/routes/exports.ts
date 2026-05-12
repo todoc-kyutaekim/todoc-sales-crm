@@ -244,7 +244,7 @@ exports.get('/xlsx/:type', async (c) => {
     }
     sheets.push({
       name: '제품_재고_현황',
-      headers: ['카테고리', '모델', '제품명', 'S/N', '자산코드', '상태', '현재 위치(기관)', '보유자', '대여 반환예정일', '마지막 이동', '마지막 이동 유형', '취득일', '비고'],
+      headers: ['카테고리', '모델', '제품명', 'S/N', '모델명', '상태', '현재 위치(기관)', '보유자', '대여 반환예정일', '마지막 이동', '마지막 이동 유형', '취득일', '비고'],
       rows: (r.results as any[]).map(u => [
         catMap[u.category] || u.category,
         u.model || '',
@@ -329,7 +329,7 @@ exports.get('/xlsx/:type', async (c) => {
     }
     sheets.push({
       name: '제품_이동_이력',
-      headers: ['일시', '이동유형', '카테고리', '모델', '제품명', 'S/N', '자산코드', '기관', '의사', '반출자', '반입자', '처리자', '대여여부', '반환예정일', '실반환일', '미팅일자', '미팅ID', '비고'],
+      headers: ['일시', '이동유형', '카테고리', '모델', '제품명', 'S/N', '모델명', '기관', '의사', '반출자', '반입자', '처리자', '대여여부', '반환예정일', '실반환일', '미팅일자', '미팅ID', '비고'],
       rows: (r.results as any[]).map(row => [
         row.performed_at || '',
         movMap[row.movement_type] || row.movement_type,

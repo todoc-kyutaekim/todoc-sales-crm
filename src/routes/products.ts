@@ -24,13 +24,27 @@ products.get('/', async (c) => {
   return c.json({ data: r.results })
 })
 
-// 카테고리/모델별 비고(description) 수정
+// 카테고리/모델별 비고(description) + 표시명(name) + 모델명(model_code) 수정
 products.put('/:id', async (c) => {
   const id = c.req.param('id')
   const b = await c.req.json()
+  // model_code: 명시적으로 빈 문자열로 보내면 NULL 처리
+  const modelCode = b.model_code === undefined ? undefined
+    : (String(b.model_code).trim() || null)
   await c.env.DB.prepare(
-    'UPDATE products SET description=?, name=?, updated_at=CURRENT_TIMESTAMP WHERE id=?'
-  ).bind(b.description || '', b.name || '', id).run()
+    `UPDATE products SET
+       description = COALESCE(?, description),
+       name        = COALESCE(?, name),
+       model_code  = CASE WHEN ? = 1 THEN ? ELSE model_code END,
+       updated_at  = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  ).bind(
+    b.description != null ? b.description : null,
+    b.name != null && b.name !== '' ? b.name : null,
+    modelCode === undefined ? 0 : 1,
+    modelCode === undefined ? null : modelCode,
+    id
+  ).run()
   return c.json({ data: { id: Number(id), ...b } })
 })
 
@@ -201,6 +215,13 @@ products.post('/units', async (c) => {
     if (dup) return c.json({ error: '이미 등록된 시리얼번호입니다', code: 'DUPLICATE_SERIAL' }, 409)
   }
 
+  // 자산코드 미입력 시 제품의 model_code 자동 적용
+  let assetCode: string | null = (b.asset_code || '').trim() || null
+  if (!assetCode) {
+    const prod = await c.env.DB.prepare(`SELECT model_code FROM products WHERE id = ?`).bind(b.product_id).first<any>()
+    if (prod && prod.model_code) assetCode = String(prod.model_code).trim() || null
+  }
+
   const holderIds: number[] = Array.isArray(b.holder_user_ids)
     ? b.holder_user_ids.map((x: any) => Number(x)).filter((x: number) => x > 0)
     : []
@@ -214,7 +235,7 @@ products.post('/units', async (c) => {
     ).bind(
       b.product_id,
       sn || null,
-      b.asset_code || null,
+      assetCode,
       initStatus,
       b.acquired_at || new Date().toISOString().slice(0, 10),
       b.notes || null,
@@ -282,6 +303,10 @@ products.post('/units/bulk', async (c) => {
     ? b.holder_user_ids.map((x: any) => Number(x)).filter((x: number) => x > 0)
     : []
 
+  // 제품의 model_code 조회 (asset_code 미입력 시 자동 적용)
+  const prod = await c.env.DB.prepare(`SELECT model_code FROM products WHERE id = ?`).bind(b.product_id).first<any>()
+  const defaultAssetCode: string | null = prod && prod.model_code ? String(prod.model_code).trim() || null : null
+
   const created: number[] = []
   const skipped: { serial_no: string, reason: string }[] = []
   // 보유자가 있으면 입고 시점부터 with_user 상태로 (Task 3: 상태 전이 정확화)
@@ -289,7 +314,7 @@ products.post('/units/bulk', async (c) => {
 
   for (let i = 0; i < serialNos.length; i++) {
     const sn = serialNos[i]
-    const ac = assetCodes[i] || null
+    const ac = (assetCodes[i] || '').trim() || defaultAssetCode
     try {
       // 전역 중복 시리얼번호 체크 (UNIQUE 인덱스가 product_id 무관 전역)
       const dup = await c.env.DB.prepare(
@@ -743,7 +768,7 @@ products.get('/movements/export.csv', async (c) => {
      LIMIT 5000`
   ).bind(...params).all()
   const rows: any[] = r.results as any[]
-  const header = ['일시','이동유형','카테고리','모델','제품명','S/N','자산코드','병원','의사','반출자','반입자','처리자','대여여부','반환예정일','실반환일','비고']
+  const header = ['일시','이동유형','카테고리','모델','제품명','S/N','모델명','병원','의사','반출자','반입자','처리자','대여여부','반환예정일','실반환일','비고']
   const csv = [header.join(',')].concat(
     rows.map(row => {
       const cells = [

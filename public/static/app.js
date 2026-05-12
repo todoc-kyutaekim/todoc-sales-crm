@@ -7747,7 +7747,7 @@ async function renderProductUnits() {
   // Filter bar
   var fb = document.getElementById('prod-filter-bar');
   fb.innerHTML = '<div class="flex flex-wrap items-center gap-2">' +
-    '<input id="prod-search" type="text" placeholder="S/N · 자산코드 · 비고 검색" value="' + (window._prodFilter.search || '') + '" class="input !py-1.5 !text-xs flex-1 min-w-[160px]" style="max-width:280px" oninput="window._prodFilter.search=this.value;clearTimeout(window._prodSearchT);window._prodSearchT=setTimeout(renderProductUnits,300)">' +
+    '<input id="prod-search" type="text" placeholder="S/N · 모델명 · 비고 검색" value="' + (window._prodFilter.search || '') + '" class="input !py-1.5 !text-xs flex-1 min-w-[160px]" style="max-width:280px" oninput="window._prodFilter.search=this.value;clearTimeout(window._prodSearchT);window._prodSearchT=setTimeout(renderProductUnits,300)">' +
     '<select id="prod-status" class="input !py-1.5 !text-xs !w-auto" style="border-radius:8px" onchange="window._prodFilter.status=this.value;renderProductUnits()">' +
       '<option value="">모든 상태</option>' +
       Object.keys(PROD_STATUS_LABELS).map(function(k) {
@@ -7823,7 +7823,7 @@ function renderProdUnitList(units, catTheme) {
         '<tr>' +
           '<th class="px-2 py-2 text-left font-semibold w-[88px]">카테고리</th>' +
           '<th class="px-2 py-2 text-left font-semibold">시리얼번호 / 제품명</th>' +
-          '<th class="px-2 py-2 text-left font-semibold hidden md:table-cell">자산코드</th>' +
+          '<th class="px-2 py-2 text-left font-semibold hidden md:table-cell">모델명</th>' +
           '<th class="px-2 py-2 text-left font-semibold w-[100px]">상태</th>' +
           '<th class="px-2 py-2 text-left font-semibold hidden lg:table-cell">보유자</th>' +
           '<th class="px-2 py-2 text-left font-semibold hidden lg:table-cell">현재 위치</th>' +
@@ -7844,7 +7844,7 @@ function prodUnitRow(u, catTheme) {
   var stLbl = PROD_STATUS_LABELS[u.status] || u.status;
   var canLoan = (u.status === 'in_stock' || u.status === 'with_user');
   var canReturn = (u.status === 'at_hospital' || u.status === 'with_user' || u.status === 'out');
-  // 시리얼번호 우선, 없으면 자산코드, 둘 다 없으면 #id
+  // 시리얼번호 우선, 없으면 모델명, 둘 다 없으면 #id
   var primary = u.serial_no || u.asset_code || ('#' + u.id);
   return '<tr class="border-t border-gray-100 hover:bg-slate-50/70 cursor-pointer transition" style="border-left:4px solid ' + t.border + '" onclick="showProductUnitDetail(' + u.id + ')">' +
     '<td class="px-2 py-2.5">' +
@@ -7900,7 +7900,7 @@ async function showProductHolderEdit(unitId) {
         '<div class="text-sm font-bold text-slate-800">' + (u.product_name || '') + '</div>' +
         '<div class="text-[11px] text-slate-500 font-mono mt-0.5">' +
           (u.serial_no ? 'S/N: ' + u.serial_no : '') +
-          (u.asset_code ? (u.serial_no ? ' · ' : '') + '자산코드: ' + u.asset_code : '') +
+          (u.asset_code ? (u.serial_no ? ' · ' : '') + '모델명: ' + u.asset_code : '') +
           (!u.serial_no && !u.asset_code ? '#' + u.id : '') +
         '</div>' +
       '</div>' +
@@ -8276,23 +8276,36 @@ function prodMovRow(m) {
   '</div>';
 }
 
-// ===== 카테고리/모델 비고 관리 모달 =====
+// ===== 카테고리/모델 관리 모달 (모델명 등록 포함) =====
 async function showProductCatalog() {
   try {
     var r = await API.get('/products');
     var products = r.data.data || [];
-    var html = '<div class="space-y-2">' + products.map(function(p) {
+    var html = '<div class="space-y-2">' +
+      '<div class="text-[11px] text-slate-500 bg-blue-50 border border-blue-200 rounded p-2 mb-2">' +
+        '<i class="fas fa-circle-info mr-1 text-blue-600"></i>제품별 <strong>모델명</strong>을 등록해두면, 유닛 입고 시 자동으로 적용됩니다 (개별 입력 불필요)' +
+      '</div>' +
+      products.map(function(p) {
       return '<div class="card-flat p-3" data-pid="' + p.id + '">' +
         '<div class="flex items-center gap-2 mb-2">' +
           '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:#e0e7ff;color:#3730a3">' + (PROD_CAT_LABELS[p.category] || p.category) + '</span>' +
-          '<input type="text" class="input !py-1.5 !text-xs flex-1" data-field="name" value="' + (p.name || '') + '">' +
+          '<input type="text" class="input !py-1.5 !text-xs flex-1" data-field="name" value="' + (p.name || '').replace(/"/g, '&quot;') + '" placeholder="제품 표시명">' +
         '</div>' +
-        '<textarea class="input !py-2 !text-xs w-full" data-field="description" rows="2" placeholder="카테고리/모델 비고">' + (p.description || '') + '</textarea>' +
-        '<div class="text-[10px] text-slate-400 mt-1.5">재고 ' + (p.in_stock_count || 0) + ' · 외부 ' + (p.out_count || 0) + ' · 납품 ' + (p.delivered_count || 0) + ' · 총 ' + (p.total_count || 0) + '개</div>' +
+        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">' +
+          '<div>' +
+            '<label class="text-[10px] font-semibold text-slate-600 block mb-0.5">모델명 <span class="text-slate-400 font-normal">(유닛 입고 시 자동 적용)</span></label>' +
+            '<input type="text" class="input !py-1.5 !text-xs w-full font-mono" data-field="model_code" value="' + (p.model_code || '').replace(/"/g, '&quot;') + '" placeholder="예: TD-IMP-S1">' +
+          '</div>' +
+          '<div>' +
+            '<label class="text-[10px] font-semibold text-slate-600 block mb-0.5">재고 현황</label>' +
+            '<div class="text-[11px] text-slate-500 py-1.5">재고 ' + (p.in_stock_count || 0) + ' · 외부 ' + (p.out_count || 0) + ' · 납품 ' + (p.delivered_count || 0) + ' · 총 ' + (p.total_count || 0) + '개</div>' +
+          '</div>' +
+        '</div>' +
+        '<textarea class="input !py-2 !text-xs w-full" data-field="description" rows="2" placeholder="비고 / 메모">' + (p.description || '') + '</textarea>' +
         '<button class="btn btn-outline btn-sm text-[11px] mt-2" onclick="saveProductCatalog(' + p.id + ',this)"><i class="fas fa-save mr-1"></i>저장</button>' +
       '</div>';
     }).join('') + '</div>';
-    openModal('카테고리·모델 비고 관리', html);
+    openModal('카테고리·모델 관리', html);
   } catch (e) { toast('카테고리 정보를 불러올 수 없습니다', 'err'); }
 }
 
@@ -8300,8 +8313,9 @@ async function saveProductCatalog(id, btn) {
   var card = btn.closest('[data-pid]');
   var name = card.querySelector('[data-field="name"]').value;
   var desc = card.querySelector('[data-field="description"]').value;
+  var modelCode = card.querySelector('[data-field="model_code"]').value;
   try {
-    await API.put('/products/' + id, { name: name, description: desc });
+    await API.put('/products/' + id, { name: name, description: desc, model_code: modelCode });
     toast('저장됨');
   } catch (e) { toast('저장 실패', 'err'); }
 }
@@ -8332,8 +8346,8 @@ async function showProductUnitForm(id) {
         '</select>' +
       '</div>' +
       '<div class="grid grid-cols-2 gap-3">' +
-        '<div><label class="input-label">자산코드</label><input type="text" name="asset_code" value="' + (unit.asset_code || '') + '" class="input" placeholder="예: TD-001"></div>' +
-        '<div><label class="input-label">S/N (일련번호)</label><input type="text" name="serial_no" value="' + (unit.serial_no || '') + '" class="input" placeholder="시리얼 번호"></div>' +
+        '<div><label class="input-label">모델명 <span class="text-[10px] text-slate-400 font-normal">(미입력 시 제품 기본값 적용)</span></label><input type="text" name="asset_code" value="' + (unit.asset_code || '') + '" class="input font-mono" placeholder="예: TD-IMP-S1"></div>' +
+        '<div><label class="input-label">S/N (일련번호)</label><input type="text" name="serial_no" value="' + (unit.serial_no || '') + '" class="input font-mono" placeholder="시리얼 번호"></div>' +
       '</div>' +
       '<div><label class="input-label">입고일</label><input type="date" name="acquired_at" value="' + (unit.acquired_at || '') + '" class="input"></div>' +
       '<div><label class="input-label">비고</label><textarea name="notes" class="input" rows="2" placeholder="유닛 비고">' + (unit.notes || '') + '</textarea></div>' +
@@ -8382,12 +8396,18 @@ async function showProductUnitForm(id) {
         }).join('') +
       '</select>' +
     '</div>' +
+    // 안내: 모델명은 카테고리 마스터에서 자동 적용
+    '<div class="text-[11px] text-slate-500 bg-blue-50 border border-blue-200 rounded p-2">' +
+      '<i class="fas fa-circle-info mr-1 text-blue-600"></i>모델명은 선택한 제품의 기본값이 자동 적용됩니다 ' +
+      '<button type="button" class="text-blue-700 underline ml-1" onclick="closeModal();showProductCatalog()">카테고리 관리에서 등록</button>' +
+    '</div>' +
     // 단일 모드 영역
     '<div id="punit-single-fields" class="space-y-3">' +
-      '<div class="grid grid-cols-2 gap-3">' +
-        '<div><label class="input-label">자산코드</label><input type="text" name="asset_code" class="input" placeholder="예: TD-001"></div>' +
-        '<div><label class="input-label">S/N (일련번호)</label><input type="text" name="serial_no" class="input" placeholder="시리얼 번호"></div>' +
-      '</div>' +
+      '<div><label class="input-label">S/N (일련번호)</label><input type="text" name="serial_no" class="input font-mono" placeholder="시리얼 번호"></div>' +
+      '<details class="mt-1">' +
+        '<summary class="text-[11px] text-slate-500 cursor-pointer hover:text-slate-700"><i class="fas fa-chevron-right text-[9px] mr-1"></i>모델명을 개별 지정 (선택)</summary>' +
+        '<input type="text" name="asset_code" class="input font-mono text-xs mt-2" placeholder="개별 모델명 (미입력 시 제품 기본값 적용)">' +
+      '</details>' +
     '</div>' +
     // 다량 모드 영역
     '<div id="punit-bulk-fields" class="space-y-2 hidden">' +
@@ -8398,8 +8418,8 @@ async function showProductUnitForm(id) {
         '<span class="text-slate-400">중복 시리얼번호는 자동 스킵됩니다</span>' +
       '</div>' +
       '<details class="mt-2">' +
-        '<summary class="text-[11px] text-slate-500 cursor-pointer hover:text-slate-700"><i class="fas fa-chevron-right text-[9px] mr-1"></i>자산코드도 함께 입력 (선택)</summary>' +
-        '<textarea name="bulk_asset_codes" class="input font-mono text-xs mt-2" rows="4" placeholder="시리얼번호와 같은 순서로 한 줄씩 입력&#10;자산코드 없는 행은 빈 줄로 두세요"></textarea>' +
+        '<summary class="text-[11px] text-slate-500 cursor-pointer hover:text-slate-700"><i class="fas fa-chevron-right text-[9px] mr-1"></i>모델명을 개별 지정 (선택)</summary>' +
+        '<textarea name="bulk_asset_codes" class="input font-mono text-xs mt-2" rows="4" placeholder="시리얼번호와 같은 순서로 한 줄씩 입력&#10;빈 줄은 제품 기본 모델명이 적용됩니다"></textarea>' +
       '</details>' +
     '</div>' +
     '<div><label class="input-label">입고일</label><input type="date" name="acquired_at" value="' + new Date().toISOString().slice(0, 10) + '" class="input"></div>' +
@@ -8637,7 +8657,7 @@ async function showProductUnitDetail(id) {
         '</div>' +
         '<div class="font-bold text-base text-slate-800 mb-1">' + (u.product_name || '') + '</div>' +
         '<div class="text-[11px] text-slate-500 space-y-0.5">' +
-          (u.asset_code ? '<div>자산코드: <strong class="font-mono">' + u.asset_code + '</strong></div>' : '') +
+          (u.asset_code ? '<div>모델명: <strong class="font-mono">' + u.asset_code + '</strong></div>' : '') +
           (u.serial_no ? '<div>S/N: <strong class="font-mono">' + u.serial_no + '</strong></div>' : '') +
           (u.acquired_at ? '<div>입고일: ' + u.acquired_at + '</div>' : '') +
           (u.hospital_name ? '<div>현재 위치: ' + u.hospital_name + '</div>' : '') +
