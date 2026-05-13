@@ -434,12 +434,25 @@ function updateFabVisibility() {
 window.addEventListener('resize', updateFabVisibility);
 
 function openModal(t, h, wide) {
+  // 이전 모달의 진행 표시 상태 잔존 방지: progress bar / submitting 클래스 강제 리셋
+  // (이전 submit 이벤트의 polling 이 새 모달과 같은 #modal-progress 요소를 공유하지 않도록)
+  try {
+    var prevPb = document.getElementById('modal-progress');
+    if (prevPb) prevPb.classList.add('hidden');
+    var prevMc = document.getElementById('modal-content');
+    if (prevMc) prevMc.classList.remove('modal-submitting');
+    // 잔존 submit polling/timer 가 있으면 정리
+    if (window._activeSubmitRelease) {
+      try { window._activeSubmitRelease(); } catch (e) {}
+      window._activeSubmitRelease = null;
+    }
+  } catch (e) {}
   // Use innerHTML for title to support icon markup, fallback escaping handled by callers
   var titleEl = document.getElementById('modal-title');
   if (typeof t === 'string' && /<[a-z][^>]*>/i.test(t)) titleEl.innerHTML = t; else titleEl.textContent = t;
   document.getElementById('modal-body').innerHTML = h;
   const mc = document.getElementById('modal-content');
-  mc.className = 'modal-box bg-white w-full overflow-y-auto ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
+  mc.className = 'modal-box bg-white w-full overflow-y-auto relative ' + (wide === true || wide === 'wide' ? 'max-w-2xl' : wide === 'narrow' ? 'max-w-md' : 'max-w-lg');
   mc.style.cssText = 'max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)';
   var mdl = document.getElementById('modal');
   mdl.classList.remove('hidden');
@@ -508,7 +521,17 @@ function closeModal() {
   document.body.style.overflow = '';
   // Reset modal-content transform/opacity in case swipe was in progress
   var mc = document.getElementById('modal-content');
-  if (mc) { mc.style.transform = ''; mc.style.opacity = ''; mc.style.transition = ''; }
+  if (mc) {
+    mc.style.transform = ''; mc.style.opacity = ''; mc.style.transition = '';
+    mc.classList.remove('modal-submitting');
+  }
+  // 진행 표시 강제 정리 (잔존하는 submit polling 이 새 모달로 누수되지 않도록)
+  var pb = document.getElementById('modal-progress');
+  if (pb) pb.classList.add('hidden');
+  if (window._activeSubmitRelease) {
+    try { window._activeSubmitRelease(); } catch (e) {}
+    window._activeSubmitRelease = null;
+  }
   // Restore previous focus
   try { if (window._modalLastFocus && window._modalLastFocus.focus) window._modalLastFocus.focus(); } catch(e) {}
   window._modalLastFocus = null;
@@ -576,12 +599,18 @@ document.addEventListener('submit', function(e) {
     e.stopImmediatePropagation();
     return;
   }
+  // 이전 submit 의 polling 이 살아있다면 먼저 정리 (모달 재사용 시 누수 방지)
+  if (window._activeSubmitRelease) {
+    try { window._activeSubmitRelease(); } catch (err) {}
+    window._activeSubmitRelease = null;
+  }
   _setModalSubmitting(form, true);
 
   // 안전장치: 기존 핸들러가 Promise를 반환하지 않더라도
   // (a) closeModal 호출 시 자동 해제, (b) 15초 후 자동 해제, (c) DOM 교체 시 자동 해제
   var releaseTimer = setTimeout(function() {
     try { _setModalSubmitting(form, false); } catch (e) {}
+    window._activeSubmitRelease = null;
   }, 15000);
 
   // 다음 마이크로/매크로태스크에 form이 여전히 DOM에 있는지 확인해서 풀어줌
@@ -592,15 +621,19 @@ document.addEventListener('submit', function(e) {
       clearInterval(poll);
       clearTimeout(releaseTimer);
       try { _setModalSubmitting(form, false); } catch (e) {}
+      window._activeSubmitRelease = null;
     }
   }, 200);
 
-  // form에 풀기 함수 노출 (필요 시 핸들러가 명시적으로 호출 가능)
-  form._releaseSubmitting = function() {
+  // form/전역에 풀기 함수 노출 (필요 시 핸들러가 명시적으로 호출 가능)
+  var release = function() {
     clearInterval(poll);
     clearTimeout(releaseTimer);
     try { _setModalSubmitting(form, false); } catch (e) {}
+    if (window._activeSubmitRelease === release) window._activeSubmitRelease = null;
   };
+  form._releaseSubmitting = release;
+  window._activeSubmitRelease = release;
 }, true);
 
 // ===== Keyboard Shortcuts =====

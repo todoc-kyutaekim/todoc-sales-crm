@@ -1417,6 +1417,11 @@ html[data-theme="dark"] #header-actions .btn-ghost:hover { background: var(--gra
   border-radius: 0 999px 999px 0;
   box-shadow: 0 0 8px rgba(99, 102, 241, 0.4);
 }
+/* 안전장치: #modal-progress 가 hidden 일 때는 자식 애니메이션을 강제로 멈춰
+   submit polling 누수로 .hidden 이 잠시 제거되어도 시각적으로 흐르지 않게 함 */
+#modal-progress.hidden .modal-progress-bar {
+  animation-play-state: paused;
+}
 @keyframes modalProgressSlide {
   0%   { transform: translateX(-100%); }
   50%  { transform: translateX(150%); }
