@@ -771,6 +771,130 @@ products.delete('/meeting-product/:id', async (c) => {
 })
 
 // ============================================================
+// 미팅 동반 반출 — 세트 단위
+// ============================================================
+
+// 동반 반출 가능한 세트 (in_stock 또는 mixed — 구성 유닛이 있는 활성 세트)
+products.get('/available-sets-for-meeting', async (c) => {
+  const userId = c.get('userId')
+  const r = await c.env.DB.prepare(
+    `SELECT s.id, s.name, s.description, s.status,
+       (SELECT COUNT(*) FROM product_set_items si
+         WHERE si.set_id = s.id AND si.removed_at IS NULL) AS unit_count,
+       (SELECT GROUP_CONCAT(p.category || ':' || COALESCE(pu.asset_code, pu.serial_no, '#'||pu.id), ' / ')
+          FROM product_set_items si
+          JOIN product_units pu ON pu.id = si.product_unit_id
+          JOIN products p ON p.id = pu.product_id
+         WHERE si.set_id = s.id AND si.removed_at IS NULL) AS composition,
+       (SELECT GROUP_CONCAT(DISTINCT p.category)
+          FROM product_set_items si
+          JOIN product_units pu ON pu.id = si.product_unit_id
+          JOIN products p ON p.id = pu.product_id
+         WHERE si.set_id = s.id AND si.removed_at IS NULL) AS categories,
+       (SELECT COUNT(DISTINCT ph.user_id) FROM product_set_items si
+          JOIN product_holders ph ON ph.product_unit_id = si.product_unit_id
+         WHERE si.set_id = s.id AND si.removed_at IS NULL
+           AND ph.user_id = ? AND ph.released_at IS NULL) AS my_holder_count
+     FROM product_sets s
+     WHERE s.status IN ('in_stock','at_hospital','out')
+     ORDER BY s.created_at DESC`
+  ).bind(userId).all()
+  return c.json({ data: r.results })
+})
+
+// 미팅에 세트 통째로 연결 — 세트 구성 유닛들을 한 번에 meeting_products 에 추가
+// body: { meeting_id, set_ids: number[], action?, is_loan?, notes? }
+products.post('/link-sets-to-meeting', async (c) => {
+  const b = await c.req.json()
+  const userId = c.get('userId')
+  const meetingId = Number(b.meeting_id)
+  const action = (b.action || 'demo') as string // demo | checkout | deliver
+  const isLoan = b.is_loan ? 1 : 0
+  const setIds: number[] = Array.isArray(b.set_ids) ? b.set_ids.map(Number).filter((x: number) => x > 0) : []
+  if (!meetingId || !setIds.length) {
+    return c.json({ error: 'meeting_id and set_ids are required' }, 400)
+  }
+  const meet = await c.env.DB.prepare(
+    `SELECT m.id, m.hospital_id,
+       (SELECT md.doctor_id FROM meeting_doctors md WHERE md.meeting_id = m.id LIMIT 1) as doctor_id
+     FROM meetings m WHERE m.id = ?`
+  ).bind(meetingId).first<any>()
+  if (!meet) return c.json({ error: 'Meeting not found' }, 404)
+
+  const linkedSets: { set_id: number, set_name: string, linked_units: number, skipped_units: number }[] = []
+  let totalLinkedUnits = 0
+
+  for (const setId of setIds) {
+    // 세트 정보 + 활성 구성 유닛 조회
+    const setInfo = await c.env.DB.prepare(`SELECT id, name FROM product_sets WHERE id = ?`).bind(setId).first<any>()
+    if (!setInfo) continue
+    const itemR = await c.env.DB.prepare(
+      `SELECT pu.id AS unit_id
+         FROM product_set_items si
+         JOIN product_units pu ON pu.id = si.product_unit_id
+        WHERE si.set_id = ? AND si.removed_at IS NULL`
+    ).bind(setId).all()
+    const unitIds: number[] = (itemR.results as any[]).map(r => Number(r.unit_id))
+    if (!unitIds.length) {
+      linkedSets.push({ set_id: setId, set_name: setInfo.name, linked_units: 0, skipped_units: 0 })
+      continue
+    }
+
+    let linkedCount = 0
+    let skippedCount = 0
+    const setNotes = `[세트: ${setInfo.name}]` + (b.notes ? ' ' + b.notes : '')
+    for (const unitId of unitIds) {
+      const exists = await c.env.DB.prepare(
+        `SELECT id FROM meeting_products WHERE meeting_id=? AND product_unit_id=?`
+      ).bind(meetingId, unitId).first()
+      if (exists) { skippedCount++; continue }
+      await c.env.DB.prepare(
+        `INSERT INTO meeting_products (meeting_id, product_unit_id, action, notes) VALUES (?, ?, ?, ?)`
+      ).bind(meetingId, unitId, action, setNotes).run()
+      const movType = action === 'deliver' ? 'deliver' : action === 'checkout' ? 'checkout' : 'demo'
+      await c.env.DB.prepare(
+        `INSERT INTO product_movements
+          (product_unit_id, movement_type, hospital_id, doctor_id, meeting_id, is_loan, reason, performed_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(unitId, movType, meet.hospital_id || null, meet.doctor_id || null, meetingId, isLoan, setNotes, userId).run()
+      if (action === 'deliver') {
+        await c.env.DB.prepare(
+          `UPDATE product_units SET status='delivered', current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+        ).bind(meet.hospital_id || null, unitId).run()
+        await c.env.DB.prepare(
+          `UPDATE product_holders SET released_at=CURRENT_TIMESTAMP WHERE product_unit_id=? AND released_at IS NULL`
+        ).bind(unitId).run()
+      } else if (action === 'checkout') {
+        await c.env.DB.prepare(
+          `UPDATE product_units SET status=?, current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+        ).bind(meet.hospital_id ? 'at_hospital' : 'out', meet.hospital_id || null, unitId).run()
+      }
+      linkedCount++
+    }
+
+    // 세트 상태 재계산 (구성 유닛 상태 변경 반영)
+    // deliver 시에는 세트도 delivered (current_hospital 설정), checkout 시에는 at_hospital/out
+    if (action === 'deliver') {
+      await c.env.DB.prepare(
+        `UPDATE product_sets SET status='delivered', current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+      ).bind(meet.hospital_id || null, setId).run()
+    } else if (action === 'checkout') {
+      await c.env.DB.prepare(
+        `UPDATE product_sets SET status=?, current_hospital_id=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`
+      ).bind(meet.hospital_id ? 'at_hospital' : 'out', meet.hospital_id || null, setId).run()
+    } else {
+      // demo (시연·회수) — 구성 유닛 상태 그대로, refresh 만 호출
+      await refreshSetStatus(c.env.DB, setId)
+    }
+
+    linkedSets.push({ set_id: setId, set_name: setInfo.name, linked_units: linkedCount, skipped_units: skippedCount })
+    totalLinkedUnits += linkedCount
+  }
+
+  return c.json({ data: { linked_sets: linkedSets, total_linked_units: totalLinkedUnits } }, 201)
+})
+
+// ============================================================
 // 이동 이력 CSV 내보내기
 // ============================================================
 products.get('/movements/export.csv', async (c) => {

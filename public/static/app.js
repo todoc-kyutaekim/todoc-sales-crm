@@ -4764,23 +4764,16 @@ async function showMeetForm(hid, did, mid) {
     if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
     delete payload.doctor_ids_single;
-    // Collect selected product units for auto-link
-    var prodUnitIds = Array.from(document.querySelectorAll('#fm input[name="meet_product_unit"]:checked')).map(cb => Number(cb.value));
-    var prodAction = (document.querySelector('#fm select[name="meet_product_action"]') || {}).value || 'demo';
-    var prodIsLoan = !!(document.querySelector('#fm input[name="meet_product_is_loan"]') || {}).checked;
+    // Collect selected product units + sets for auto-link
+    var prodPicks = collectMeetProductPicks('#fm');
     delete payload.meet_product_action;
     delete payload.meet_product_is_loan;
     try {
       let savedMid;
       if (mid) { await API.put('/meetings/' + mid, payload); savedMid = mid; toast('미팅 수정됨') }
       else { const res = await API.post('/meetings', payload); savedMid = res.data && res.data.data && res.data.data.id; toast('미팅 등록됨') }
-      // Auto-link selected product units to meeting
-      if (savedMid && prodUnitIds.length) {
-        try {
-          await API.post('/products/link-to-meeting', { meeting_id: savedMid, product_unit_ids: prodUnitIds, action: prodAction, is_loan: prodIsLoan ? 1 : 0 });
-          toast('제품 ' + prodUnitIds.length + '개 연계됨');
-        } catch (e2) { toast('제품 연계 실패', 'warn'); }
-      }
+      // Auto-link selected product units + sets to meeting
+      if (savedMid) { await linkMeetProductPicks(savedMid, prodPicks); }
       closeModal(); viewHosp(hid);
     } catch (e) { toast('저장 실패', 'err') }
   };
@@ -4903,10 +4896,8 @@ async function showMeetFormFromProfile(hid, did, mid) {
     const f = Object.fromEntries(new FormData(e.target));
     const doctorIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
     if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
-    // 동행 제품 수집
-    var prodUnitIds = Array.from(document.querySelectorAll('#fm input[name="meet_product_unit"]:checked:not(:disabled)')).map(cb => Number(cb.value));
-    var prodAction = (document.querySelector('#fm select[name="meet_product_action"]') || {}).value || 'demo';
-    var prodIsLoan = !!(document.querySelector('#fm input[name="meet_product_is_loan"]') || {}).checked;
+    // 동행 제품 수집 (개별 유닛 + 세트)
+    var prodPicks = collectMeetProductPicks('#fm');
     const payload = { ...f, doctor_ids: doctorIds, hospital_id: hid };
     delete payload.meet_product_action;
     delete payload.meet_product_is_loan;
@@ -4914,12 +4905,7 @@ async function showMeetFormFromProfile(hid, did, mid) {
       let savedMid;
       if (mid) { await API.put('/meetings/' + mid, payload); savedMid = mid; toast('미팅 수정됨') }
       else { const res = await API.post('/meetings', payload); savedMid = res.data && res.data.data && res.data.data.id; toast('미팅 등록됨') }
-      if (savedMid && prodUnitIds.length) {
-        try {
-          await API.post('/products/link-to-meeting', { meeting_id: savedMid, product_unit_ids: prodUnitIds, action: prodAction, is_loan: prodIsLoan ? 1 : 0 });
-          toast('제품 ' + prodUnitIds.length + '개 연계됨');
-        } catch (e2) { toast('제품 연계 실패', 'warn'); }
-      }
+      if (savedMid) { await linkMeetProductPicks(savedMid, prodPicks); }
       closeModal(); viewDocProfile(did);
     } catch (e) { toast('저장 실패', 'err') }
   };
@@ -4970,22 +4956,15 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
     const selectedIds = Array.from(document.querySelectorAll('#fm input[name="doctor_ids"]:checked')).map(cb => Number(cb.value));
     if (!selectedIds.length) { toast('의료진을 선택하세요', 'warn'); return }
     const selectedUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
-    // 동행 제품 (disabled=기존 연계는 제외, 신규만 추출)
-    var prodUnitIds = Array.from(document.querySelectorAll('#fm input[name="meet_product_unit"]:checked:not(:disabled)')).map(cb => Number(cb.value));
-    var prodAction = (document.querySelector('#fm select[name="meet_product_action"]') || {}).value || 'demo';
-    var prodIsLoan = !!(document.querySelector('#fm input[name="meet_product_is_loan"]') || {}).checked;
+    // 동행 제품 수집 (개별 유닛 + 세트, disabled 항목은 자동 제외)
+    var prodPicks = collectMeetProductPicks('#fm');
     const payload = { ...f, doctor_ids: selectedIds, user_ids: selectedUserIds, hospital_id: hid };
     delete payload.meet_product_action;
     delete payload.meet_product_is_loan;
     try {
       await API.put('/meetings/' + mid, payload);
       toast('미팅 수정됨');
-      if (prodUnitIds.length) {
-        try {
-          await API.post('/products/link-to-meeting', { meeting_id: mid, product_unit_ids: prodUnitIds, action: prodAction, is_loan: prodIsLoan ? 1 : 0 });
-          toast('제품 ' + prodUnitIds.length + '개 연계됨');
-        } catch (e2) { toast('제품 연계 실패', 'warn'); }
-      }
+      await linkMeetProductPicks(mid, prodPicks);
       closeModal(); loadMeet();
     } catch (e) { toast('저장 실패', 'err') }
   };
@@ -5028,10 +5007,8 @@ async function showNewMeetGlobal() {
       if (!doctorIds.length) { toast('의료진을 선택하세요', 'warn'); return }
       if (!f.meeting_date) { toast('미팅일자를 입력하세요', 'warn'); return }
       const selUserIds = Array.from(document.querySelectorAll('#fm input[name="user_ids"]:checked')).map(cb => Number(cb.value));
-      // 동행 제품 수집
-      var prodUnitIds = Array.from(document.querySelectorAll('#fm input[name="meet_product_unit"]:checked:not(:disabled)')).map(cb => Number(cb.value));
-      var prodAction = (document.querySelector('#fm select[name="meet_product_action"]') || {}).value || 'demo';
-      var prodIsLoan = !!(document.querySelector('#fm input[name="meet_product_is_loan"]') || {}).checked;
+      // 동행 제품 수집 (개별 유닛 + 세트)
+      var prodPicks = collectMeetProductPicks('#fm');
       const payload = { ...f, doctor_ids: doctorIds, user_ids: selUserIds };
       delete payload.meet_product_action;
       delete payload.meet_product_is_loan;
@@ -5039,12 +5016,7 @@ async function showNewMeetGlobal() {
         const res = await API.post('/meetings', payload);
         const savedMid = res.data && res.data.data && res.data.data.id;
         toast('미팅 등록됨');
-        if (savedMid && prodUnitIds.length) {
-          try {
-            await API.post('/products/link-to-meeting', { meeting_id: savedMid, product_unit_ids: prodUnitIds, action: prodAction, is_loan: prodIsLoan ? 1 : 0 });
-            toast('제품 ' + prodUnitIds.length + '개 연계됨');
-          } catch (e2) { toast('제품 연계 실패', 'warn'); }
-        }
+        if (savedMid) { await linkMeetProductPicks(savedMid, prodPicks); }
         closeModal(); window._calPrefill = null;
         if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); else if (curPage === 'calendar') renderCalendar();
       } catch (e) { toast('저장 실패', 'err') }
@@ -8860,13 +8832,66 @@ function prodMovTimelineRow(m) {
 // ============================================================
 // 미팅 폼 — 동반 반출 제품 선택 picker (Q4 자동 연계)
 // ============================================================
+
+// 미팅 폼의 동행 제품 picker 에서 선택된 값들을 한번에 수집
+// (개별 유닛 + 세트 + 처리 유형 + 대여 여부)
+// scope: 폼 컨테이너 셀렉터 (기본 '#fm')
+function collectMeetProductPicks(scope) {
+  scope = scope || '#fm';
+  return {
+    unit_ids: Array.from(document.querySelectorAll(scope + ' input[name="meet_product_unit"]:checked:not(:disabled)')).map(function(cb){ return Number(cb.value); }),
+    set_ids: Array.from(document.querySelectorAll(scope + ' input[name="meet_product_set"]:checked:not(:disabled)')).map(function(cb){ return Number(cb.value); }),
+    action: (document.querySelector(scope + ' select[name="meet_product_action"]') || {}).value || 'demo',
+    is_loan: !!(document.querySelector(scope + ' input[name="meet_product_is_loan"]') || {}).checked
+  };
+}
+
+// 수집된 picks 를 미팅에 연계 (개별 유닛 + 세트). 에러는 toast 로 안내하고 throw 하지 않음
+async function linkMeetProductPicks(meetingId, picks) {
+  if (!meetingId) return { unit_linked: 0, set_linked: 0 };
+  var unitLinked = 0, setLinked = 0;
+  try {
+    if (picks.unit_ids && picks.unit_ids.length) {
+      await API.post('/products/link-to-meeting', {
+        meeting_id: meetingId,
+        product_unit_ids: picks.unit_ids,
+        action: picks.action,
+        is_loan: picks.is_loan ? 1 : 0
+      });
+      unitLinked = picks.unit_ids.length;
+    }
+    if (picks.set_ids && picks.set_ids.length) {
+      var r = await API.post('/products/link-sets-to-meeting', {
+        meeting_id: meetingId,
+        set_ids: picks.set_ids,
+        action: picks.action,
+        is_loan: picks.is_loan ? 1 : 0
+      });
+      setLinked = picks.set_ids.length;
+      // 세트 동행 시 총 동행된 유닛 수도 알려주기
+      try {
+        var totalUnits = (r && r.data && r.data.data && r.data.data.total_linked_units) || 0;
+        if (setLinked && totalUnits) {
+          toast('세트 ' + setLinked + '개 (유닛 ' + totalUnits + '개) 동행 연계됨');
+        }
+      } catch (e) {}
+    }
+    if (unitLinked) toast('제품 ' + unitLinked + '개 연계됨');
+  } catch (e) {
+    toast('제품 연계 실패: ' + ((e && e.response && e.response.data && e.response.data.error) || e.message || '오류'));
+  }
+  return { unit_linked: unitLinked, set_linked: setLinked };
+}
+
 async function loadMeetProductPicker(existingMeetingId) {
   var listEl = document.getElementById('meet-products-list');
   if (!listEl) return;
   try {
-    // 가용 유닛
+    // 가용 유닛 + 가용 세트 병렬 로드
     var avail = [];
+    var sets = [];
     try { avail = (await API.get('/products/available-for-meeting')).data.data || []; } catch (e) { avail = []; }
+    try { sets = (await API.get('/products/available-sets-for-meeting')).data.data || []; } catch (e) { sets = []; }
     // 기존 연계 (수정 모드)
     var linkedIds = {};
     if (existingMeetingId) {
@@ -8875,11 +8900,11 @@ async function loadMeetProductPicker(existingMeetingId) {
         lr.forEach(function(x) { linkedIds[x.product_unit_id] = x; });
       } catch (e) {}
     }
-    if (!avail.length && !Object.keys(linkedIds).length) {
+    if (!avail.length && !sets.length && !Object.keys(linkedIds).length) {
       listEl.innerHTML = '<div class="text-xs text-slate-400 text-center py-2">등록된 제품 유닛이 없습니다. <a href="javascript:closeModal();nav(\'products\')" class="text-brand-500 underline">제품 관리</a>에서 먼저 입고하세요.</div>';
       return;
     }
-    // 카테고리별 그룹화
+    // 카테고리별 그룹화 (유닛)
     var grouped = {};
     avail.forEach(function(u) {
       var key = u.category + '|' + u.model;
@@ -8888,8 +8913,10 @@ async function loadMeetProductPicker(existingMeetingId) {
     });
     var catLabel = { internal: '내부기', external: '외부기', carry_case: '휴대보관함' };
     var catColor = { internal: '#dbeafe;color:#1e40af', external: '#dcfce7;color:#166534', carry_case: '#fef3c7;color:#92400e' };
+    var setStatusLabel = { in_stock: '재고', at_hospital: '기관 보관', out: '반출', mixed: '혼합' };
+    var setStatusColor = { in_stock: '#dcfce7;color:#166534', at_hospital: '#fee2e2;color:#991b1b', out: '#fef3c7;color:#92400e', mixed: '#e0e7ff;color:#3730a3' };
     var html = '';
-    // 액션 + 대여여부 선택
+    // 액션 + 대여여부 선택 (세트/유닛 공통)
     html += '<div class="flex flex-wrap items-center gap-2 mb-2 pb-2 border-b border-gray-100">' +
       '<label class="text-[11px] text-slate-500">처리 유형:</label>' +
       '<select name="meet_product_action" class="input !py-1 !text-xs !w-auto">' +
@@ -8901,6 +8928,52 @@ async function loadMeetProductPicker(existingMeetingId) {
         '<input type="checkbox" name="meet_product_is_loan" class="w-3.5 h-3.5"> 대여 여부 표시' +
       '</label>' +
       '</div>';
+
+    // ===== 세트 섹션 =====
+    if (sets.length) {
+      html += '<div class="mb-2.5 pb-2 border-b border-gray-100">' +
+        '<div class="flex items-center gap-1.5 mb-1.5">' +
+          '<i class="fas fa-layer-group text-[11px] text-indigo-500"></i>' +
+          '<span class="text-[11px] font-bold text-slate-700">세트 단위 동행</span>' +
+          '<span class="text-[10px] text-slate-400">(선택 시 구성 유닛 전체가 함께 동행)</span>' +
+        '</div>' +
+        '<div class="space-y-1">';
+      sets.forEach(function(s) {
+        var unitCount = Number(s.unit_count || 0);
+        if (!unitCount) return; // 빈 세트 제외
+        var cats = String(s.categories || '').split(',').filter(Boolean);
+        var catBadges = cats.map(function(cc){
+          return '<span class="text-[9px] font-bold px-1 py-0.5 rounded" style="background:' + (catColor[cc] || '#e5e7eb;color:#374151') + '">' + (catLabel[cc] || cc) + '</span>';
+        }).join(' ');
+        var isMine = Number(s.my_holder_count || 0) > 0;
+        var bgCls = isMine ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-gray-200';
+        var stColor = setStatusColor[s.status] || '#e5e7eb;color:#374151';
+        var stLabel = setStatusLabel[s.status] || s.status;
+        var compTitle = s.composition ? ' title="구성: ' + String(s.composition).replace(/"/g,'&quot;') + '"' : '';
+        html += '<label class="flex items-start gap-2 p-2 rounded-lg border ' + bgCls + ' cursor-pointer hover:bg-indigo-50 transition"' + compTitle + '>' +
+          '<input type="checkbox" name="meet_product_set" value="' + s.id + '" class="w-3.5 h-3.5 mt-0.5">' +
+          '<div class="flex-1 min-w-0">' +
+            '<div class="flex items-center gap-1.5 flex-wrap">' +
+              '<span class="text-[12px] font-semibold text-slate-800">' + escapeHtml(s.name || ('세트 #' + s.id)) + '</span>' +
+              '<span class="text-[9px] font-bold px-1 py-0.5 rounded" style="background:' + stColor + '">' + stLabel + '</span>' +
+              catBadges +
+              '<span class="text-[10px] text-slate-400">' + unitCount + '개 유닛</span>' +
+              (isMine ? '<i class="fas fa-user text-[8px] text-emerald-500" title="내가 보유한 유닛 포함"></i>' : '') +
+            '</div>' +
+            (s.description ? '<div class="text-[10px] text-slate-400 mt-0.5 truncate">' + escapeHtml(s.description) + '</div>' : '') +
+          '</div>' +
+        '</label>';
+      });
+      html += '</div></div>';
+    }
+
+    // ===== 개별 유닛 섹션 =====
+    if (Object.keys(grouped).length) {
+      html += '<div class="flex items-center gap-1.5 mb-1.5">' +
+        '<i class="fas fa-cube text-[11px] text-slate-500"></i>' +
+        '<span class="text-[11px] font-bold text-slate-700">개별 유닛</span>' +
+      '</div>';
+    }
     // 그룹별 유닛 체크박스
     Object.keys(grouped).sort().forEach(function(k) {
       var g = grouped[k];
