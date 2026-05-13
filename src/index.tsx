@@ -234,15 +234,12 @@ const HTML = `<!DOCTYPE html>
     <div id="header-actions" class="hidden lg:flex items-center gap-1 lg:gap-2 flex-shrink-0" role="toolbar" aria-label="페이지 액션"></div>
     <!-- Mention bell (always shown) -->
     <button id="mention-bell" class="theme-toggle flex-shrink-0 relative" onclick="toggleMentionPanel(event)" aria-label="멘션 알림" title="멘션 알림" aria-haspopup="true" aria-expanded="false"><i class="fas fa-bell" aria-hidden="true"></i><span id="mention-badge" class="absolute -top-1 -right-1 hidden min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-bold leading-[16px] text-center" aria-live="polite">0</span></button>
-    <div id="mention-panel" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
     <!-- Mobile More Menu (테마/액션/유저 메뉴 통합) -->
     <button id="header-more-btn" class="theme-toggle flex-shrink-0 lg:hidden" onclick="toggleHeaderMore(event)" aria-label="더보기" title="더보기" aria-haspopup="true" aria-expanded="false"><i class="fas fa-ellipsis-vertical" aria-hidden="true"></i></button>
     <!-- Theme toggle (Desktop only) -->
     <button id="theme-toggle" class="theme-toggle flex-shrink-0 hidden lg:inline-flex" onclick="toggleTheme()" aria-label="다크 모드 전환" title="테마 전환"><i class="fas fa-moon" aria-hidden="true"></i></button>
     <div class="h-5 w-px bg-gray-200 mx-1.5 hidden lg:block" aria-hidden="true"></div>
     <div id="user-menu" class="relative flex-shrink-0 hidden lg:flex"></div>
-    <!-- Mobile More Menu Sheet -->
-    <div id="header-more-menu" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:52px;right:8px;width:240px;overflow:hidden" role="menu" aria-label="더보기 메뉴"></div>
   </header>
   <div id="content" role="main" tabindex="-1" class="flex-1 overflow-y-auto overflow-x-hidden" style="padding-bottom:calc(64px + env(safe-area-inset-bottom, 0px))"></div>
   <style>@media(min-width:1024px){#content{padding-bottom:0!important}}</style>
@@ -301,6 +298,12 @@ const HTML = `<!DOCTYPE html>
     </div>
   </div>
 </div>
+
+<!-- Mention 패널 & 모바일 더보기 메뉴 — 헤더(backdrop-filter로 stacking context 생성)
+     밖으로 빼서 body 직계 자식으로 둠. 그래야 z-[85]가 모달/FAB 등 다른 fixed 레이어를
+     실제로 덮을 수 있음 (headering 안에 두면 자식 z-index가 헤더 stacking context에 갇힘) -->
+<div id="mention-panel" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
+<div id="header-more-menu" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:52px;right:8px;width:240px;overflow:hidden" role="menu" aria-label="더보기 메뉴"></div>
 
 <!-- Modal (z-[70]: above bottom nav z-45, FAB z-55/56, search overlay z-55) -->
 <div id="modal" class="fixed inset-0 modal-bg z-[70] hidden items-end lg:items-center justify-center lg:p-4" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true" onclick="if(event.target===this)tryCloseModal()">
