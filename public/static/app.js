@@ -354,6 +354,10 @@ function toggleSidebar() {
 
 // ===== Nav =====
 function nav(p) {
+  // 제품 관리는 현재 비활성화 — URL 직접 접근/저장된 호출도 대시보드로 리다이렉트
+  if (p === 'products') {
+    p = 'dashboard';
+  }
   curPage = p;
   // 일정 페이지를 떠날 때 sticky bottom action bar 제거
   if (p !== 'schedule') {
@@ -4782,8 +4786,8 @@ async function showMeetForm(hid, did, mid) {
     field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
-    // 동반 반출 제품 선택 (Q4 자동 연계)
-    '<div class="col-span-full" id="meet-products-panel"><label class="input-label"><i class="fas fa-box-archive mr-1 text-slate-400"></i>동반 반출 제품 <span class="text-[10px] text-slate-400 font-normal">(선택 사항 — 미팅 시 사용한 데모기 자동 기록)</span></label><div id="meet-products-list" class="border border-gray-200 rounded-xl p-2 text-xs text-slate-400 text-center">로딩 중...</div></div>' +
+    // 동반 반출 제품 선택 — 제품 관리 기능 비활성화로 인해 임시 숨김
+    '' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (mid ? '저장' : '추가') + '</button></div></form>');
   // Bind date change to update schedule preview
   var dateInput = document.querySelector('#fm input[name="meeting_date"]');
@@ -4917,8 +4921,8 @@ async function showMeetFormFromProfile(hid, did, mid) {
     field('목적', 'purpose', 'text', m.purpose) +
     field('미팅 내용', 'content', 'textarea', m.content) + field('결과', 'result', 'textarea', m.result) + field('후속 액션', 'next_action', 'textarea', m.next_action) +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
-    // 동행 제품 선택 패널 (의료진 프로필 미팅 폼)
-    '<div class="col-span-full" id="meet-products-panel"><label class="input-label"><i class="fas fa-box-archive mr-1 text-slate-400"></i>동행 반출 제품 <span class="text-[10px] text-slate-400 font-normal">(선택 사항 — 내부기/외부기/휴대보관함 단일 또는 복수)</span></label><div id="meet-products-list" class="border border-gray-200 rounded-xl p-2 text-xs text-slate-400 text-center">로딩 중...</div></div>' +
+    // 동행 제품 선택 패널 — 제품 관리 기능 비활성화로 인해 임시 숨김
+    '' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">' + (mid ? '저장' : '추가') + '</button></div></form>');
   var dateInput = document.querySelector('#fm input[name="meeting_date"]');
   if (dateInput) dateInput.addEventListener('change', updateMeetSchedulePreview);
@@ -4978,8 +4982,8 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
     field('목적', 'purpose', 'text', m.purpose || '') +
     field('미팅 내용', 'content', 'textarea', m.content || '') + field('결과', 'result', 'textarea', m.result || '') + field('후속 액션', 'next_action', 'textarea', m.next_action || '') +
     '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" value="' + (m.next_meeting_date || '') + '" class="input"></div>' +
-    // 동행 제품 선택 패널 (수정 모드 — 기존 연계 표시 + 추가 선택)
-    '<div class="col-span-full" id="meet-products-panel"><label class="input-label"><i class="fas fa-box-archive mr-1 text-slate-400"></i>동행 반출 제품 <span class="text-[10px] text-slate-400 font-normal">(이미 연계된 제품은 체크 잠금 — 추가 제품 선택 가능)</span></label><div id="meet-products-list" class="border border-gray-200 rounded-xl p-2 text-xs text-slate-400 text-center">로딩 중...</div></div>' +
+    // 동행 제품 선택 패널 (수정 모드) — 제품 관리 기능 비활성화로 인해 임시 숨김
+    '' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">저장</button></div></form>');
   // 동행 제품 picker 로드 (기존 연계 포함)
   loadMeetProductPicker(mid);
@@ -5026,8 +5030,8 @@ async function showNewMeetGlobal() {
       field('목적', 'purpose', 'text', '') +
       field('미팅 내용', 'content', 'textarea', '') + field('결과', 'result', 'textarea', '') + field('후속 액션', 'next_action', 'textarea', '') +
       '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" class="input"></div>' +
-      // 동행 제품 선택 패널 (내부기/외부기/휴대보관함 단일 또는 복수)
-      '<div class="col-span-full" id="meet-products-panel"><label class="input-label"><i class="fas fa-box-archive mr-1 text-slate-400"></i>동행 반출 제품 <span class="text-[10px] text-slate-400 font-normal">(선택 사항 — 내부기/외부기/휴대보관함 단일 또는 복수 선택)</span></label><div id="meet-products-list" class="border border-gray-200 rounded-xl p-2 text-xs text-slate-400 text-center">로딩 중...</div></div>' +
+      // 동행 제품 선택 패널 — 제품 관리 기능 비활성화로 인해 임시 숨김
+      '' +
       '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-success">추가</button></div></form>';
     window._newMeetDocs = allDocs;
     // 동행 제품 picker 로드
@@ -5170,6 +5174,11 @@ function showMeetDetail(m) {
 
 // 미팅 상세에서 동행 반출 제품 로드 및 렌더
 async function loadMeetDetailProducts(meetingId) {
+  // 제품 관리 기능 비활성화 — 미팅 상세에서 동행 제품 섹션 숨김
+  var elDisabled = document.getElementById('meet-detail-products');
+  if (elDisabled) elDisabled.innerHTML = '';
+  return;
+  // eslint-disable-next-line no-unreachable
   var el = document.getElementById('meet-detail-products');
   if (!el) return;
   try {
@@ -8881,6 +8890,9 @@ function collectMeetProductPicks(scope) {
 
 // 수집된 picks 를 미팅에 연계 (개별 유닛 + 세트). 에러는 toast 로 안내하고 throw 하지 않음
 async function linkMeetProductPicks(meetingId, picks) {
+  // 제품 관리 기능 비활성화 — 미팅 폼에서 picker 가 노출되지 않으므로 항상 no-op
+  return { unit_linked: 0, set_linked: 0 };
+  // eslint-disable-next-line no-unreachable
   if (!meetingId) return { unit_linked: 0, set_linked: 0 };
   var unitLinked = 0, setLinked = 0;
   try {
@@ -8917,6 +8929,9 @@ async function linkMeetProductPicks(meetingId, picks) {
 }
 
 async function loadMeetProductPicker(existingMeetingId) {
+  // 제품 관리 기능 비활성화 — picker 마크업이 제거되어 있으므로 즉시 종료
+  return;
+  // eslint-disable-next-line no-unreachable
   var listEl = document.getElementById('meet-products-list');
   if (!listEl) return;
   try {
