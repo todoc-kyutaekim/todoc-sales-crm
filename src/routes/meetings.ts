@@ -98,61 +98,66 @@ function extractDoctorIds(body: any): number[] {
 }
 
 meetings.get('/', async (c) => {
-  const { doctor_id, hospital_id, limit, meeting_type, date_from, date_to, search } = c.req.query()
-  
-  let q = 'SELECT m.*, h.name as hospital_name, u.name as user_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id LEFT JOIN users u ON m.user_id=u.id'
-  const conds: string[] = [], p: any[] = []
-  
-  if (doctor_id) {
-    // Filter by doctor: check meeting_doctors join table
-    conds.push('m.id IN (SELECT meeting_id FROM meeting_doctors WHERE doctor_id = ?)')
-    p.push(safeInt(doctor_id))
-  }
-  if (hospital_id) { conds.push('m.hospital_id=?'); p.push(safeInt(hospital_id)) }
-  if (meeting_type) { conds.push('m.meeting_type=?'); p.push(meeting_type) }
-  if (date_from) { conds.push('m.meeting_date>=?'); p.push(date_from) }
-  if (date_to) { conds.push('m.meeting_date<=?'); p.push(date_to) }
-  if (search) {
-    const s = `%${safeLike(search)}%`
-    conds.push(`(h.name LIKE ? OR m.purpose LIKE ? OR m.content LIKE ? OR m.id IN (
-      SELECT md.meeting_id FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id WHERE d.name LIKE ?
-    ))`)
-    p.push(s, s, s, s)
-  }
-  if (conds.length) q += ' WHERE ' + conds.join(' AND ')
-  q += ' ORDER BY m.meeting_date DESC'
-  if (limit) q += ` LIMIT ${safeLimit(limit, 200)}`
-  
-  const r = await c.env.DB.prepare(q).bind(...p).all()
-  const meetingsList = r.results as any[]
-  
-  // Fetch doctors and users for all meetings
-  const meetingIds = meetingsList.map(m => m.id)
-  const [doctorsMap, usersMap] = await Promise.all([
-    getMeetingDoctors(c.env.DB, meetingIds),
-    getMeetingUsers(c.env.DB, meetingIds),
-  ])
-  
-  // Attach doctors + users array to each meeting
-  const data = meetingsList.map(m => {
-    const doctors = doctorsMap.get(m.id) || []
-    const users = usersMap.get(m.id) || []
-    return {
-      ...m,
-      doctors,
-      doctor_ids: doctors.map((d: any) => d.id),
-      // Backward compat: first doctor info
-      doctor_id: doctors.length > 0 ? doctors[0].id : m.doctor_id,
-      doctor_name: doctors.length > 0 ? doctors.map((d: any) => d.name).join(', ') : null,
-      doctor_photo: doctors.length > 0 ? doctors[0].photo : null,
-      // Multi-user support
-      users,
-      user_ids: users.map((u: any) => u.id),
-      user_names: users.map((u: any) => u.name).join(', ') || m.user_name || null,
+  try {
+    const { doctor_id, hospital_id, limit, meeting_type, date_from, date_to, search } = c.req.query()
+
+    let q = 'SELECT m.*, h.name as hospital_name, u.name as user_name FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id LEFT JOIN users u ON m.user_id=u.id'
+    const conds: string[] = [], p: any[] = []
+
+    if (doctor_id) {
+      // Filter by doctor: check meeting_doctors join table
+      conds.push('m.id IN (SELECT meeting_id FROM meeting_doctors WHERE doctor_id = ?)')
+      p.push(safeInt(doctor_id))
     }
-  })
-  
-  return c.json({ data })
+    if (hospital_id) { conds.push('m.hospital_id=?'); p.push(safeInt(hospital_id)) }
+    if (meeting_type) { conds.push('m.meeting_type=?'); p.push(meeting_type) }
+    if (date_from) { conds.push('m.meeting_date>=?'); p.push(date_from) }
+    if (date_to) { conds.push('m.meeting_date<=?'); p.push(date_to) }
+    if (search) {
+      const s = `%${safeLike(search)}%`
+      conds.push(`(h.name LIKE ? OR m.purpose LIKE ? OR m.content LIKE ? OR m.id IN (
+        SELECT md.meeting_id FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id WHERE d.name LIKE ?
+      ))`)
+      p.push(s, s, s, s)
+    }
+    if (conds.length) q += ' WHERE ' + conds.join(' AND ')
+    q += ' ORDER BY m.meeting_date DESC'
+    if (limit) q += ` LIMIT ${safeLimit(limit, 200)}`
+
+    const r = await c.env.DB.prepare(q).bind(...p).all()
+    const meetingsList = r.results as any[]
+
+    // Fetch doctors and users for all meetings
+    const meetingIds = meetingsList.map(m => m.id)
+    const [doctorsMap, usersMap] = await Promise.all([
+      getMeetingDoctors(c.env.DB, meetingIds),
+      getMeetingUsers(c.env.DB, meetingIds),
+    ])
+
+    // Attach doctors + users array to each meeting
+    const data = meetingsList.map(m => {
+      const doctors = doctorsMap.get(m.id) || []
+      const users = usersMap.get(m.id) || []
+      return {
+        ...m,
+        doctors,
+        doctor_ids: doctors.map((d: any) => d.id),
+        // Backward compat: first doctor info
+        doctor_id: doctors.length > 0 ? doctors[0].id : m.doctor_id,
+        doctor_name: doctors.length > 0 ? doctors.map((d: any) => d.name).join(', ') : null,
+        doctor_photo: doctors.length > 0 ? doctors[0].photo : null,
+        // Multi-user support
+        users,
+        user_ids: users.map((u: any) => u.id),
+        user_names: users.map((u: any) => u.name).join(', ') || m.user_name || null,
+      }
+    })
+
+    return c.json({ data })
+  } catch (err: any) {
+    console.error('[GET /api/meetings] error:', err && err.message, err && err.stack)
+    return c.json({ error: 'meetings_list_failed', message: String(err && err.message || err) }, 500)
+  }
 })
 
 // Quick list of hospitals + doctors + users for global meeting form
@@ -200,57 +205,67 @@ meetings.get('/:id', async (c) => {
 })
 
 meetings.post('/', async (c) => {
-  const b = await c.req.json()
-  const doctorIds = extractDoctorIds(b)
-  if (!doctorIds.length) return c.json({ error: 'doctor_id or doctor_ids is required' }, 400)
-  if (!b.hospital_id) return c.json({ error: 'hospital_id is required' }, 400)
-  if (!b.meeting_date) return c.json({ error: 'meeting_date is required' }, 400)
-  
-  // Extract user IDs (supports multiple)
-  const userIds = extractUserIds(b, c.get('userId'))
-  const primaryUserId = userIds.length > 0 ? userIds[0] : null
-  
-  // Insert meeting (keep doctor_id as first doctor for backward compat)
-  const primaryDoctorId = doctorIds[0]
-  const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,visit_time,start_time,end_time,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.start_time || null, b.end_time || null, b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId).run()
-  
-  const meetingId = r.meta.last_row_id as number
-  
-  // Sync meeting_doctors
-  await syncMeetingDoctors(c.env.DB, meetingId, doctorIds)
-  // Sync meeting_users
-  if (userIds.length > 0) await syncMeetingUsers(c.env.DB, meetingId, userIds)
-  
-  // Get doctor names for activity log
-  const names: string[] = []
-  for (const did of doctorIds) {
-    const doc = await c.env.DB.prepare('SELECT name FROM doctors WHERE id=?').bind(did).first() as any
-    if (doc?.name) names.push(doc.name)
+  try {
+    const b = await c.req.json()
+    const doctorIds = extractDoctorIds(b)
+    if (!doctorIds.length) return c.json({ error: 'doctor_id or doctor_ids is required' }, 400)
+    if (!b.hospital_id) return c.json({ error: 'hospital_id is required' }, 400)
+    if (!b.meeting_date) return c.json({ error: 'meeting_date is required' }, 400)
+
+    // Extract user IDs (supports multiple)
+    const userIds = extractUserIds(b, c.get('userId'))
+    const primaryUserId = userIds.length > 0 ? userIds[0] : null
+
+    // Insert meeting (keep doctor_id as first doctor for backward compat)
+    const primaryDoctorId = doctorIds[0]
+    const r = await c.env.DB.prepare('INSERT INTO meetings (doctor_id,hospital_id,meeting_date,meeting_type,visit_time,start_time,end_time,purpose,content,result,next_action,next_meeting_date,user_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.start_time || null, b.end_time || null, b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId).run()
+
+    const meetingId = r.meta.last_row_id as number
+
+    // Sync meeting_doctors
+    await syncMeetingDoctors(c.env.DB, meetingId, doctorIds)
+    // Sync meeting_users
+    if (userIds.length > 0) await syncMeetingUsers(c.env.DB, meetingId, userIds)
+
+    // Get doctor names for activity log
+    const names: string[] = []
+    for (const did of doctorIds) {
+      const doc = await c.env.DB.prepare('SELECT name FROM doctors WHERE id=?').bind(did).first() as any
+      if (doc?.name) names.push(doc.name)
+    }
+    await logActivity(c.env.DB, 'create', 'meeting', meetingId, names.join(', '), `type:${b.meeting_type || 'visit'}, purpose:${b.purpose || ''}`)
+
+    return c.json({ data: { id: meetingId, ...b, doctor_ids: doctorIds, user_ids: userIds } }, 201)
+  } catch (err: any) {
+    console.error('[POST /api/meetings] error:', err && err.message, err && err.stack)
+    return c.json({ error: 'meeting_create_failed', message: String(err && err.message || err) }, 500)
   }
-  await logActivity(c.env.DB, 'create', 'meeting', meetingId, names.join(', '), `type:${b.meeting_type || 'visit'}, purpose:${b.purpose || ''}`)
-  
-  return c.json({ data: { id: meetingId, ...b, doctor_ids: doctorIds, user_ids: userIds } }, 201)
 })
 
 meetings.put('/:id', async (c) => {
-  const b = await c.req.json(); const id = c.req.param('id')
-  const doctorIds = extractDoctorIds(b)
-  if (!doctorIds.length) return c.json({ error: 'doctor_id or doctor_ids is required' }, 400)
-  if (!b.hospital_id || !b.meeting_date) return c.json({ error: 'Required fields missing' }, 400)
-  
-  const primaryDoctorId = doctorIds[0]
-  const userIds = extractUserIds(b, c.get('userId'))
-  const primaryUserId = userIds.length > 0 ? userIds[0] : null
-  await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,visit_time=?,start_time=?,end_time=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-    .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.start_time || null, b.end_time || null, b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId, id).run()
-  
-  // Sync meeting_doctors and meeting_users
-  await syncMeetingDoctors(c.env.DB, Number(id), doctorIds)
-  if (userIds.length > 0) await syncMeetingUsers(c.env.DB, Number(id), userIds)
-  
-  await logActivity(c.env.DB, 'update', 'meeting', Number(id), '', `type:${b.meeting_type}`)
-  return c.json({ data: { id: Number(id), ...b, doctor_ids: doctorIds, user_ids: userIds } })
+  try {
+    const b = await c.req.json(); const id = c.req.param('id')
+    const doctorIds = extractDoctorIds(b)
+    if (!doctorIds.length) return c.json({ error: 'doctor_id or doctor_ids is required' }, 400)
+    if (!b.hospital_id || !b.meeting_date) return c.json({ error: 'Required fields missing' }, 400)
+
+    const primaryDoctorId = doctorIds[0]
+    const userIds = extractUserIds(b, c.get('userId'))
+    const primaryUserId = userIds.length > 0 ? userIds[0] : null
+    await c.env.DB.prepare('UPDATE meetings SET doctor_id=?,hospital_id=?,meeting_date=?,meeting_type=?,visit_time=?,start_time=?,end_time=?,purpose=?,content=?,result=?,next_action=?,next_meeting_date=?,user_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+      .bind(primaryDoctorId, b.hospital_id, b.meeting_date, b.meeting_type || 'visit', b.visit_time || '', b.start_time || null, b.end_time || null, b.purpose || '', b.content || '', b.result || '', b.next_action || '', b.next_meeting_date || null, primaryUserId, id).run()
+
+    // Sync meeting_doctors and meeting_users
+    await syncMeetingDoctors(c.env.DB, Number(id), doctorIds)
+    if (userIds.length > 0) await syncMeetingUsers(c.env.DB, Number(id), userIds)
+
+    await logActivity(c.env.DB, 'update', 'meeting', Number(id), '', `type:${b.meeting_type}`)
+    return c.json({ data: { id: Number(id), ...b, doctor_ids: doctorIds, user_ids: userIds } })
+  } catch (err: any) {
+    console.error('[PUT /api/meetings/:id] error:', err && err.message, err && err.stack)
+    return c.json({ error: 'meeting_update_failed', message: String(err && err.message || err) }, 500)
+  }
 })
 
 meetings.delete('/:id', async (c) => {

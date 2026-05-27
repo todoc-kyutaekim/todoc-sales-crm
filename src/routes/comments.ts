@@ -107,23 +107,28 @@ comments.delete('/:id', async (c) => {
 
 // GET /api/comments/mentions  — current user's unread mentions
 comments.get('/mentions', async (c) => {
-  const user = c.get('user')
-  if (!user) return c.json({ error: 'Unauthorized' }, 401)
-  const r = await c.env.DB.prepare(`
-    SELECT mn.id as notif_id, mn.read_at, mn.created_at as notif_created_at,
-      mc.id as comment_id, mc.meeting_id, mc.content, mc.user_id as author_id,
-      u.name as author_name,
-      m.meeting_date, h.name as hospital_name
-    FROM mention_notifications mn
-    LEFT JOIN meeting_comments mc ON mn.comment_id = mc.id
-    LEFT JOIN users u ON mc.user_id = u.id
-    LEFT JOIN meetings m ON mc.meeting_id = m.id
-    LEFT JOIN hospitals h ON m.hospital_id = h.id
-    WHERE mn.user_id = ?
-    ORDER BY mn.created_at DESC LIMIT 50
-  `).bind(user.id).all()
-  const unread = (r.results as any[]).filter(x => !x.read_at).length
-  return c.json({ data: r.results, unread })
+  try {
+    const user = c.get('user')
+    if (!user) return c.json({ error: 'Unauthorized' }, 401)
+    const r = await c.env.DB.prepare(`
+      SELECT mn.id as notif_id, mn.read_at, mn.created_at as notif_created_at,
+        mc.id as comment_id, mc.meeting_id, mc.content, mc.user_id as author_id,
+        u.name as author_name,
+        m.meeting_date, h.name as hospital_name
+      FROM mention_notifications mn
+      LEFT JOIN meeting_comments mc ON mn.comment_id = mc.id
+      LEFT JOIN users u ON mc.user_id = u.id
+      LEFT JOIN meetings m ON mc.meeting_id = m.id
+      LEFT JOIN hospitals h ON m.hospital_id = h.id
+      WHERE mn.user_id = ?
+      ORDER BY mn.created_at DESC LIMIT 50
+    `).bind(user.id).all()
+    const unread = (r.results as any[]).filter(x => !x.read_at).length
+    return c.json({ data: r.results, unread })
+  } catch (err: any) {
+    console.error('[GET /api/comments/mentions] error:', err && err.message, err && err.stack)
+    return c.json({ error: 'mentions_list_failed', message: String(err && err.message || err) }, 500)
+  }
 })
 
 // POST /api/comments/mentions/:id/read
