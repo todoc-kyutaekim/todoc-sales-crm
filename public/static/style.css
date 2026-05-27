@@ -519,6 +519,10 @@ textarea.input { resize: vertical; min-height: 72px }
 }
 .btm-nav-item:active { transform: scale(.92); opacity: .8 }
 .btm-nav-fab-spacer { width: 64px; flex-shrink: 0 }
+/* .hidden 강제 우선 — Tailwind CDN 의 .hidden 이 .btm-nav-item / .nav-item 의
+   display 선언에 덮어쓰이지 않도록 명시적으로 specificity 를 끌어올림 */
+.btm-nav-item.hidden,
+.nav-item.hidden { display: none !important; }
 
 /* ===== Mobile FAB — Elevated action button ===== */
 .mobile-fab {
