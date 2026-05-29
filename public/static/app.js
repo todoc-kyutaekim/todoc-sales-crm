@@ -3972,7 +3972,7 @@ function renderMeetCalendarDay() {
   html += _teamFilterChips(meetsAll);
 
   if (!dayMeets.length) {
-    html += '<div class="text-center py-12 text-slate-300 border border-dashed border-slate-200 rounded-xl transition" data-date="' + ds + '" data-slot="" data-drop-target="1" ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onMeetDrop(event)"><i class="fas fa-calendar-xmark text-3xl mb-3 block"></i><div class="text-sm">이 날에는 등록된 미팅이 없습니다</div><div class="text-[11px] mt-1">다른 일정을 여기로 드래그하면 이 날짜로 이동합니다</div><button class="btn btn-success btn-sm mt-4" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs mr-1"></i>미팅 추가</button></div>';
+    html += '<div class="text-center py-12 text-slate-300 border border-dashed border-slate-200 rounded-xl transition" data-date="' + ds + '" data-slot="" data-drop-target="1" ondragover="onMeetDragOver(event)" ondragleave="onMeetDragLeave(event)" ondrop="onMeetDrop(event)"><i class="fas fa-calendar-xmark text-3xl mb-3 block"></i><div class="text-sm">이 날에는 등록된 미팅이 없습니다</div><div class="text-[11px] mt-1">다른 일정을 여기로 드래그하면 이 날짜로 이동합니다</div><button class="btn btn-success btn-sm mt-4" onclick="window._calPrefill={meeting_date:\'' + ds + '\'};showNewMeetGlobal()"><i class="fas fa-plus text-xs mr-1"></i>미팅 추가</button></div>';
     html += '</div>';
     document.getElementById('m-body').innerHTML = html;
     return;
@@ -4256,7 +4256,8 @@ window.showDayMeetsInline = function(dateStr) {
   } else {
     html += '<div class="text-center py-4 text-sm text-slate-400"><i class="fas fa-calendar-xmark text-xl text-slate-200 mb-2 block"></i>이 날 미팅이 없습니다</div>';
   }
-  html += '<div class="mt-3 text-center"><button class="btn btn-success btn-sm" onclick="closeModal();showNewMeetGlobal()"><i class="fas fa-plus text-xs mr-1"></i>미팅 추가</button></div>';
+  // 미팅 추가 버튼: 클릭한 날짜를 _calPrefill 에 세팅하여 미팅 폼이 자동으로 그 날짜로 채워지도록 함
+  html += '<div class="mt-3 text-center"><button class="btn btn-success btn-sm" onclick="closeModal();window._calPrefill={meeting_date:\'' + dateStr + '\'};showNewMeetGlobal()"><i class="fas fa-plus text-xs mr-1"></i>미팅 추가</button></div>';
   openModal(fmtDate(dateStr) + ' (' + dayKr + ') 일정', html);
 };
 
@@ -5009,6 +5010,9 @@ async function showMeetFormGlobal(hid, doctorIds, mid) {
 
 // ===== NEW MEETING (GLOBAL - select hospital first) =====
 async function showNewMeetGlobal() {
+  // _calPrefill 을 소비 후 즉시 로컬에 보관하고 글로벌은 클리어 (취소 시 잔존 방지)
+  var _prefill = window._calPrefill || null;
+  window._calPrefill = null;
   openModal('새 미팅', '<div class="text-center py-6 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div>', true);
   try {
     const { data } = await API.get('/meetings/form-data');
@@ -5022,11 +5026,11 @@ async function showNewMeetGlobal() {
       '<div><label class="input-label">기관 *</label><select name="hospital_id" id="nm-hosp" class="input" onchange="updateNewMeetDocs()"><option value="">-- 기관 선택 --</option>' + hospOpts + '</select></div>' +
       newMeetUserCbs +
       '<div class="col-span-full"><label class="input-label">참석 의료진 * <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label><div id="nm-doc-list" class="border border-gray-200 rounded-xl max-h-[180px] overflow-y-auto p-2"><div class="text-sm text-slate-400 text-center py-3">먼저 기관을 선택하세요</div></div></div>' +
-      field('미팅일자 *', 'meeting_date', 'date', (window._calPrefill && window._calPrefill.meeting_date) || new Date().toISOString().split('T')[0]) +
+      field('미팅일자 *', 'meeting_date', 'date', (_prefill && _prefill.meeting_date) || new Date().toISOString().split('T')[0]) +
       field('유형', 'meeting_type', 'select', 'visit', [{ v: 'visit', l: '방문' }, { v: 'phone', l: '전화' }, { v: 'conference', l: '학회' }, { v: 'email', l: '이메일' }, { v: 'online', l: '온라인' }]) +
       field('방문 시간대', 'visit_time', 'select', '', [{ v: '', l: '미지정' }, { v: 'am', l: '오전' }, { v: 'pm', l: '오후' }, { v: 'full', l: '종일' }]) +
-      '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>시작 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="start_time" class="input" step="1800" value="' + ((window._calPrefill && window._calPrefill.start_time) || '') + '"></div>' +
-      '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>종료 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="end_time" class="input" step="1800" value="' + ((window._calPrefill && window._calPrefill.end_time) || '') + '"></div>' +
+      '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>시작 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="start_time" class="input" step="1800" value="' + ((_prefill && _prefill.start_time) || '') + '"></div>' +
+      '<div><label class="input-label"><i class="fas fa-clock mr-1 text-slate-400"></i>종료 시각 <span class="text-[10px] text-slate-400 font-normal">(선택)</span></label><input type="time" name="end_time" class="input" step="1800" value="' + ((_prefill && _prefill.end_time) || '') + '"></div>' +
       field('목적', 'purpose', 'text', '') +
       field('미팅 내용', 'content', 'textarea', '') + field('결과', 'result', 'textarea', '') + field('후속 액션', 'next_action', 'textarea', '') +
       '<div><label class="input-label">다음 미팅 예정</label><input type="date" name="next_meeting_date" class="input"></div>' +
@@ -5054,7 +5058,7 @@ async function showNewMeetGlobal() {
         const savedMid = res.data && res.data.data && res.data.data.id;
         toast('미팅 등록됨');
         if (savedMid) { await linkMeetProductPicks(savedMid, prodPicks); }
-        closeModal(); window._calPrefill = null;
+        closeModal();
         if (curPage === 'meetings') loadMeet(); else if (curPage === 'dashboard') loadDash(); else if (curPage === 'calendar') renderCalendar();
       } catch (e) { toast('저장 실패', 'err') }
     };
