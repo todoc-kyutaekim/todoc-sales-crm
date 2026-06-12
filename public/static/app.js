@@ -2234,53 +2234,61 @@ function renderHTable(el, list) {
     '</tbody></table></div></div>';
 }
 // === Map View ===
+var _leafletMap = null;
+var _leafletMarkers = [];
+var _geocodeJobRunning = false;
+
 function renderHMap(el, list) {
   el.className = '';
-  // Count hospitals per region
-  var regionCounts = {};
+  // Compute region stats (for the right-side list panel) and identify marker targets
   var regionGrades = {};
-  // Code-registered (status=active) and favorited hospitals grouped by region
-  var regionCoded = {};
-  var regionStarred = {};
+  // Targets: code-registered (status=active) OR favorited
+  var markerTargets = [];
   var totalCoded = 0;
   var totalStarred = 0;
   list.forEach(function(h) {
     var r = h.region || '미지정';
-    regionCounts[r] = (regionCounts[r] || 0) + 1;
     if (!regionGrades[r]) regionGrades[r] = { total: 0, ci: 0, meetings: 0, names: [] };
     regionGrades[r].total++;
     regionGrades[r].ci += (h.ci_referrals || 0);
     regionGrades[r].meetings += (h.meeting_count || 0);
     if (regionGrades[r].names.length < 3) regionGrades[r].names.push(h.name);
-    // Code-registered = status active
-    if (h.status === 'active') {
-      if (!regionCoded[r]) regionCoded[r] = [];
-      regionCoded[r].push(h);
-      totalCoded++;
-    }
-    // Starred = favorited
-    if (typeof isFavorited === 'function' && isFavorited('hospital', h.id)) {
-      if (!regionStarred[r]) regionStarred[r] = [];
-      regionStarred[r].push(h);
-      totalStarred++;
+    var isCoded = h.status === 'active';
+    var isStarred = (typeof isFavorited === 'function' && isFavorited('hospital', h.id));
+    if (isCoded) totalCoded++;
+    if (isStarred) totalStarred++;
+    if (isCoded || isStarred) {
+      markerTargets.push({
+        id: h.id,
+        name: h.name,
+        address: h.address || '',
+        region: r,
+        lat: (typeof h.lat === 'number' || (h.lat != null && !isNaN(parseFloat(h.lat)))) ? parseFloat(h.lat) : null,
+        lng: (typeof h.lng === 'number' || (h.lng != null && !isNaN(parseFloat(h.lng)))) ? parseFloat(h.lng) : null,
+        isCoded: isCoded,
+        isStarred: isStarred
+      });
     }
   });
 
+  var pendingGeocode = markerTargets.filter(function(t) { return (t.lat == null || t.lng == null) && t.address; });
+
   var html = '<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">';
-  // Map column - enlarged
+  // Map column - enlarged + Leaflet
   html += '<div class="lg:col-span-2 card-flat p-4 lg:p-6">' +
-    '<div class="flex items-center gap-2 mb-4 flex-wrap"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기관 분포 지도</span><span class="text-xs text-slate-400">' + list.length + '개 기관</span>' +
+    '<div class="flex items-center gap-2 mb-3 flex-wrap"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기관 분포 지도</span><span class="text-xs text-slate-400">' + list.length + '개 기관</span>' +
     '<span class="text-[10px] text-emerald-600 font-semibold ml-auto"><i class="fas fa-circle mr-1"></i>코드등록 ' + totalCoded + '</span>' +
     '<span class="text-[10px] text-amber-500 font-semibold"><i class="fas fa-star mr-1"></i>즐겨찾기 ' + totalStarred + '</span>' +
     '</div>' +
-    '<div id="korea-map-container" class="relative" style="max-width:680px;margin:0 auto">' + renderKoreaMap(regionCounts, regionGrades, regionCoded, regionStarred) + '</div>' +
-    '<div class="flex flex-wrap gap-3 mt-4 justify-center text-[10px]">' +
-    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-500"></span>5개+</span>' +
-    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-300"></span>3-4개</span>' +
-    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-100"></span>1-2개</span>' +
-    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200"></span>없음</span>' +
-    '<span class="flex items-center gap-1 ml-2 pl-2 border-l border-slate-200"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-white shadow-sm"></span>코드 등록</span>' +
-    '<span class="flex items-center gap-1"><i class="fas fa-star text-amber-400 text-xs"></i>즐겨찾기</span>' +
+    '<div class="flex items-center gap-2 mb-2 text-[10px] text-slate-500">' +
+    '<i class="fas fa-mouse text-[9px]"></i><span>마우스 휠 / 드래그로 줌·이동</span>' +
+    (pendingGeocode.length > 0 ? '<span id="geocode-status" class="ml-auto text-amber-600"><i class="fas fa-spinner fa-spin mr-1"></i>좌표 확인 중… ' + pendingGeocode.length + '개</span>' : '<span id="geocode-status" class="ml-auto"></span>') +
+    '</div>' +
+    '<div id="leaflet-map" style="height:560px;width:100%;border-radius:12px;overflow:hidden;background:#e0ecff"></div>' +
+    '<div class="flex flex-wrap gap-3 mt-3 justify-center text-[10px]">' +
+    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500 border-2 border-white shadow"></span>코드 등록 병원</span>' +
+    '<span class="flex items-center gap-1"><i class="fas fa-star text-amber-400 text-xs"></i>즐겨찾기 병원</span>' +
+    (totalCoded + totalStarred === 0 ? '<span class="text-slate-400">표시할 마커가 없습니다</span>' : '') +
     '</div>' +
     '</div>';
   // Region list column
@@ -2299,6 +2307,149 @@ function renderHMap(el, list) {
   });
   html += '</div></div>';
   el.innerHTML = html;
+
+  // ===== Initialize Leaflet map =====
+  // Use a small timeout so the container is in the DOM and has its final size
+  setTimeout(function() {
+    initLeafletHospitalMap(markerTargets, pendingGeocode);
+  }, 50);
+}
+
+// Initialize / re-initialize the Leaflet map for the hospital distribution view.
+function initLeafletHospitalMap(targets, pendingGeocode) {
+  if (typeof L === 'undefined') {
+    var statusEl = document.getElementById('geocode-status');
+    if (statusEl) statusEl.innerHTML = '<span class="text-rose-500">지도 라이브러리 로드 실패</span>';
+    return;
+  }
+  var mapEl = document.getElementById('leaflet-map');
+  if (!mapEl) return;
+
+  // Tear down previous instance if it exists
+  if (_leafletMap) {
+    try { _leafletMap.remove(); } catch (e) {}
+    _leafletMap = null;
+    _leafletMarkers = [];
+  }
+
+  // Korea-wide initial view (center on South Korea, zoom 7)
+  _leafletMap = L.map(mapEl, {
+    center: [36.3, 127.8],
+    zoom: 7,
+    scrollWheelZoom: true,
+    zoomControl: true
+  });
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(_leafletMap);
+
+  // Render markers for targets that already have lat/lng
+  var withCoords = targets.filter(function(t) { return t.lat != null && t.lng != null; });
+  withCoords.forEach(function(t) { addHospitalMarker(t); });
+  fitLeafletBounds();
+
+  // Kick off geocoding for the rest
+  if (pendingGeocode && pendingGeocode.length > 0) {
+    geocodePendingHospitals(pendingGeocode);
+  }
+}
+
+function addHospitalMarker(t) {
+  if (!_leafletMap || t.lat == null || t.lng == null) return;
+  var iconHtml;
+  if (t.isStarred && t.isCoded) {
+    // Both: yellow star on green ring
+    iconHtml = '<div style="position:relative;width:28px;height:28px"><div style="position:absolute;inset:0;border-radius:50%;background:#10b981;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div><i class="fas fa-star" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#fbbf24;font-size:14px;text-shadow:0 1px 2px rgba(0,0,0,0.4)"></i></div>';
+  } else if (t.isStarred) {
+    // Star marker (yellow)
+    iconHtml = '<div style="position:relative;width:26px;height:26px;display:flex;align-items:center;justify-content:center"><i class="fas fa-star" style="color:#f59e0b;font-size:22px;text-shadow:0 1px 3px rgba(0,0,0,0.4),0 0 0 2px #fff"></i></div>';
+  } else {
+    // Green dot for code-registered
+    iconHtml = '<div style="width:18px;height:18px;border-radius:50%;background:#10b981;border:2.5px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,0.35)"></div>';
+  }
+  var icon = L.divIcon({
+    className: 'hospital-marker-icon',
+    html: iconHtml,
+    iconSize: [28, 28],
+    iconAnchor: [14, 14],
+    popupAnchor: [0, -12]
+  });
+  var marker = L.marker([t.lat, t.lng], { icon: icon }).addTo(_leafletMap);
+  var tags = [];
+  if (t.isCoded) tags.push('<span style="display:inline-block;background:#d1fae5;color:#065f46;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600">코드 등록</span>');
+  if (t.isStarred) tags.push('<span style="display:inline-block;background:#fef3c7;color:#92400e;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:600"><i class="fas fa-star" style="font-size:9px"></i> 즐겨찾기</span>');
+  var safeName = (t.name || '').replace(/</g, '&lt;');
+  var safeAddr = (t.address || '').replace(/</g, '&lt;');
+  var popupHtml =
+    '<div style="min-width:180px;font-family:Pretendard,sans-serif">' +
+    '<div style="font-weight:700;font-size:13px;color:#1e293b;margin-bottom:4px">' + safeName + '</div>' +
+    (tags.length ? '<div style="margin-bottom:6px;display:flex;gap:4px;flex-wrap:wrap">' + tags.join('') + '</div>' : '') +
+    (safeAddr ? '<div style="font-size:11px;color:#64748b;margin-bottom:6px"><i class="fas fa-location-dot" style="color:#94a3b8;margin-right:3px"></i>' + safeAddr + '</div>' : '') +
+    '<button onclick="viewHosp(' + t.id + ')" style="background:#2563eb;color:#fff;border:0;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:600;cursor:pointer;width:100%">상세 보기</button>' +
+    '</div>';
+  marker.bindPopup(popupHtml);
+  _leafletMarkers.push(marker);
+}
+
+function fitLeafletBounds() {
+  if (!_leafletMap || !_leafletMarkers.length) return;
+  if (_leafletMarkers.length === 1) {
+    // Single marker: zoom in close
+    var m = _leafletMarkers[0];
+    _leafletMap.setView(m.getLatLng(), 13);
+    return;
+  }
+  var group = L.featureGroup(_leafletMarkers);
+  _leafletMap.fitBounds(group.getBounds(), { padding: [30, 30], maxZoom: 13 });
+}
+
+// Geocode pending hospitals in the background (server-side via /geocode-batch).
+// Server respects Nominatim 1 req/sec; we process up to 10 per batch and chain calls.
+async function geocodePendingHospitals(pending) {
+  if (_geocodeJobRunning) return; // avoid concurrent jobs
+  _geocodeJobRunning = true;
+  var statusEl = document.getElementById('geocode-status');
+  var ids = pending.map(function(t) { return t.id; });
+  var remaining = ids.slice();
+  try {
+    while (remaining.length > 0) {
+      var batch = remaining.slice(0, 10);
+      remaining = remaining.slice(10);
+      if (statusEl) statusEl.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i>좌표 확인 중… ' + remaining.length + '개 대기';
+      try {
+        var resp = await API.post('/hospitals/geocode-batch', { ids: batch, only_missing: true, max: batch.length });
+        var results = (resp && resp.data && resp.data.data && resp.data.data.results) || [];
+        results.forEach(function(r) {
+          if (r.ok && r.lat != null && r.lng != null) {
+            // Find target by id and add marker
+            var target = pending.find(function(p) { return p.id === r.id; });
+            if (target) {
+              target.lat = r.lat;
+              target.lng = r.lng;
+              addHospitalMarker(target);
+            }
+          }
+        });
+        fitLeafletBounds();
+      } catch (err) {
+        console.error('[geocode-batch] failed:', err);
+        if (statusEl) statusEl.innerHTML = '<span class="text-rose-500">좌표 변환 일부 실패</span>';
+        break;
+      }
+    }
+    if (statusEl) {
+      if (_leafletMarkers.length > 0) {
+        statusEl.innerHTML = '<span class="text-emerald-600"><i class="fas fa-check-circle mr-1"></i>좌표 표시 완료</span>';
+        setTimeout(function() { if (statusEl) statusEl.innerHTML = ''; }, 3000);
+      } else {
+        statusEl.innerHTML = '<span class="text-slate-400">좌표를 찾을 수 없는 주소가 있습니다</span>';
+      }
+    }
+  } finally {
+    _geocodeJobRunning = false;
+  }
 }
 
 // Korea SVG Map - High quality paths from GADM GeoJSON (free for commercial use)

@@ -304,4 +304,83 @@ hospitals.delete('/:id', async (c) => {
   return c.json({ success: true })
 })
 
+// ===== Geocoding =====
+// Geocode a single hospital using OpenStreetMap Nominatim (free, no API key).
+// Caches the lat/lng + geocoded_address; re-geocodes only when address changes.
+async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+  if (!address || !address.trim()) return null
+  try {
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=kr&q=' + encodeURIComponent(address)
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'todoc-crm/1.0 (hospital-map)',
+        'Accept-Language': 'ko,en'
+      }
+    })
+    if (!resp.ok) return null
+    const data = await resp.json() as any[]
+    if (!Array.isArray(data) || data.length === 0) return null
+    const lat = parseFloat(data[0].lat)
+    const lng = parseFloat(data[0].lon)
+    if (isNaN(lat) || isNaN(lng)) return null
+    return { lat, lng }
+  } catch (e) {
+    console.error('[geocode] failed for address:', address, e)
+    return null
+  }
+}
+
+// POST /:id/geocode — force re-geocode a single hospital
+hospitals.post('/:id/geocode', async (c) => {
+  const id = c.req.param('id')
+  const h = await c.env.DB.prepare('SELECT id, name, address FROM hospitals WHERE id=?').bind(id).first() as any
+  if (!h) return c.json({ error: 'Not found' }, 404)
+  if (!h.address) return c.json({ error: 'no_address', message: '주소가 없어 좌표 변환 불가' }, 400)
+  const result = await geocodeAddress(h.address)
+  if (!result) return c.json({ error: 'geocode_failed', message: '좌표 변환 실패 (주소 형식을 확인하세요)' }, 422)
+  await c.env.DB.prepare('UPDATE hospitals SET lat=?, lng=?, geocoded_at=CURRENT_TIMESTAMP, geocoded_address=? WHERE id=?')
+    .bind(result.lat, result.lng, h.address, id).run()
+  return c.json({ data: { id: Number(id), lat: result.lat, lng: result.lng } })
+})
+
+// POST /geocode-batch — geocode hospitals that need it (no lat/lng OR address changed)
+// Body: { ids?: number[], only_missing?: boolean (default true), max?: number (default 20) }
+hospitals.post('/geocode-batch', async (c) => {
+  let body: any = {}
+  try { body = await c.req.json() } catch {}
+  const ids: number[] = Array.isArray(body.ids) ? body.ids.map((x: any) => Number(x)).filter((n: number) => !isNaN(n)) : []
+  const onlyMissing = body.only_missing !== false // default true
+  const max = Math.min(Number(body.max) || 20, 50) // cap at 50 per call to respect Nominatim rate limit
+
+  // Pick candidates
+  let candidates: any[]
+  if (ids.length) {
+    const placeholders = ids.map(() => '?').join(',')
+    const sql = onlyMissing
+      ? `SELECT id, name, address, lat, lng, geocoded_address FROM hospitals WHERE id IN (${placeholders}) AND address IS NOT NULL AND address != '' AND (lat IS NULL OR lng IS NULL OR geocoded_address IS NULL OR geocoded_address != address) LIMIT ${max}`
+      : `SELECT id, name, address, lat, lng, geocoded_address FROM hospitals WHERE id IN (${placeholders}) AND address IS NOT NULL AND address != '' LIMIT ${max}`
+    const r = await c.env.DB.prepare(sql).bind(...ids).all()
+    candidates = r.results as any[]
+  } else {
+    const sql = `SELECT id, name, address, lat, lng, geocoded_address FROM hospitals WHERE address IS NOT NULL AND address != '' AND (lat IS NULL OR lng IS NULL OR geocoded_address IS NULL OR geocoded_address != address) LIMIT ${max}`
+    const r = await c.env.DB.prepare(sql).all()
+    candidates = r.results as any[]
+  }
+
+  const results: any[] = []
+  for (const h of candidates) {
+    const g = await geocodeAddress(h.address)
+    if (g) {
+      await c.env.DB.prepare('UPDATE hospitals SET lat=?, lng=?, geocoded_at=CURRENT_TIMESTAMP, geocoded_address=? WHERE id=?')
+        .bind(g.lat, g.lng, h.address, h.id).run()
+      results.push({ id: h.id, name: h.name, lat: g.lat, lng: g.lng, ok: true })
+    } else {
+      results.push({ id: h.id, name: h.name, ok: false })
+    }
+    // Respect Nominatim usage policy: ~1 req/sec
+    await new Promise(r => setTimeout(r, 1100))
+  }
+  return c.json({ data: { processed: results.length, results } })
+})
+
 export default hospitals
