@@ -2273,18 +2273,19 @@ function renderHMap(el, list) {
 
   var pendingGeocode = markerTargets.filter(function(t) { return (t.lat == null || t.lng == null) && t.address; });
 
-  var html = '<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">';
-  // Map column - enlarged + Leaflet
-  html += '<div class="lg:col-span-2 card-flat p-4 lg:p-6">' +
+  var html = '<div class="grid grid-cols-1 lg:grid-cols-4 gap-5">';
+  // Map column - enlarged + Leaflet (3/4 width on desktop)
+  html += '<div class="lg:col-span-3 card-flat p-4 lg:p-6">' +
     '<div class="flex items-center gap-2 mb-3 flex-wrap"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기관 분포 지도</span><span class="text-xs text-slate-400">' + list.length + '개 기관</span>' +
     '<span class="text-[10px] text-emerald-600 font-semibold ml-auto"><i class="fas fa-circle mr-1"></i>코드등록 ' + totalCoded + '</span>' +
     '<span class="text-[10px] text-amber-500 font-semibold"><i class="fas fa-star mr-1"></i>즐겨찾기 ' + totalStarred + '</span>' +
+    '<button class="text-[10px] text-slate-500 hover:text-brand-500 ml-1" onclick="toggleMapFullscreen()" title="전체 화면 토글"><i class="fas fa-expand"></i> 전체화면</button>' +
     '</div>' +
     '<div class="flex items-center gap-2 mb-2 text-[10px] text-slate-500">' +
     '<i class="fas fa-mouse text-[9px]"></i><span>마우스 휠 / 드래그로 줌·이동</span>' +
     (pendingGeocode.length > 0 ? '<span id="geocode-status" class="ml-auto text-amber-600"><i class="fas fa-spinner fa-spin mr-1"></i>좌표 확인 중… ' + pendingGeocode.length + '개</span>' : '<span id="geocode-status" class="ml-auto"></span>') +
     '</div>' +
-    '<div id="leaflet-map" style="height:560px;width:100%;border-radius:12px;overflow:hidden;background:#e0ecff"></div>' +
+    '<div id="leaflet-map" style="height:min(820px,calc(100vh - 220px));min-height:520px;width:100%;border-radius:12px;overflow:hidden;background:#e0ecff"></div>' +
     '<div class="flex flex-wrap gap-3 mt-3 justify-center text-[10px]">' +
     '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-full bg-emerald-500 border-2 border-white shadow"></span>코드 등록 병원</span>' +
     '<span class="flex items-center gap-1"><i class="fas fa-star text-amber-400 text-xs"></i>즐겨찾기 병원</span>' +
@@ -2313,6 +2314,28 @@ function renderHMap(el, list) {
   setTimeout(function() {
     initLeafletHospitalMap(markerTargets, pendingGeocode);
   }, 50);
+}
+
+// Toggle full-screen for the Leaflet map container
+function toggleMapFullscreen() {
+  var mapEl = document.getElementById('leaflet-map');
+  if (!mapEl) return;
+  var isFull = mapEl.classList.toggle('map-fullscreen');
+  if (isFull) {
+    // Save inline style to restore later
+    mapEl.dataset.prevStyle = mapEl.getAttribute('style') || '';
+    mapEl.setAttribute('style', 'position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;z-index:9999;border-radius:0;background:#e0ecff');
+  } else {
+    mapEl.setAttribute('style', mapEl.dataset.prevStyle || 'height:min(820px,calc(100vh - 220px));min-height:520px;width:100%;border-radius:12px;overflow:hidden;background:#e0ecff');
+  }
+  // Trigger Leaflet to recalc size
+  setTimeout(function() {
+    if (_leafletMap) {
+      _leafletMap.invalidateSize();
+      // Re-fit after resize
+      if (_leafletMarkers && _leafletMarkers.length) fitLeafletBounds();
+    }
+  }, 60);
 }
 
 // Initialize / re-initialize the Leaflet map for the hospital distribution view.
@@ -2349,6 +2372,33 @@ function initLeafletHospitalMap(targets, pendingGeocode) {
   var withCoords = targets.filter(function(t) { return t.lat != null && t.lng != null; });
   withCoords.forEach(function(t) { addHospitalMarker(t); });
   fitLeafletBounds();
+
+  // ESC key exits fullscreen
+  if (!window._mapEscHandler) {
+    window._mapEscHandler = function(ev) {
+      if (ev.key === 'Escape') {
+        var me = document.getElementById('leaflet-map');
+        if (me && me.classList.contains('map-fullscreen')) toggleMapFullscreen();
+      }
+    };
+    document.addEventListener('keydown', window._mapEscHandler);
+  }
+
+  // Window resize: recalc map size + re-fit bounds (debounced)
+  if (window._mapResizeHandler) window.removeEventListener('resize', window._mapResizeHandler);
+  window._mapResizeHandler = (function() {
+    var timer = null;
+    return function() {
+      clearTimeout(timer);
+      timer = setTimeout(function() {
+        if (_leafletMap) {
+          _leafletMap.invalidateSize();
+          if (_leafletMarkers && _leafletMarkers.length) fitLeafletBounds();
+        }
+      }, 200);
+    };
+  })();
+  window.addEventListener('resize', window._mapResizeHandler);
 
   // Kick off geocoding for the rest
   if (pendingGeocode && pendingGeocode.length > 0) {
