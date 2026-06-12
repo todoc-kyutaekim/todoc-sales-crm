@@ -2239,6 +2239,11 @@ function renderHMap(el, list) {
   // Count hospitals per region
   var regionCounts = {};
   var regionGrades = {};
+  // Code-registered (status=active) and favorited hospitals grouped by region
+  var regionCoded = {};
+  var regionStarred = {};
+  var totalCoded = 0;
+  var totalStarred = 0;
   list.forEach(function(h) {
     var r = h.region || '미지정';
     regionCounts[r] = (regionCounts[r] || 0) + 1;
@@ -2247,18 +2252,36 @@ function renderHMap(el, list) {
     regionGrades[r].ci += (h.ci_referrals || 0);
     regionGrades[r].meetings += (h.meeting_count || 0);
     if (regionGrades[r].names.length < 3) regionGrades[r].names.push(h.name);
+    // Code-registered = status active
+    if (h.status === 'active') {
+      if (!regionCoded[r]) regionCoded[r] = [];
+      regionCoded[r].push(h);
+      totalCoded++;
+    }
+    // Starred = favorited
+    if (typeof isFavorited === 'function' && isFavorited('hospital', h.id)) {
+      if (!regionStarred[r]) regionStarred[r] = [];
+      regionStarred[r].push(h);
+      totalStarred++;
+    }
   });
-  
+
   var html = '<div class="grid grid-cols-1 lg:grid-cols-3 gap-5">';
-  // Map column
+  // Map column - enlarged
   html += '<div class="lg:col-span-2 card-flat p-4 lg:p-6">' +
-    '<div class="flex items-center gap-2 mb-4"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기관 분포 지도</span><span class="text-xs text-slate-400">' + list.length + '개 기관</span></div>' +
-    '<div id="korea-map-container" class="relative" style="max-width:420px;margin:0 auto">' + renderKoreaMap(regionCounts, regionGrades) + '</div>' +
+    '<div class="flex items-center gap-2 mb-4 flex-wrap"><div class="w-7 h-7 rounded-lg bg-brand-50 flex items-center justify-center"><i class="fas fa-map-location-dot text-brand-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기관 분포 지도</span><span class="text-xs text-slate-400">' + list.length + '개 기관</span>' +
+    '<span class="text-[10px] text-emerald-600 font-semibold ml-auto"><i class="fas fa-circle mr-1"></i>코드등록 ' + totalCoded + '</span>' +
+    '<span class="text-[10px] text-amber-500 font-semibold"><i class="fas fa-star mr-1"></i>즐겨찾기 ' + totalStarred + '</span>' +
+    '</div>' +
+    '<div id="korea-map-container" class="relative" style="max-width:680px;margin:0 auto">' + renderKoreaMap(regionCounts, regionGrades, regionCoded, regionStarred) + '</div>' +
     '<div class="flex flex-wrap gap-3 mt-4 justify-center text-[10px]">' +
     '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-500"></span>5개+</span>' +
     '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-300"></span>3-4개</span>' +
     '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-brand-100"></span>1-2개</span>' +
-    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200"></span>없음</span></div>' +
+    '<span class="flex items-center gap-1"><span class="w-3 h-3 rounded-sm bg-gray-100 border border-gray-200"></span>없음</span>' +
+    '<span class="flex items-center gap-1 ml-2 pl-2 border-l border-slate-200"><span class="w-2.5 h-2.5 rounded-full bg-emerald-500 border border-white shadow-sm"></span>코드 등록</span>' +
+    '<span class="flex items-center gap-1"><i class="fas fa-star text-amber-400 text-xs"></i>즐겨찾기</span>' +
+    '</div>' +
     '</div>';
   // Region list column
   html += '<div class="space-y-3">';
@@ -2279,7 +2302,9 @@ function renderHMap(el, list) {
 }
 
 // Korea SVG Map - High quality paths from GADM GeoJSON (free for commercial use)
-function renderKoreaMap(counts, grades) {
+function renderKoreaMap(counts, grades, coded, starred) {
+  coded = coded || {};
+  starred = starred || {};
   // High-quality Korea map from GADM GeoJSON (free for commercial use)
   var regions = {
     '경기': { path: 'M174.1,24.9 L176.4,29.6 L181.8,29.4 L182.1,35.5 L188.8,36.0 L195.7,31.1 L194.8,37.8 L197.5,36.4 L200.6,38.9 L202.5,36.6 L205.3,38.2 L207.3,36.6 L209.3,46.2 L213.9,47.2 L214.8,50.6 L218.1,51.6 L217.6,56.8 L212.8,60.5 L211.3,70.2 L213.5,71.2 L213.2,76.3 L233.0,84.0 L229.3,89.2 L231.6,94.8 L229.8,109.1 L222.3,119.3 L219.7,119.1 L217.6,126.1 L214.0,128.7 L208.1,128.1 L193.8,140.0 L183.4,133.9 L168.7,136.4 L167.5,133.0 L163.5,133.6 L165.4,131.8 L159.1,127.2 L160.6,125.2 L157.4,125.0 L154.0,119.1 L158.0,122.8 L158.3,117.2 L163.0,114.6 L159.5,114.6 L160.4,111.9 L153.2,118.3 L151.8,115.8 L153.4,114.3 L150.5,114.4 L150.4,112.0 L153.2,105.1 L157.9,105.8 L158.8,109.2 L161.6,103.1 L164.4,105.6 L162.2,102.2 L153.7,99.2 L148.4,100.7 L144.9,104.1 L148.3,105.6 L150.5,110.9 L148.6,107.5 L148.0,109.9 L142.4,110.6 L144.5,105.7 L142.3,102.9 L144.5,103.9 L153.2,99.1 L157.0,93.7 L160.0,94.2 L157.5,93.3 L158.9,83.7 L162.1,83.3 L162.5,87.6 L168.4,90.4 L176.5,89.4 L180.2,92.2 L185.9,88.7 L187.0,83.5 L183.8,81.9 L181.4,71.8 L176.1,71.1 L168.3,74.6 L166.4,78.8 L160.5,79.9 L153.9,77.5 L145.6,78.2 L141.9,70.3 L141.3,62.5 L151.7,60.8 L153.0,46.5 L159.9,45.2 L166.7,34.7 L173.0,30.3 L174.1,24.9 Z', cx: 175, cy: 87, labelY: 100 },
@@ -2320,7 +2345,7 @@ function renderKoreaMap(counts, grades) {
     return '#1e3a8a';
   };
   // SVG container - viewBox covers full Korea from GeoJSON data
-  var svg = '<svg viewBox="95 -20 275 490" xmlns="http://www.w3.org/2000/svg" class="w-full" style="max-height:560px">';
+  var svg = '<svg viewBox="95 -20 275 490" xmlns="http://www.w3.org/2000/svg" class="w-full" style="max-height:780px">';
   // Defs: gradients, filters, patterns
   svg += '<defs>' +
     '<filter id="mapShadow" x="-3%" y="-3%" width="106%" height="106%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#1e3a8a" flood-opacity="0.15"/></filter>' +
@@ -2364,6 +2389,78 @@ function renderKoreaMap(counts, grades) {
       (count > 0 ? '<text x="' + r.cx + '" y="' + (ly + 7) + '" text-anchor="middle" dominant-baseline="central" fill="' + tc + '" font-size="' + fsNum + '" font-weight="800" style="pointer-events:none">' + count + '</text>' : '') +
       '</g>';
   });
+
+  // ===== Hospital markers: code-registered (green dot) + favorited (yellow star) =====
+  // Place markers around each region's center; if many, arrange in a circle to avoid overlap
+  // Marker drawing helper - returns dots/stars near center (cx, cy) with offsets
+  var placeMarkers = function(items, cx, cy, type) {
+    if (!items || !items.length) return '';
+    var out = '';
+    var n = items.length;
+    // Layout: 1 → center; 2-8 → ring; 9+ → multi-ring
+    var ringRadius = type === 'star' ? 7 : 6; // slight offset to avoid overlap
+    for (var i = 0; i < n; i++) {
+      var x, y;
+      if (n === 1) {
+        x = cx; y = cy + (type === 'star' ? -2 : 2);
+      } else {
+        var ringIdx = Math.floor(i / 8);
+        var posInRing = i % 8;
+        var perRing = Math.min(8, n - ringIdx * 8);
+        var ang = (posInRing / perRing) * Math.PI * 2 - Math.PI / 2;
+        var rad = ringRadius + ringIdx * 5;
+        // Stars and dots use slightly different offsets to coexist
+        var typeOffset = type === 'star' ? -1.5 : 1.5;
+        x = cx + Math.cos(ang) * rad;
+        y = cy + Math.sin(ang) * rad + typeOffset;
+      }
+      var hname = (items[i].name || '').replace(/"/g, '&quot;');
+      if (type === 'code') {
+        // Green dot for code-registered
+        out += '<circle cx="' + x.toFixed(1) + '" cy="' + y.toFixed(1) + '" r="2.4" fill="#10b981" stroke="#ffffff" stroke-width="0.8" style="pointer-events:auto;cursor:pointer" filter="url(#mapShadow)">' +
+          '<title>' + hname + ' (코드 등록)</title></circle>';
+      } else {
+        // Yellow star for favorited
+        // Small SVG star path centered at (x, y), size ~3.5
+        var s = 3.2;
+        var starPath = '';
+        for (var k = 0; k < 10; k++) {
+          var rr = (k % 2 === 0) ? s : s * 0.4;
+          var aa = (Math.PI / 5) * k - Math.PI / 2;
+          var px = x + Math.cos(aa) * rr;
+          var py = y + Math.sin(aa) * rr;
+          starPath += (k === 0 ? 'M' : 'L') + px.toFixed(1) + ',' + py.toFixed(1);
+        }
+        starPath += 'Z';
+        out += '<path d="' + starPath + '" fill="#f59e0b" stroke="#ffffff" stroke-width="0.6" style="pointer-events:auto;cursor:pointer" filter="url(#mapShadow)">' +
+          '<title>' + hname + ' (즐겨찾기)</title></path>';
+      }
+    }
+    return out;
+  };
+
+  // Build markers per region (markers are drawn on top of all region paths)
+  var markersSvg = '';
+  Object.keys(regions).forEach(function(name) {
+    var r = regions[name];
+    if (!r) return;
+    // Slight separation: code dots below center, stars above center
+    if (coded[name] && coded[name].length) {
+      markersSvg += placeMarkers(coded[name], r.cx, r.cy + 6, 'code');
+    }
+    if (starred[name] && starred[name].length) {
+      markersSvg += placeMarkers(starred[name], r.cx, r.cy - 8, 'star');
+    }
+  });
+  // Also handle '미지정' region — drop those markers in a corner legend area (bottom-left of viewBox)
+  if (coded['미지정'] && coded['미지정'].length) {
+    markersSvg += placeMarkers(coded['미지정'], 115, 460, 'code');
+  }
+  if (starred['미지정'] && starred['미지정'].length) {
+    markersSvg += placeMarkers(starred['미지정'], 115, 450, 'star');
+  }
+  svg += '<g class="hospital-markers">' + markersSvg + '</g>';
+
   svg += '</svg>';
   return svg;
 }
