@@ -1,7 +1,12 @@
 import { Hono } from 'hono'
+import { buildReportData } from './dashboard'
 
 type Bindings = { DB: D1Database }
 const exports = new Hono<{ Bindings: Bindings }>()
+
+function escHtml(s: any): string {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
+}
 
 function toCsvRow(arr: any[]): string {
   return arr.map(v => {
@@ -730,6 +735,355 @@ exports.get('/report/sales', async (c) => {
   c.header('Content-Type', 'application/vnd.ms-excel; charset=utf-8')
   c.header('Content-Disposition', `attachment; filename="todoc_sales_report_${ts()}.xls"`)
   return c.body('\uFEFF' + xml)
+})
+
+// ============================================================================
+// HTML Report — 보기 편한 자체완결형 HTML 보고서
+// 대시보드 주/월간 보고서를 인쇄/공유/오프라인 열람용 HTML 단일 파일로 렌더
+// Query: ?range=week|last_week|month|last_month|custom &from= &to= &download=1
+// ============================================================================
+exports.get('/report/html', async (c) => {
+  const range = c.req.query('range') || 'week'
+  const fromQ = c.req.query('from') || ''
+  const toQ = c.req.query('to') || ''
+  const download = c.req.query('download') === '1'
+
+  const d = await buildReportData(c.env.DB, range, fromQ, toQ)
+  if (!d) return c.text('Invalid date range', 400)
+
+  const typeLabels: Record<string,string> = { visit: '방문', phone: '전화', conference: '학회', email: '이메일', online: '온라인' }
+  const typeColors: Record<string,string> = { visit: '#2563eb', phone: '#10b981', conference: '#8b5cf6', email: '#f59e0b', online: '#6366f1' }
+  const stageLabels: Record<string,string> = { contact: '접촉', meeting: '미팅', demo: '데모', proposal: '제안', negotiation: '협상', contract: '계약', closed_won: '성사', closed_lost: '실패', lost: '이탈', inactive: '휴면', active_customer: '기존고객' }
+  const stageColors: Record<string,string> = { contact: '#94a3b8', meeting: '#2563eb', demo: '#8b5cf6', proposal: '#f59e0b', negotiation: '#f97316', contract: '#ef4444', closed_won: '#059669', active_customer: '#059669', lost: '#ef4444', inactive: '#64748b' }
+  const rangeLabel: Record<string,string> = { week: '이번 주', last_week: '지난 주', month: '이번 달', last_month: '지난 달', custom: '사용자 지정' }
+
+  const s = d.summary as any
+  const diffSign = s.diffPct > 0 ? '+' : ''
+  const diffColor = s.diffPct > 0 ? '#059669' : (s.diffPct < 0 ? '#dc2626' : '#94a3b8')
+  const hospDiff = (s.uniqueHospitals || 0) - (s.prevUniqueHospitals || 0)
+  const hospDiffSign = hospDiff > 0 ? '+' : ''
+  const hospDiffColor = hospDiff > 0 ? '#059669' : (hospDiff < 0 ? '#dc2626' : '#94a3b8')
+
+  const nowKstStr = new Date(Date.now() + 9 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 16) + ' KST'
+
+  // ===== Sections =====
+  let body = ''
+
+  // 표지
+  body += `
+  <section class="cover">
+    <div class="brand">TODOC CRM</div>
+    <h1>영업 활동 보고서</h1>
+    <div class="period">${escHtml(d.from)} ~ ${escHtml(d.to)} <span class="period-tag">${escHtml(rangeLabel[d.range] || d.range)}</span></div>
+    <div class="meta">비교 기간: ${escHtml(d.prevFrom || '-')} ~ ${escHtml(d.prevTo || '-')} · 출력 ${escHtml(nowKstStr)}</div>
+  </section>`
+
+  // 1) 핵심 지표
+  body += `
+  <section class="card">
+    <h2>핵심 지표</h2>
+    <div class="kpi-grid">
+      <div class="kpi">
+        <div class="kpi-label">총 미팅</div>
+        <div class="kpi-value">${s.totalMeetings}<span class="unit">건</span></div>
+        <div class="kpi-sub" style="color:${diffColor}">${diffSign}${s.diffPct}% (이전 ${s.prevTotalMeetings}건)</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">방문 기관 수</div>
+        <div class="kpi-value" style="color:#2563eb">${s.uniqueHospitals || 0}<span class="unit">곳</span></div>
+        <div class="kpi-sub" style="color:${hospDiffColor}">${hospDiffSign}${hospDiff} (이전 ${s.prevUniqueHospitals || 0}곳)</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">접촉 의료진</div>
+        <div class="kpi-value" style="color:#8b5cf6">${s.uniqueDoctors || 0}<span class="unit">명</span></div>
+        <div class="kpi-sub">기간 내 만난 의료진</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-label">후속 액션 생성률</div>
+        <div class="kpi-value" style="color:#d97706">${s.followupRate || 0}<span class="unit">%</span></div>
+        <div class="kpi-sub">미팅 기록률 ${s.summaryRate || 0}%</div>
+      </div>
+    </div>
+  </section>`
+
+  // 2) 미팅 유형/지역 분포
+  const tb = (d.typeBreakdown as any[]) || []
+  const maxTb = tb.length ? Math.max(...tb.map(t => Number(t.c))) : 0
+  const rb = (d.regionBreakdown as any[]) || []
+  const maxRb = rb.length ? Math.max(...rb.map(r => Number(r.c))) : 0
+
+  body += `
+  <div class="grid-2">
+    <section class="card">
+      <h2>미팅 유형별 분포</h2>
+      ${tb.length === 0 ? '<div class="muted">데이터 없음</div>' : `
+      <table class="bars">
+        ${tb.map(t => {
+          const w = maxTb > 0 ? Math.round((Number(t.c) / maxTb) * 100) : 0
+          const pct = s.totalMeetings > 0 ? Math.round((Number(t.c) / s.totalMeetings) * 100) : 0
+          const col = typeColors[t.meeting_type] || '#94a3b8'
+          return `<tr>
+            <td class="label">${escHtml(typeLabels[t.meeting_type] || t.meeting_type)}</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:${col}"></div></div></td>
+            <td class="value">${t.c}건 (${pct}%)</td>
+          </tr>`
+        }).join('')}
+      </table>`}
+    </section>
+
+    <section class="card">
+      <h2>지역별 활동</h2>
+      ${rb.length === 0 ? '<div class="muted">데이터 없음</div>' : `
+      <table class="bars">
+        ${rb.slice(0, 8).map(r => {
+          const w = maxRb > 0 ? Math.round((Number(r.c) / maxRb) * 100) : 0
+          return `<tr>
+            <td class="label">${escHtml(r.region || '기타')}</td>
+            <td class="bar-cell"><div class="bar-bg"><div class="bar-fill" style="width:${w}%;background:#10b981"></div></div></td>
+            <td class="value">${r.c}건 / ${r.hosp_count}곳</td>
+          </tr>`
+        }).join('')}
+      </table>`}
+    </section>
+  </div>`
+
+  // 3) 활동 상위 기관
+  const top = (d.topHospitals as any[]) || []
+  body += `
+  <section class="card">
+    <h2>활동 상위 기관 <span class="count">총 ${top.length}곳</span></h2>
+    ${top.length === 0 ? '<div class="muted">데이터 없음</div>' : `
+    <div class="hosp-grid">
+      ${top.slice(0, 12).map((h, i) => {
+        const stageBg = stageColors[h.pipeline_stage] || '#94a3b8'
+        const stageLbl = stageLabels[h.pipeline_stage] || h.pipeline_stage || '-'
+        return `<div class="hosp-row">
+          <span class="rank">${i + 1}</span>
+          <div class="hosp-main">
+            <div class="hosp-name">${escHtml(h.name || '-')} <span class="stage" style="background:${stageBg}1a;color:${stageBg}">${escHtml(stageLbl)}</span></div>
+            <div class="hosp-sub">${escHtml(h.region || '-')} · 마지막 ${escHtml(h.last_date ? String(h.last_date).slice(5) : '-')}</div>
+          </div>
+          <span class="hosp-count">${h.c}회</span>
+        </div>`
+      }).join('')}
+    </div>`}
+  </section>`
+
+  // 4) 미팅 상세 내역
+  const meets = (d.meetingDetails as any[]) || []
+  body += `
+  <section class="card">
+    <h2>미팅 상세 내역 <span class="count">${meets.length}건</span></h2>
+    ${meets.length === 0 ? '<div class="muted">기간 내 미팅이 없습니다</div>' : `
+    <div class="meet-list">
+      ${meets.map(m => {
+        const typeCol = typeColors[m.meeting_type] || '#94a3b8'
+        const typeLbl = typeLabels[m.meeting_type] || m.meeting_type || '-'
+        return `<div class="meet-row" style="border-left-color:${typeCol}">
+          <div class="meet-head">
+            <span class="date">${escHtml(m.meeting_date || '')}</span>
+            <span class="type" style="background:${typeCol}1a;color:${typeCol}">${escHtml(typeLbl)}</span>
+            <span class="hosp">${escHtml(m.hospital_name || '-')}</span>
+            ${m.region ? `<span class="region">· ${escHtml(m.region)}</span>` : ''}
+            ${m.doctor_name ? `<span class="doctor">👨‍⚕️ ${escHtml(m.doctor_name)}${m.doctor_position ? ' ' + escHtml(m.doctor_position) : ''}</span>` : ''}
+          </div>
+          ${m.purpose ? `<div class="purpose">${escHtml(m.purpose)}</div>` : ''}
+          ${m.summary ? `<div class="summary">${escHtml(m.summary)}</div>` : ''}
+          ${m.next_action ? `<div class="next">🚩 다음: ${escHtml(m.next_action)}${m.next_meeting_date ? ' (' + escHtml(m.next_meeting_date) + ')' : ''}</div>` : ''}
+        </div>`
+      }).join('')}
+    </div>`}
+  </section>`
+
+  // 5) 담당자별 / 파이프라인 이동
+  const topUsers = (d.topUsers as any[]) || []
+  const pipeMoves = (d.pipelineMoves as any[]) || []
+  body += `
+  <div class="grid-2">
+    <section class="card">
+      <h2>담당자별 미팅</h2>
+      ${topUsers.length === 0 ? '<div class="muted">데이터 없음</div>' : `
+      <table class="users">
+        ${topUsers.map((u, i) => `<tr><td class="rank">${i + 1}</td><td>${escHtml(u.name || '-')}</td><td class="value" style="color:#8b5cf6">${u.c}회</td></tr>`).join('')}
+      </table>`}
+    </section>
+    <section class="card">
+      <h2>파이프라인 이동</h2>
+      ${pipeMoves.length === 0 ? '<div class="muted">파이프라인 변경 없음</div>' : `
+      <table class="pipe">
+        ${pipeMoves.slice(0, 8).map(p => `<tr>
+          <td><span class="pill gray">${escHtml(stageLabels[p.from_stage] || p.from_stage || '-')}</span></td>
+          <td class="arrow">→</td>
+          <td><span class="pill green">${escHtml(stageLabels[p.to_stage] || p.to_stage || '-')}</span></td>
+          <td class="value">${p.c}건</td>
+        </tr>`).join('')}
+      </table>`}
+    </section>
+  </div>`
+
+  // 6) 위험 신호: 30일 이상 미접촉 활성 기관
+  const notMet = (d.notMetHospitals as any[]) || []
+  if (notMet.length) {
+    body += `
+    <section class="card warn">
+      <h2>⚠️ 주의: 30일 이상 미접촉 기관 <span class="count">${notMet.length}곳</span></h2>
+      <div class="warn-sub">활성 거래처 중 한동안 만나지 못한 곳입니다. 후속 미팅을 잡아보세요.</div>
+      <div class="warn-grid">
+        ${notMet.map(h => {
+          const stageBg = stageColors[h.pipeline_stage] || '#94a3b8'
+          const stageLbl = stageLabels[h.pipeline_stage] || h.pipeline_stage || '-'
+          const daysAgo = h.last_date ? Math.floor((Date.now() - new Date(String(h.last_date)).getTime()) / 86400000) : null
+          return `<div class="warn-row">
+            <span class="hosp-name">${escHtml(h.name)}</span>
+            <span class="stage" style="background:${stageBg}1a;color:${stageBg}">${escHtml(stageLbl)}</span>
+            <span class="ago">${daysAgo !== null ? daysAgo + '일 전' : '미방문'}</span>
+          </div>`
+        }).join('')}
+      </div>
+    </section>`
+  }
+
+  // 7) 2주 이내 예정 후속 액션
+  const upcoming = (d.upcomingNextActions as any[]) || []
+  body += `
+  <section class="card">
+    <h2>2주 이내 예정 후속 액션 <span class="count">${upcoming.length}건</span></h2>
+    ${upcoming.length === 0 ? '<div class="muted">예정된 후속 액션 없음</div>' : `
+    <table class="next-actions">
+      <thead><tr><th>예정일</th><th>기관</th><th>다음 액션</th></tr></thead>
+      <tbody>
+        ${upcoming.slice(0, 20).map(n => `<tr>
+          <td class="date">${escHtml(n.next_meeting_date || '')}</td>
+          <td class="hosp">${escHtml(n.hospital_name || '-')}</td>
+          <td>${escHtml(n.next_action || '-')}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`}
+  </section>`
+
+  // CSS — inline self-contained
+  const css = `
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans KR", "Apple SD Gothic Neo", Roboto, "Helvetica Neue", Arial, sans-serif; color: #1e293b; background: #f8fafc; line-height: 1.55; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 32px 28px 64px; }
+  .cover { background: linear-gradient(135deg, #2563eb 0%, #6366f1 100%); color: #fff; padding: 32px 28px; border-radius: 16px; margin-bottom: 24px; box-shadow: 0 4px 14px rgba(37,99,235,.15); }
+  .cover .brand { font-size: 12px; font-weight: 700; letter-spacing: 1.5px; opacity: .85; }
+  .cover h1 { margin: 8px 0 12px; font-size: 28px; font-weight: 800; letter-spacing: -.5px; }
+  .cover .period { font-size: 16px; font-weight: 600; }
+  .cover .period-tag { display: inline-block; background: rgba(255,255,255,.2); padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+  .cover .meta { margin-top: 10px; font-size: 12px; opacity: .85; }
+  .card { background: #fff; border-radius: 12px; padding: 20px 22px; box-shadow: 0 1px 3px rgba(15,23,42,.06); border: 1px solid #f1f5f9; margin-bottom: 18px; }
+  .card.warn { background: #fffbeb; border-color: #fde68a; border-left: 4px solid #f59e0b; }
+  .card h2 { margin: 0 0 14px; font-size: 16px; font-weight: 700; color: #0f172a; display: flex; align-items: center; justify-content: space-between; }
+  .card h2 .count { font-size: 11px; color: #94a3b8; font-weight: 500; }
+  .warn-sub { font-size: 12px; color: #92400e; margin-bottom: 12px; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+  .grid-2 .card { margin-bottom: 0; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .kpi { background: #f8fafc; border-radius: 10px; padding: 14px; border: 1px solid #e2e8f0; }
+  .kpi-label { font-size: 11px; color: #64748b; font-weight: 600; margin-bottom: 4px; }
+  .kpi-value { font-size: 24px; font-weight: 800; color: #0f172a; line-height: 1.1; }
+  .kpi-value .unit { font-size: 11px; color: #94a3b8; margin-left: 3px; font-weight: 500; }
+  .kpi-sub { font-size: 11px; color: #94a3b8; margin-top: 4px; font-weight: 600; }
+  table.bars { width: 100%; border-collapse: collapse; }
+  table.bars tr { border-bottom: 1px solid #f1f5f9; }
+  table.bars tr:last-child { border-bottom: none; }
+  table.bars td { padding: 8px 4px; vertical-align: middle; }
+  table.bars td.label { font-size: 12px; color: #475569; font-weight: 600; width: 70px; }
+  table.bars td.bar-cell { width: auto; }
+  table.bars td.value { font-size: 12px; color: #1e293b; font-weight: 700; text-align: right; width: 120px; white-space: nowrap; }
+  .bar-bg { width: 100%; height: 10px; background: #f1f5f9; border-radius: 5px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 5px; }
+  .hosp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .hosp-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: #f8fafc; border: 1px solid #f1f5f9; }
+  .hosp-row .rank { font-size: 11px; font-weight: 700; color: #94a3b8; width: 18px; text-align: center; }
+  .hosp-row .hosp-main { flex: 1; min-width: 0; }
+  .hosp-row .hosp-name { font-size: 13px; font-weight: 700; color: #1e293b; }
+  .hosp-row .hosp-sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+  .hosp-row .hosp-count { font-size: 14px; font-weight: 800; color: #2563eb; }
+  .stage { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 4px; margin-left: 6px; vertical-align: middle; }
+  .meet-list { display: flex; flex-direction: column; gap: 10px; }
+  .meet-row { border-left: 3px solid #94a3b8; padding: 10px 14px; background: #fafbfc; border-radius: 0 8px 8px 0; }
+  .meet-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .meet-head .date { font-size: 11px; font-weight: 700; color: #64748b; }
+  .meet-head .type { font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px; }
+  .meet-head .hosp { font-size: 13px; font-weight: 700; color: #1e293b; }
+  .meet-head .region { font-size: 11px; color: #94a3b8; }
+  .meet-head .doctor { font-size: 11px; color: #8b5cf6; font-weight: 600; }
+  .meet-row .purpose { font-size: 12px; color: #1e293b; font-weight: 600; margin-top: 6px; }
+  .meet-row .summary { font-size: 12px; color: #475569; margin-top: 4px; line-height: 1.6; }
+  .meet-row .next { display: inline-block; font-size: 11px; color: #92400e; background: #fef3c7; padding: 3px 10px; border-radius: 5px; margin-top: 6px; font-weight: 600; }
+  table.users, table.pipe, table.next-actions { width: 100%; border-collapse: collapse; }
+  table.users td, table.pipe td, table.next-actions td, table.next-actions th { padding: 8px 6px; font-size: 12px; border-bottom: 1px solid #f1f5f9; }
+  table.next-actions th { text-align: left; font-weight: 700; color: #64748b; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; background: #f8fafc; }
+  table.next-actions td.date { color: #d97706; font-weight: 700; white-space: nowrap; width: 90px; }
+  table.next-actions td.hosp { color: #1e293b; font-weight: 600; width: 180px; }
+  table.users td.rank { width: 24px; color: #94a3b8; font-weight: 700; }
+  table.users td.value { text-align: right; font-weight: 700; width: 60px; }
+  table.pipe td { vertical-align: middle; }
+  table.pipe td.arrow { color: #cbd5e1; text-align: center; width: 20px; }
+  table.pipe td.value { text-align: right; font-weight: 700; color: #1e293b; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+  .pill.gray { background: #f1f5f9; color: #64748b; }
+  .pill.green { background: #d1fae5; color: #065f46; }
+  .warn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .warn-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; background: #fff; border-radius: 6px; border: 1px solid #fef3c7; }
+  .warn-row .hosp-name { flex: 1; font-size: 12px; font-weight: 600; color: #1e293b; }
+  .warn-row .ago { font-size: 11px; color: #d97706; font-weight: 700; }
+  .muted { font-size: 12px; color: #94a3b8; padding: 8px 0; }
+  .toolbar { position: sticky; top: 0; background: rgba(255,255,255,.95); backdrop-filter: blur(8px); padding: 12px 16px; border-bottom: 1px solid #e2e8f0; display: flex; gap: 10px; align-items: center; z-index: 100; }
+  .toolbar .label { font-size: 12px; color: #64748b; font-weight: 600; }
+  .toolbar button { background: #2563eb; color: #fff; border: 0; padding: 7px 14px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .toolbar button:hover { background: #1d4ed8; }
+  .toolbar button.secondary { background: #fff; color: #475569; border: 1px solid #e2e8f0; }
+  .toolbar button.secondary:hover { background: #f8fafc; }
+  @media print {
+    .toolbar { display: none; }
+    body { background: #fff; }
+    .wrap { max-width: 100%; padding: 0; }
+    .card { box-shadow: none; border: 1px solid #e2e8f0; page-break-inside: avoid; }
+    .meet-row { page-break-inside: avoid; }
+    .cover { background: #2563eb !important; }
+  }
+  @media (max-width: 720px) {
+    .wrap { padding: 16px 12px 40px; }
+    .kpi-grid { grid-template-columns: 1fr 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .hosp-grid { grid-template-columns: 1fr; }
+    .warn-grid { grid-template-columns: 1fr; }
+    .cover h1 { font-size: 22px; }
+  }
+  `
+
+  const title = `TODOC CRM 보고서 ${d.from} ~ ${d.to}`
+  const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escHtml(title)}</title>
+<style>${css}</style>
+</head>
+<body>
+<div class="toolbar">
+  <span class="label">📄 ${escHtml(title)}</span>
+  <div style="flex:1"></div>
+  <button onclick="window.print()">🖨️ 인쇄 / PDF 저장</button>
+  <button class="secondary" onclick="window.close()">닫기</button>
+</div>
+<div class="wrap">
+${body}
+</div>
+</body>
+</html>`
+
+  c.header('Content-Type', 'text/html; charset=utf-8')
+  if (download) {
+    const fn = `todoc_report_${d.from}_${d.to}.html`
+    c.header('Content-Disposition', `attachment; filename="${fn}"`)
+  }
+  return c.body(html)
 })
 
 export default exports

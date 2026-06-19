@@ -557,39 +557,30 @@ dashboard.get('/ranking', async (c) => {
 })
 
 // ===== Auto report (weekly / monthly) =====
-// GET /api/dashboard/report?range=week|month|custom&from=YYYY-MM-DD&to=YYYY-MM-DD
-dashboard.get('/report', async (c) => {
-  const range = c.req.query('range') || 'week'
-  let from = c.req.query('from') || ''
-  let to = c.req.query('to') || ''
-
-  // Compute KST-based date range when not custom
+// Shared builder so other routes (e.g. HTML export) can reuse the same data shape
+export async function buildReportData(DB: D1Database, range: string, fromIn: string = '', toIn: string = '') {
+  let from = fromIn
+  let to = toIn
   if (!from || !to || range !== 'custom') {
     if (range === 'week') {
-      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'-6 days') as f, date('now',${KST}) as t`).first<any>()
-      from = startSql?.f || ''
-      to = startSql?.t || ''
+      const r = await DB.prepare(`SELECT date('now',${KST},'-6 days') as f, date('now',${KST}) as t`).first<any>()
+      from = r?.f || ''; to = r?.t || ''
     } else if (range === 'month') {
-      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'start of month') as f, date('now',${KST}) as t`).first<any>()
-      from = startSql?.f || ''
-      to = startSql?.t || ''
+      const r = await DB.prepare(`SELECT date('now',${KST},'start of month') as f, date('now',${KST}) as t`).first<any>()
+      from = r?.f || ''; to = r?.t || ''
     } else if (range === 'last_week') {
-      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'-13 days') as f, date('now',${KST},'-7 days') as t`).first<any>()
-      from = startSql?.f || ''
-      to = startSql?.t || ''
+      const r = await DB.prepare(`SELECT date('now',${KST},'-13 days') as f, date('now',${KST},'-7 days') as t`).first<any>()
+      from = r?.f || ''; to = r?.t || ''
     } else if (range === 'last_month') {
-      const startSql = await c.env.DB.prepare(`SELECT date('now',${KST},'start of month','-1 month') as f, date('now',${KST},'start of month','-1 day') as t`).first<any>()
-      from = startSql?.f || ''
-      to = startSql?.t || ''
+      const r = await DB.prepare(`SELECT date('now',${KST},'start of month','-1 month') as f, date('now',${KST},'start of month','-1 day') as t`).first<any>()
+      from = r?.f || ''; to = r?.t || ''
     }
   }
+  if (!from || !to) return null
 
-  if (!from || !to) return c.json({ error: 'Invalid date range' }, 400)
-
-  // Compute previous period (same length) for comparison
-  const lenSql = await c.env.DB.prepare(`SELECT julianday(?) - julianday(?) as days`).bind(to, from).first<any>()
+  const lenSql = await DB.prepare(`SELECT julianday(?) - julianday(?) as days`).bind(to, from).first<any>()
   const days = Math.max(0, Math.round(Number(lenSql?.days || 0))) + 1
-  const prevFromSql = await c.env.DB.prepare(`SELECT date(?, '-' || ? || ' days') as pf, date(?, '-' || ? || ' days') as pt`).bind(from, days, to, days).first<any>()
+  const prevFromSql = await DB.prepare(`SELECT date(?, '-' || ? || ' days') as pf, date(?, '-' || ? || ' days') as pt`).bind(from, days, to, days).first<any>()
   const prevFrom = prevFromSql?.pf || ''
   const prevTo = prevFromSql?.pt || ''
 
@@ -608,13 +599,11 @@ dashboard.get('/report', async (c) => {
     regionBreakdownRaw,
     keyOutcomesRaw
   ] = await Promise.all([
-    c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(from, to).first<any>(),
-    c.env.DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(prevFrom, prevTo).first<any>(),
-    // 미팅한 고유 기관 수
-    c.env.DB.prepare('SELECT COUNT(DISTINCT hospital_id) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(from, to).first<any>(),
-    c.env.DB.prepare('SELECT COUNT(DISTINCT hospital_id) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(prevFrom, prevTo).first<any>(),
-    // 미팅한 고유 의료진 수 (meeting_doctors 우선, 없으면 meetings.doctor_id)
-    c.env.DB.prepare(`SELECT COUNT(DISTINCT doctor_id) as c FROM (
+    DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(from, to).first<any>(),
+    DB.prepare('SELECT COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(prevFrom, prevTo).first<any>(),
+    DB.prepare('SELECT COUNT(DISTINCT hospital_id) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(from, to).first<any>(),
+    DB.prepare('SELECT COUNT(DISTINCT hospital_id) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ?').bind(prevFrom, prevTo).first<any>(),
+    DB.prepare(`SELECT COUNT(DISTINCT doctor_id) as c FROM (
       SELECT md.doctor_id FROM meeting_doctors md
         JOIN meetings m ON m.id = md.meeting_id
         WHERE m.meeting_date >= ? AND m.meeting_date <= ?
@@ -622,31 +611,29 @@ dashboard.get('/report', async (c) => {
       SELECT m.doctor_id FROM meetings m
         WHERE m.meeting_date >= ? AND m.meeting_date <= ? AND m.doctor_id IS NOT NULL
     )`).bind(from, to, from, to).first<any>().catch(() => ({ c: 0 })),
-    c.env.DB.prepare('SELECT meeting_type, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_type ORDER BY c DESC').bind(from, to).all(),
-    // 활동 상위 기관 — 마지막 미팅일/단계 포함
-    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.pipeline_stage,
+    DB.prepare('SELECT meeting_type, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_type ORDER BY c DESC').bind(from, to).all(),
+    DB.prepare(`SELECT h.id, h.name, h.region, h.pipeline_stage,
       COUNT(m.id) as c, MAX(m.meeting_date) as last_date
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
       WHERE m.meeting_date >= ? AND m.meeting_date <= ?
       GROUP BY h.id ORDER BY c DESC, last_date DESC LIMIT 12`).bind(from, to).all(),
-    c.env.DB.prepare(`SELECT u.id, u.name, COUNT(DISTINCT mu.meeting_id) as c
+    DB.prepare(`SELECT u.id, u.name, COUNT(DISTINCT mu.meeting_id) as c
       FROM meeting_users mu
       LEFT JOIN users u ON mu.user_id=u.id
       LEFT JOIN meetings m ON mu.meeting_id=m.id
       WHERE m.meeting_date >= ? AND m.meeting_date <= ? AND u.id IS NOT NULL
       GROUP BY u.id ORDER BY c DESC LIMIT 10`).bind(from, to).all(),
-    c.env.DB.prepare(`SELECT pt.from_stage, pt.to_stage, COUNT(*) as c
+    DB.prepare(`SELECT pt.from_stage, pt.to_stage, COUNT(*) as c
       FROM pipeline_transitions pt
       WHERE DATE(pt.created_at) >= ? AND DATE(pt.created_at) <= ?
       GROUP BY pt.from_stage, pt.to_stage ORDER BY c DESC`).bind(from, to).all().catch(() => ({ results: [] })),
-    c.env.DB.prepare(`SELECT m.id, m.next_meeting_date, m.next_action, h.name as hospital_name, h.id as hospital_id
+    DB.prepare(`SELECT m.id, m.next_meeting_date, m.next_action, h.name as hospital_name, h.id as hospital_id
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
       WHERE m.next_meeting_date IS NOT NULL AND m.next_meeting_date != ''
         AND m.next_meeting_date >= date('now',${KST}) AND m.next_meeting_date <= date('now',${KST},'+14 days')
       ORDER BY m.next_meeting_date ASC LIMIT 30`).all(),
-    c.env.DB.prepare('SELECT meeting_date as d, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date ORDER BY meeting_date ASC').bind(from, to).all(),
-    // 기간 내 모든 미팅 상세 — 핵심: '어떤 곳과 무슨 미팅을 했는가'
-    c.env.DB.prepare(`SELECT m.id, m.meeting_date, m.meeting_type, m.purpose, m.content as summary, m.next_action, m.next_meeting_date,
+    DB.prepare('SELECT meeting_date as d, COUNT(*) as c FROM meetings WHERE meeting_date >= ? AND meeting_date <= ? GROUP BY meeting_date ORDER BY meeting_date ASC').bind(from, to).all(),
+    DB.prepare(`SELECT m.id, m.meeting_date, m.meeting_type, m.purpose, m.content as summary, m.next_action, m.next_meeting_date,
       m.hospital_id, h.name as hospital_name, h.region, h.pipeline_stage,
       d.name as doctor_name, d.position as doctor_position
       FROM meetings m
@@ -654,9 +641,7 @@ dashboard.get('/report', async (c) => {
       LEFT JOIN doctors d ON m.doctor_id = d.id
       WHERE m.meeting_date >= ? AND m.meeting_date <= ?
       ORDER BY m.meeting_date DESC, m.id DESC LIMIT 100`).bind(from, to).all(),
-    // 한동안 미팅하지 못한 활성 기관 (소홀해진 거래처) — pipeline_stage가 active_customer/contract/proposal/demo/meeting인 곳 중 30일 이상 미접촉
-    // NULLS FIRST 대신 CASE 표현식으로 NULL이 먼저 오도록 정렬 (D1 SQLite 호환)
-    c.env.DB.prepare(`SELECT h.id, h.name, h.region, h.pipeline_stage,
+    DB.prepare(`SELECT h.id, h.name, h.region, h.pipeline_stage,
       (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) as last_date
       FROM hospitals h
       WHERE h.status = 'active'
@@ -668,13 +653,11 @@ dashboard.get('/report', async (c) => {
       ORDER BY CASE WHEN (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) IS NULL THEN 0 ELSE 1 END,
                (SELECT MAX(m2.meeting_date) FROM meetings m2 WHERE m2.hospital_id = h.id) ASC
       LIMIT 15`).all().catch(() => ({ results: [] })),
-    // 지역별 미팅 분포
-    c.env.DB.prepare(`SELECT COALESCE(h.region,'기타') as region, COUNT(m.id) as c, COUNT(DISTINCT m.hospital_id) as hosp_count
+    DB.prepare(`SELECT COALESCE(h.region,'기타') as region, COUNT(m.id) as c, COUNT(DISTINCT m.hospital_id) as hosp_count
       FROM meetings m LEFT JOIN hospitals h ON m.hospital_id=h.id
       WHERE m.meeting_date >= ? AND m.meeting_date <= ?
       GROUP BY h.region ORDER BY c DESC`).bind(from, to).all(),
-    // 핵심 성과: 본 기간에 next_action이 명시된 (=후속 액션을 만들어낸) 미팅의 비율
-    c.env.DB.prepare(`SELECT
+    DB.prepare(`SELECT
       SUM(CASE WHEN next_action IS NOT NULL AND TRIM(next_action) != '' THEN 1 ELSE 0 END) as with_followup,
       SUM(CASE WHEN content IS NOT NULL AND TRIM(content) != '' THEN 1 ELSE 0 END) as with_summary,
       COUNT(*) as total
@@ -691,33 +674,39 @@ dashboard.get('/report', async (c) => {
   const followupRate = ko.total > 0 ? Math.round((Number(ko.with_followup) / Number(ko.total)) * 100) : 0
   const summaryRate = ko.total > 0 ? Math.round((Number(ko.with_summary) / Number(ko.total)) * 100) : 0
 
-  return c.json({
-    data: {
-      range,
-      from, to,
-      prevFrom, prevTo,
-      summary: {
-        totalMeetings: total,
-        prevTotalMeetings: prevTotal,
-        diffPct,
-        uniqueHospitals,
-        prevUniqueHospitals,
-        uniqueDoctors,
-        followupRate,
-        summaryRate,
-        upcomingNextActions: (upcomingNextActionsRaw.results as any[]).length
-      },
-      typeBreakdown: typeBreakdownRaw.results,
-      topHospitals: topHospitalsRaw.results,
-      topUsers: topUsersRaw.results,
-      pipelineMoves: pipelineMovesRaw.results || [],
-      meetingDetails: meetingDetailsRaw.results || [],
-      notMetHospitals: notMetHospitalsRaw.results || [],
-      regionBreakdown: regionBreakdownRaw.results || [],
-      upcomingNextActions: upcomingNextActionsRaw.results,
-      dailyTrend: dailyTrendRaw.results
-    }
-  })
+  return {
+    range, from, to, prevFrom, prevTo,
+    summary: {
+      totalMeetings: total,
+      prevTotalMeetings: prevTotal,
+      diffPct,
+      uniqueHospitals,
+      prevUniqueHospitals,
+      uniqueDoctors,
+      followupRate,
+      summaryRate,
+      upcomingNextActions: (upcomingNextActionsRaw.results as any[]).length
+    },
+    typeBreakdown: typeBreakdownRaw.results,
+    topHospitals: topHospitalsRaw.results,
+    topUsers: topUsersRaw.results,
+    pipelineMoves: pipelineMovesRaw.results || [],
+    meetingDetails: meetingDetailsRaw.results || [],
+    notMetHospitals: notMetHospitalsRaw.results || [],
+    regionBreakdown: regionBreakdownRaw.results || [],
+    upcomingNextActions: upcomingNextActionsRaw.results,
+    dailyTrend: dailyTrendRaw.results
+  }
+}
+
+// GET /api/dashboard/report?range=week|month|custom&from=YYYY-MM-DD&to=YYYY-MM-DD
+dashboard.get('/report', async (c) => {
+  const range = c.req.query('range') || 'week'
+  const fromQ = c.req.query('from') || ''
+  const toQ = c.req.query('to') || ''
+  const data = await buildReportData(c.env.DB, range, fromQ, toQ)
+  if (!data) return c.json({ error: 'Invalid date range' }, 400)
+  return c.json({ data })
 })
 
 // ===== Pipeline conversion analytics =====

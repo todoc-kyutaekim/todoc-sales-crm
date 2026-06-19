@@ -1668,32 +1668,48 @@ async function showKPISettings() {
 var _pipelineTab = 'board';
 var _pipelinePeriod = 90;
 
-// ===== Auto Report Preview =====
+// ===== Auto Report Preview (full page) =====
 var _reportRange = 'week';
 async function showReportPreview() {
-  openModal('<i class="fas fa-file-lines text-brand-500 mr-2" aria-hidden="true"></i>주/월간 자동 보고서',
-    '<div class="space-y-3">' +
-      '<div class="flex flex-wrap gap-2 items-center">' +
+  // 페이지 헤더 업데이트
+  var pt = document.getElementById('page-title'); if (pt) pt.textContent = '주/월간 자동 보고서';
+  var ps = document.getElementById('page-subtitle'); if (ps) ps.textContent = '';
+  var ha = document.getElementById('header-actions');
+  if (ha) ha.innerHTML =
+    '<button class="btn btn-outline btn-sm" onclick="loadDash()" title="대시보드로 돌아가기"><i class="fas fa-arrow-left text-xs" aria-hidden="true"></i><span class="hidden sm:inline">대시보드</span></button>';
+
+  var rangeTabs = '<div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="보고서 기간">' +
+    ['week','last_week','month','last_month'].map(function(r){
+      var lbl = ({week:'이번 주', last_week:'지난 주', month:'이번 달', last_month:'지난 달'})[r];
+      return '<button role="tab" aria-selected="' + (_reportRange===r) + '" class="px-3 py-1.5 text-[11px] font-bold rounded-md transition ' + (_reportRange===r?'bg-white text-brand-600 shadow-sm':'text-slate-500 hover:text-slate-700') + '" onclick="_reportRange=\'' + r + '\';showReportPreview()">' + lbl + '</button>';
+    }).join('') + '</div>';
+
+  var actionButtons =
+    '<button class="btn btn-outline btn-sm" onclick="printReport()" title="보고서 인쇄/PDF"><i class="fas fa-print text-xs" aria-hidden="true"></i><span class="hidden sm:inline">인쇄</span></button>' +
+    '<button class="btn btn-outline btn-sm" onclick="window.open(\'/api/export/report/html?range=\' + encodeURIComponent(_reportRange),\'_blank\')" title="HTML 보고서 새 탭 열기 (보기 편한 형식)"><i class="fas fa-file-code text-xs" aria-hidden="true"></i><span class="hidden sm:inline">HTML 보기</span></button>' +
+    '<button class="btn btn-outline btn-sm" onclick="window.location.href=\'/api/export/report/html?range=\' + encodeURIComponent(_reportRange) + \'&download=1\'" title="HTML 파일로 다운로드"><i class="fas fa-download text-xs" aria-hidden="true"></i><span class="hidden sm:inline">HTML 저장</span></button>' +
+    '<button class="btn btn-primary btn-sm" onclick="window.open(\'/api/export/report/full\',\'_blank\')"><i class="fas fa-file-excel text-xs" aria-hidden="true"></i><span class="hidden sm:inline">엑셀</span></button>';
+
+  var page =
+    '<div class="p-4 lg:p-6 space-y-4 max-w-[1400px] mx-auto">' +
+      '<div class="card-flat p-3 flex flex-wrap gap-2 items-center sticky top-0 z-10 bg-white/95 backdrop-blur border-b border-slate-100">' +
         '<span class="text-[11px] text-slate-400 font-bold">기간:</span>' +
-        '<div class="flex bg-slate-100 rounded-lg p-0.5 gap-0.5" role="tablist" aria-label="보고서 기간">' +
-          ['week','last_week','month','last_month'].map(function(r){
-            var lbl = ({week:'이번 주', last_week:'지난 주', month:'이번 달', last_month:'지난 달'})[r];
-            return '<button role="tab" aria-selected="' + (_reportRange===r) + '" class="px-3 py-1.5 text-[11px] font-bold rounded-md transition ' + (_reportRange===r?'bg-white text-brand-600 shadow-sm':'text-slate-500 hover:text-slate-700') + '" onclick="_reportRange=\'' + r + '\';showReportPreview()">' + lbl + '</button>';
-          }).join('') +
-        '</div>' +
-        '<div class="ml-auto flex gap-2">' +
-          '<button class="btn btn-outline btn-sm" onclick="printReport()" title="보고서 인쇄/PDF"><i class="fas fa-print text-xs" aria-hidden="true"></i><span class="hidden sm:inline">인쇄</span></button>' +
-          '<button class="btn btn-primary btn-sm" onclick="window.open(\'/api/export/report/full\',\'_blank\')"><i class="fas fa-file-excel text-xs" aria-hidden="true"></i><span class="hidden sm:inline">엑셀</span></button>' +
-        '</div>' +
+        rangeTabs +
+        '<div class="ml-auto flex flex-wrap gap-2">' + actionButtons + '</div>' +
       '</div>' +
-      '<div id="report-body" class="text-sm"><div class="text-center py-8 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div></div>' +
-    '</div>', 'wide');
+      '<div id="report-body" class="text-sm"><div class="text-center py-16 text-slate-400"><i class="fas fa-spinner fa-spin text-2xl"></i><div class="mt-2 text-xs">보고서를 불러오는 중...</div></div></div>' +
+    '</div>';
+
+  var content = document.getElementById('content');
+  if (content) content.innerHTML = page;
+
   try {
     var r = await API.get('/dashboard/report?range=' + _reportRange);
     var d = r.data.data;
     renderReportBody(d);
   } catch (e) {
-    document.getElementById('report-body').innerHTML = '<div class="text-center py-8 text-red-400"><i class="fas fa-circle-exclamation mr-1"></i>보고서를 불러올 수 없습니다</div>';
+    var rb = document.getElementById('report-body');
+    if (rb) rb.innerHTML = '<div class="text-center py-16 text-red-400"><i class="fas fa-circle-exclamation mr-1"></i>보고서를 불러올 수 없습니다</div>';
   }
 }
 function renderReportBody(d) {
@@ -1761,7 +1777,7 @@ function renderReportBody(d) {
     html += '<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">' + d.topHospitals.slice(0, 12).map(function(h, i) {
       var stageBg = stageColors[h.pipeline_stage] || '#94a3b8';
       var stageLbl = stageLabels[h.pipeline_stage] || h.pipeline_stage || '-';
-      return '<div class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="closeModal();viewHosp(' + h.id + ')">' +
+      return '<div class="flex items-center gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
         '<span class="text-[11px] font-bold text-slate-400 w-5 text-center flex-shrink-0">' + (i+1) + '</span>' +
         '<div class="flex-1 min-w-0">' +
           '<div class="flex items-center gap-1.5 flex-wrap">' +
@@ -1785,7 +1801,7 @@ function renderReportBody(d) {
       var typeCol = typeColors[m.meeting_type] || '#94a3b8';
       var typeLbl = typeLabels[m.meeting_type] || m.meeting_type || '-';
       html +=
-        '<div class="border-l-2 pl-3 py-1.5 hover:bg-slate-50 cursor-pointer rounded-r" style="border-color:' + typeCol + '" onclick="closeModal();viewHosp(' + m.hospital_id + ')">' +
+        '<div class="border-l-2 pl-3 py-1.5 hover:bg-slate-50 cursor-pointer rounded-r" style="border-color:' + typeCol + '" onclick="viewHosp(' + m.hospital_id + ')">' +
           '<div class="flex items-center gap-2 flex-wrap">' +
             '<span class="text-[10px] font-bold text-slate-500">' + (m.meeting_date || '') + '</span>' +
             '<span class="text-[9px] px-1.5 py-0.5 rounded font-medium" style="background:' + typeCol + '15;color:' + typeCol + '">' + typeLbl + '</span>' +
@@ -1833,7 +1849,7 @@ function renderReportBody(d) {
         var stageBg = stageColors[h.pipeline_stage] || '#94a3b8';
         var stageLbl = stageLabels[h.pipeline_stage] || h.pipeline_stage || '-';
         var daysAgo = h.last_date ? Math.floor((Date.now() - new Date(h.last_date).getTime()) / 86400000) : null;
-        return '<div class="flex items-center gap-2 p-1.5 rounded hover:bg-amber-50 cursor-pointer" onclick="closeModal();viewHosp(' + h.id + ')">' +
+        return '<div class="flex items-center gap-2 p-1.5 rounded hover:bg-amber-50 cursor-pointer" onclick="viewHosp(' + h.id + ')">' +
           '<span class="text-[11px] font-semibold text-slate-700 truncate flex-1 hover:text-brand-500">' + h.name + '</span>' +
           '<span class="text-[9px] px-1 py-0.5 rounded" style="background:' + stageBg + '15;color:' + stageBg + '">' + stageLbl + '</span>' +
           '<span class="text-[10px] text-amber-600 font-bold">' + (daysAgo !== null ? daysAgo + '일 전' : '미방문') + '</span>' +
@@ -1846,7 +1862,7 @@ function renderReportBody(d) {
   html += '<div class="card-flat p-4"><div class="font-bold text-sm text-slate-800 mb-2"><i class="fas fa-flag-checkered text-amber-500 mr-1.5"></i>2주 이내 예정 후속 액션 (' + (d.upcomingNextActions ? d.upcomingNextActions.length : 0) + ')</div>';
   if (!d.upcomingNextActions || !d.upcomingNextActions.length) html += '<div class="text-xs text-slate-400">예정된 후속 액션 없음</div>';
   else html += '<div class="space-y-1 max-h-44 overflow-y-auto">' + d.upcomingNextActions.slice(0,20).map(function(n){
-    return '<div class="flex items-start gap-2 text-[11px] py-1 border-b border-slate-50 last:border-0 hover:bg-amber-50 cursor-pointer rounded" onclick="closeModal();viewHosp(' + (n.hospital_id || 0) + ')"><span class="font-bold text-amber-600 w-20 flex-shrink-0">' + (n.next_meeting_date || '') + '</span><span class="font-semibold text-slate-700 w-32 truncate flex-shrink-0">' + (n.hospital_name || '-') + '</span><span class="text-slate-500 flex-1">' + escapeHtml(n.next_action || '-') + '</span></div>';
+    return '<div class="flex items-start gap-2 text-[11px] py-1 border-b border-slate-50 last:border-0 hover:bg-amber-50 cursor-pointer rounded" onclick="viewHosp(' + (n.hospital_id || 0) + ')"><span class="font-bold text-amber-600 w-20 flex-shrink-0">' + (n.next_meeting_date || '') + '</span><span class="font-semibold text-slate-700 w-32 truncate flex-shrink-0">' + (n.hospital_name || '-') + '</span><span class="text-slate-500 flex-1">' + escapeHtml(n.next_action || '-') + '</span></div>';
   }).join('') + '</div>';
   html += '</div>';
   // Daily trend chart
