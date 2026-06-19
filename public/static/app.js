@@ -1088,6 +1088,133 @@ function downloadFullReport() {
   var q = _withSid('');
   window.open('/api/export/report/full' + (q ? ('?' + q) : ''), '_blank');
 }
+
+// ===== 상급자 보고용 영업 보고서 다운로드 =====
+function _salesReportDatePresets() {
+  var today = new Date();
+  var pad = function(n) { return String(n).padStart(2, '0'); };
+  var fmt = function(d) { return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()); };
+  var thisWeekStart = new Date(today); thisWeekStart.setDate(today.getDate() - today.getDay() + 1); // Monday
+  var thisMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+  var lastMonthStart = new Date(today.getFullYear(), today.getMonth()-1, 1);
+  var lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+  var thisQuarterStart = new Date(today.getFullYear(), Math.floor(today.getMonth()/3)*3, 1);
+  var thisYearStart = new Date(today.getFullYear(), 0, 1);
+  return {
+    week: { from: fmt(thisWeekStart), to: fmt(today), label: '이번 주' },
+    month: { from: fmt(thisMonthStart), to: fmt(today), label: '이번 달' },
+    lastMonth: { from: fmt(lastMonthStart), to: fmt(lastMonthEnd), label: '지난 달' },
+    quarter: { from: fmt(thisQuarterStart), to: fmt(today), label: '이번 분기' },
+    year: { from: fmt(thisYearStart), to: fmt(today), label: '올해' },
+    all: { from: '', to: '', label: '전체 기간' }
+  };
+}
+
+function showSalesReport() {
+  var presets = _salesReportDatePresets();
+  var hosps = (window._meetHosps || []).slice().sort(function(a,b){ return (a.name||'').localeCompare(b.name||''); });
+  var hospOpts = '<option value="">전체 병원</option>' + hosps.map(function(h){
+    var statusLabel = h.status === 'active' ? ' (코드 등록)' : '';
+    return '<option value="' + h.id + '">' + (h.name || '') + statusLabel + '</option>';
+  }).join('');
+
+  var body =
+    '<div class="space-y-4 text-sm">' +
+    '<div class="bg-brand-50/50 border border-brand-100 rounded-lg p-3 text-[12px] text-slate-600">' +
+      '<div class="font-semibold text-brand-700 mb-1"><i class="fas fa-circle-info mr-1"></i>상급자 보고용 Excel 보고서</div>' +
+      '<div class="text-[11px] leading-relaxed">미팅 일자/장소(병원·지역)/만난 의료진(직책·부서)/코드 상태/파이프라인/담당자/목적·결과·후속액션 등을 한 파일에 정리합니다. <b>4개 시트</b>로 구성되어 있어 그대로 보고에 활용 가능합니다.</div>' +
+    '</div>' +
+    '<div>' +
+      '<label class="block text-[11px] font-semibold text-slate-600 mb-1.5">기간 선택 <span class="text-rose-500">*</span></label>' +
+      '<div class="grid grid-cols-3 gap-1.5 mb-2">' +
+        Object.keys(presets).map(function(k) {
+          return '<button type="button" class="btn btn-outline btn-xs sales-preset-btn" data-from="' + presets[k].from + '" data-to="' + presets[k].to + '" onclick="_pickSalesPreset(this)">' + presets[k].label + '</button>';
+        }).join('') +
+      '</div>' +
+      '<div class="grid grid-cols-2 gap-2">' +
+        '<div><label class="block text-[10px] text-slate-500 mb-0.5">시작일</label><input id="sr-from" type="date" class="input !py-1.5 !text-xs w-full" value="' + presets.month.from + '"></div>' +
+        '<div><label class="block text-[10px] text-slate-500 mb-0.5">종료일</label><input id="sr-to" type="date" class="input !py-1.5 !text-xs w-full" value="' + presets.month.to + '"></div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-3">' +
+      '<div>' +
+        '<label class="block text-[11px] font-semibold text-slate-600 mb-1.5">병원</label>' +
+        '<select id="sr-hospital" class="input !py-1.5 !text-xs w-full">' + hospOpts + '</select>' +
+      '</div>' +
+      '<div>' +
+        '<label class="block text-[11px] font-semibold text-slate-600 mb-1.5">미팅 유형</label>' +
+        '<select id="sr-type" class="input !py-1.5 !text-xs w-full">' +
+          '<option value="">전체</option>' +
+          '<option value="visit">방문</option>' +
+          '<option value="phone">전화</option>' +
+          '<option value="conference">학회</option>' +
+          '<option value="email">이메일</option>' +
+          '<option value="online">온라인</option>' +
+        '</select>' +
+      '</div>' +
+    '</div>' +
+    '<div>' +
+      '<label class="block text-[11px] font-semibold text-slate-600 mb-1.5">파일 형식</label>' +
+      '<div class="flex gap-2">' +
+        '<label class="flex items-center gap-1.5 cursor-pointer flex-1 border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">' +
+          '<input type="radio" name="sr-format" value="xlsx" checked class="text-brand-500">' +
+          '<i class="fas fa-file-excel text-emerald-600"></i>' +
+          '<span class="text-xs"><b>Excel</b> (.xls) — 4시트</span>' +
+        '</label>' +
+        '<label class="flex items-center gap-1.5 cursor-pointer flex-1 border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">' +
+          '<input type="radio" name="sr-format" value="csv" class="text-brand-500">' +
+          '<i class="fas fa-file-csv text-slate-600"></i>' +
+          '<span class="text-xs"><b>CSV</b> (.csv)</span>' +
+        '</label>' +
+      '</div>' +
+    '</div>' +
+    '<div class="bg-slate-50 rounded-lg p-3 text-[11px] text-slate-500">' +
+      '<div class="font-semibold text-slate-700 mb-1"><i class="fas fa-list-check mr-1"></i>포함 시트 (Excel 선택 시)</div>' +
+      '<div class="space-y-0.5">' +
+        '<div>① <b>요약</b> — 핵심 지표, 코드 상태별, 유형별, 담당자별, 지역별 집계</div>' +
+        '<div>② <b>미팅 상세</b> — 일자/장소/유형/병원·지역/코드상태/파이프라인/참석의료진/목적·내용·결과/후속액션</div>' +
+        '<div>③ <b>참석자별</b> — 1행 = 1미팅 × 1의사 (직책·부서·전문분야·영향력 포함)</div>' +
+        '<div>④ <b>병원별 요약</b> — 방문 횟수, 만난 의사 수, 코드 상태, 미팅 유형 분포</div>' +
+      '</div>' +
+    '</div>' +
+    '<div class="flex gap-2 pt-2">' +
+      '<button type="button" class="btn btn-outline flex-1" onclick="closeModal()">취소</button>' +
+      '<button type="button" class="btn btn-primary flex-1" onclick="_doSalesReportDownload()"><i class="fas fa-download mr-1"></i>다운로드</button>' +
+    '</div>' +
+    '</div>';
+
+  openModal('<i class="fas fa-file-invoice text-brand-500 mr-2"></i>상급자 보고용 영업 보고서', body, true);
+}
+
+function _pickSalesPreset(btn) {
+  document.getElementById('sr-from').value = btn.dataset.from || '';
+  document.getElementById('sr-to').value = btn.dataset.to || '';
+  // Visual feedback
+  document.querySelectorAll('.sales-preset-btn').forEach(function(b) { b.classList.remove('!bg-brand-500','!text-white','!border-brand-500'); });
+  btn.classList.add('!bg-brand-500','!text-white','!border-brand-500');
+}
+
+function _doSalesReportDownload() {
+  var from = document.getElementById('sr-from').value || '';
+  var to = document.getElementById('sr-to').value || '';
+  var hospital = document.getElementById('sr-hospital').value || '';
+  var type = document.getElementById('sr-type').value || '';
+  var format = (document.querySelector('input[name="sr-format"]:checked') || {}).value || 'xlsx';
+  if (from && to && from > to) {
+    toast('시작일이 종료일보다 늦습니다', 'warn');
+    return;
+  }
+  var qs = [];
+  if (from) qs.push('from=' + encodeURIComponent(from));
+  if (to) qs.push('to=' + encodeURIComponent(to));
+  if (hospital) qs.push('hospital_id=' + encodeURIComponent(hospital));
+  if (type) qs.push('type=' + encodeURIComponent(type));
+  qs.push('format=' + encodeURIComponent(format));
+  var q = _withSid(qs.join('&'));
+  window.open('/api/export/report/sales' + (q ? ('?' + q) : ''), '_blank');
+  toast('보고서 다운로드 시작', 'ok');
+  closeModal();
+}
 // 제품 관리 전용 내보내기 메뉴 (재고 현황 + 이동 이력)
 function productExportMenu() {
   var id = 'expmenu_products_' + Math.random().toString(36).slice(2,7);
@@ -1136,6 +1263,7 @@ function exportMenu(type, label) {
     + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadXLSX(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-excel text-emerald-600" aria-hidden="true"></i>Excel (.xls)</button>'
     + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadCSV(\'' + type + '\');document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})"><i class="fas fa-file-csv text-slate-600" aria-hidden="true"></i>CSV (.csv)</button>'
     + '<div class="border-t border-slate-100 my-1"></div>'
+    + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="showSalesReport();document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})" title="상급자 보고용 — 기간/병원/유형 필터 + 4시트 Excel"><i class="fas fa-file-invoice text-amber-500" aria-hidden="true"></i>상급자 보고서</button>'
     + '<button role="menuitem" class="w-full text-left px-3 py-2 text-xs hover:bg-slate-50 flex items-center gap-2" onclick="downloadFullReport();document.querySelectorAll(\'.exp-menu\').forEach(function(x){x.classList.add(\'hidden\')})" title="요약 + 기관/의료진/미팅/활동로그를 포함한 통합 보고서"><i class="fas fa-file-invoice text-brand-500" aria-hidden="true"></i>통합 보고서</button>'
     + '</div></div>';
 }
@@ -3555,7 +3683,10 @@ function setCalRange(r) { _calRange = r; localStorage.setItem('calRange', r); re
 
 async function loadMeet() {
   document.getElementById('page-title').textContent = '미팅 관리';
-  document.getElementById('header-actions').innerHTML = exportMenu('meetings','미팅') + '<button class="btn btn-success" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">미팅 추가</span></button>';
+  document.getElementById('header-actions').innerHTML =
+    '<button class="btn btn-outline btn-sm" onclick="showSalesReport()" title="상급자 보고용 Excel 다운로드"><i class="fas fa-file-invoice text-xs text-brand-500" aria-hidden="true"></i><span class="hidden sm:inline">보고서</span></button>' +
+    exportMenu('meetings','미팅') +
+    '<button class="btn btn-success" onclick="showNewMeetGlobal()"><i class="fas fa-plus text-xs"></i><span class="hidden sm:inline">미팅 추가</span></button>';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat p-0">' + skeleton(6) + '</div></div>';
   try {
     const [meetR, hospR] = await Promise.all([API.get('/meetings'), API.get('/hospitals')]);

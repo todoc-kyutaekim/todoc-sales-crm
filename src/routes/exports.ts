@@ -466,4 +466,270 @@ exports.get('/report/full', async (c) => {
   return c.body('\uFEFF' + xml)
 })
 
+// ============================================================================
+// Sales Report — 상급자 보고용 전용 보고서
+// 4 sheets:
+//   1) 표지 + 요약 통계
+//   2) 미팅 상세 (코드상태/파이프라인/지역 포함)
+//   3) 참석자별 펼침 (1 row = 1 meeting × 1 doctor)
+//   4) 병원별 요약 (방문 횟수, 의사 수, 코드 상태)
+// Query params: ?from=&to=&hospital_id=&type=&user_id=&format=xlsx|csv
+// ============================================================================
+exports.get('/report/sales', async (c) => {
+  const from = c.req.query('from') || ''
+  const to = c.req.query('to') || ''
+  const hospitalId = c.req.query('hospital_id') || ''
+  const mtype = c.req.query('type') || ''
+  const userId = c.req.query('user_id') || ''
+  const format = (c.req.query('format') || 'xlsx').toLowerCase()
+
+  // Build WHERE for meetings
+  const where: string[] = []
+  const params: any[] = []
+  if (from) { where.push('m.meeting_date >= ?'); params.push(from) }
+  if (to) { where.push('m.meeting_date <= ?'); params.push(to) }
+  if (hospitalId) { where.push('m.hospital_id = ?'); params.push(Number(hospitalId)) }
+  if (mtype) { where.push('m.meeting_type = ?'); params.push(mtype) }
+  if (userId) { where.push('m.user_id = ?'); params.push(Number(userId)) }
+  const whereSql = where.length ? ' WHERE ' + where.join(' AND ') : ''
+
+  // 1) Meeting detail with all needed fields
+  const meetSql = `SELECT m.*,
+      h.name as hospital_name,
+      h.region as hospital_region,
+      h.type as hospital_type,
+      h.status as hospital_status,
+      h.pipeline_stage as hospital_pipeline,
+      h.todoc_contact as hospital_todoc_contact,
+      h.priority as hospital_priority,
+      (SELECT GROUP_CONCAT(d.name || '(' || COALESCE(d.position,'') ||
+        CASE WHEN d.department IS NOT NULL AND d.department != '' THEN '/' || d.department ELSE '' END || ')', ', ')
+       FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id WHERE md.meeting_id=m.id) as doctor_details,
+      (SELECT GROUP_CONCAT(d.name, ', ') FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id WHERE md.meeting_id=m.id) as doctor_names,
+      (SELECT COUNT(*) FROM meeting_doctors md WHERE md.meeting_id=m.id) as doctor_count,
+      (SELECT GROUP_CONCAT(u.name, ', ') FROM meeting_users mu LEFT JOIN users u ON mu.user_id=u.id WHERE mu.meeting_id=m.id) as user_names,
+      u_owner.name as owner_name
+    FROM meetings m
+    LEFT JOIN hospitals h ON m.hospital_id=h.id
+    LEFT JOIN users u_owner ON m.user_id=u_owner.id
+    ${whereSql}
+    ORDER BY m.meeting_date DESC, m.id DESC`
+  const meetR = await c.env.DB.prepare(meetSql).bind(...params).all()
+  const meetings = (meetR.results || []) as any[]
+
+  // 2) Per-attendee (1 row per meeting × doctor) expansion
+  const meetingIds = meetings.map(m => m.id)
+  let attendees: any[] = []
+  if (meetingIds.length > 0) {
+    const ph = meetingIds.map(() => '?').join(',')
+    const attR = await c.env.DB.prepare(
+      `SELECT md.meeting_id, m.meeting_date, m.meeting_type, m.visit_time, m.start_time, m.end_time,
+              m.purpose, m.content, m.result, m.next_action, m.next_meeting_date,
+              h.name as hospital_name, h.region as hospital_region,
+              h.status as hospital_status, h.pipeline_stage as hospital_pipeline,
+              d.id as doctor_id, d.name as doctor_name, d.position as doctor_position,
+              d.department as doctor_department, d.specialty as doctor_specialty,
+              d.influence_level as doctor_influence,
+              u.name as owner_name
+       FROM meeting_doctors md
+       JOIN meetings m ON md.meeting_id = m.id
+       LEFT JOIN hospitals h ON m.hospital_id = h.id
+       LEFT JOIN doctors d ON md.doctor_id = d.id
+       LEFT JOIN users u ON m.user_id = u.id
+       WHERE md.meeting_id IN (${ph})
+       ORDER BY m.meeting_date DESC, m.id DESC, d.name ASC`
+    ).bind(...meetingIds).all()
+    attendees = (attR.results || []) as any[]
+  }
+
+  // 3) Hospital-level summary aggregation
+  const hospitalAgg: Record<number, any> = {}
+  for (const m of meetings) {
+    const hid = m.hospital_id
+    if (!hid) continue
+    if (!hospitalAgg[hid]) {
+      hospitalAgg[hid] = {
+        hospital_id: hid,
+        hospital_name: m.hospital_name,
+        region: m.hospital_region,
+        type: m.hospital_type,
+        status: m.hospital_status,
+        pipeline_stage: m.hospital_pipeline,
+        meeting_count: 0,
+        last_meeting_date: '',
+        doctor_set: new Set<string>(),
+        meeting_types: {} as Record<string, number>
+      }
+    }
+    const agg = hospitalAgg[hid]
+    agg.meeting_count++
+    if (!agg.last_meeting_date || m.meeting_date > agg.last_meeting_date) agg.last_meeting_date = m.meeting_date
+    const mt = m.meeting_type || '-'
+    agg.meeting_types[mt] = (agg.meeting_types[mt] || 0) + 1
+    if (m.doctor_names) {
+      m.doctor_names.split(', ').forEach((nm: string) => agg.doctor_set.add(nm))
+    }
+  }
+
+  // 4) Summary stats
+  const typeCount: Record<string, number> = {}
+  const userCount: Record<string, number> = {}
+  const regionCount: Record<string, number> = {}
+  const dailyCount: Record<string, number> = {}
+  const codeRegCount = { active: 0, inactive: 0 }
+  for (const m of meetings) {
+    const t = m.meeting_type || '-'; typeCount[t] = (typeCount[t] || 0) + 1
+    const owner = m.owner_name || '-'; userCount[owner] = (userCount[owner] || 0) + 1
+    const region = m.hospital_region || '-'; regionCount[region] = (regionCount[region] || 0) + 1
+    const day = m.meeting_date || '-'; dailyCount[day] = (dailyCount[day] || 0) + 1
+    if (m.hospital_status === 'active') codeRegCount.active++
+    else codeRegCount.inactive++
+  }
+
+  // Maps
+  const vtMap: Record<string,string> = { am: '오전', pm: '오후', full: '종일' }
+  const tyMap: Record<string,string> = { visit: '방문', phone: '전화', conference: '학회', email: '이메일', online: '온라인' }
+  const stMap: Record<string,string> = { active: '코드 등록', inactive: '미등록' }
+  const pipeMap: Record<string,string> = {
+    contact: '컨택', meeting: '미팅', demo: '데모', proposal: '제안', contract: '계약', active_customer: '활성 고객'
+  }
+  const infMap: Record<string,string> = { high: '높음', medium: '중간', low: '낮음' }
+
+  // =================== Build sheets ===================
+  const periodLabel = (from || '전체') + ' ~ ' + (to || '전체')
+  const generatedAt = new Date().toISOString().substring(0, 19).replace('T', ' ')
+
+  // Sheet 1: 표지 + 요약 통계
+  const coverRows: any[][] = [
+    ['보고서', 'TODOC CRM 영업 활동 보고서'],
+    ['보고서 기간', periodLabel],
+    ['생성 일시', generatedAt],
+    ['', ''],
+    ['── 핵심 지표 ──', ''],
+    ['총 미팅 수', meetings.length],
+    ['방문 기관 수 (중복 제거)', Object.keys(hospitalAgg).length],
+    ['만난 의료진 수 (중복 제거)', new Set(attendees.map(a => a.doctor_id).filter(Boolean)).size],
+    ['총 참석자 수 (연인원)', attendees.length],
+    ['', ''],
+    ['── 코드 상태별 ──', ''],
+    ['코드 등록 기관 미팅', codeRegCount.active],
+    ['미등록 기관 미팅', codeRegCount.inactive],
+    ['', ''],
+    ['── 미팅 유형별 ──', ''],
+    ...Object.entries(typeCount).sort((a,b)=>b[1]-a[1]).map(([k, v]) => [tyMap[k] || k, v]),
+    ['', ''],
+    ['── 담당자별 미팅 수 ──', ''],
+    ...Object.entries(userCount).sort((a,b)=>b[1]-a[1]).map(([k, v]) => [k, v]),
+    ['', ''],
+    ['── 지역별 미팅 수 ──', ''],
+    ...Object.entries(regionCount).sort((a,b)=>b[1]-a[1]).map(([k, v]) => [k, v]),
+  ]
+
+  // Sheet 2: 미팅 상세
+  const meetingDetailRows = meetings.map((m, idx) => [
+    idx + 1,
+    m.meeting_date || '',
+    vtMap[m.visit_time] || m.visit_time || '',
+    m.start_time || '',
+    m.end_time || '',
+    tyMap[m.meeting_type] || m.meeting_type || '',
+    m.hospital_name || '',
+    m.hospital_region || '',
+    stMap[m.hospital_status] || (m.hospital_status === 'active' ? '코드 등록' : '미등록'),
+    pipeMap[m.hospital_pipeline] || m.hospital_pipeline || 'contact',
+    m.doctor_count || 0,
+    m.doctor_details || m.doctor_names || '',
+    m.owner_name || '',
+    m.purpose || '',
+    m.content || '',
+    m.result || '',
+    m.next_action || '',
+    m.next_meeting_date || '',
+  ])
+
+  // Sheet 3: 참석자별 펼침 (1 미팅 × 1 의사)
+  const attendeeRows = attendees.map((a, idx) => [
+    idx + 1,
+    a.meeting_date || '',
+    tyMap[a.meeting_type] || a.meeting_type || '',
+    a.hospital_name || '',
+    a.hospital_region || '',
+    stMap[a.hospital_status] || (a.hospital_status === 'active' ? '코드 등록' : '미등록'),
+    pipeMap[a.hospital_pipeline] || a.hospital_pipeline || 'contact',
+    a.doctor_name || '',
+    a.doctor_position || '',
+    a.doctor_department || '',
+    a.doctor_specialty || '',
+    infMap[a.doctor_influence] || a.doctor_influence || '',
+    a.owner_name || '',
+    a.purpose || '',
+    a.next_action || '',
+  ])
+
+  // Sheet 4: 병원별 요약
+  const hospitalSummaryRows = Object.values(hospitalAgg)
+    .sort((a: any, b: any) => b.meeting_count - a.meeting_count)
+    .map((h: any, idx: number) => [
+      idx + 1,
+      h.hospital_name || '',
+      h.region || '',
+      h.type === 'clinic' ? '의원' : '병원',
+      stMap[h.status] || (h.status === 'active' ? '코드 등록' : '미등록'),
+      pipeMap[h.pipeline_stage] || h.pipeline_stage || 'contact',
+      h.meeting_count,
+      h.doctor_set.size,
+      Array.from(h.doctor_set).join(', '),
+      h.last_meeting_date || '',
+      Object.entries(h.meeting_types).map(([k, v]) => (tyMap[k] || k) + ':' + v).join(', '),
+    ])
+
+  const sheets = [
+    { name: '요약', headers: ['항목', '값'], rows: coverRows },
+    {
+      name: '미팅 상세',
+      headers: ['No', '미팅일자', '시간대', '시작', '종료', '유형', '병원', '지역', '코드상태', '파이프라인', '참석의료진수', '의료진(직책/부서)', '담당자', '목적', '내용', '결과', '후속액션', '다음미팅예정'],
+      rows: meetingDetailRows
+    },
+    {
+      name: '참석자별',
+      headers: ['No', '미팅일자', '유형', '병원', '지역', '코드상태', '파이프라인', '의사명', '직책', '부서', '전문분야', '영향력', '담당자', '목적', '후속액션'],
+      rows: attendeeRows
+    },
+    {
+      name: '병원별 요약',
+      headers: ['No', '병원', '지역', '유형', '코드상태', '파이프라인', '미팅횟수', '만난의사수', '만난의사목록', '마지막미팅일', '미팅유형 분포'],
+      rows: hospitalSummaryRows
+    },
+  ]
+
+  // CSV 포맷 요청 시: 미팅 상세 시트만 단일 CSV 로 반환
+  if (format === 'csv') {
+    const lines: string[] = []
+    lines.push('# TODOC CRM 영업 보고서 (' + periodLabel + ')')
+    lines.push('# 생성 일시: ' + generatedAt)
+    lines.push('')
+    lines.push(toCsvRow(sheets[1].headers))
+    for (const r of meetingDetailRows) lines.push(toCsvRow(r))
+    lines.push('')
+    lines.push('# ── 병원별 요약 ──')
+    lines.push(toCsvRow(sheets[3].headers))
+    for (const r of hospitalSummaryRows) lines.push(toCsvRow(r))
+    const bom = '\uFEFF'
+    c.header('Content-Type', 'text/csv; charset=utf-8')
+    c.header('Content-Disposition', `attachment; filename="todoc_sales_report_${ts()}.csv"`)
+    return c.body(bom + lines.join('\n'))
+  }
+
+  // XLSX (XML Spreadsheet format)
+  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<?mso-application progid="Excel.Sheet"?>\n'
+  xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n'
+  xml += '<Styles><Style ss:ID="header"><Font ss:Bold="1" ss:Size="11" ss:Color="#FFFFFF"/><Interior ss:Color="#2563EB" ss:Pattern="Solid"/></Style></Styles>\n'
+  for (const s of sheets) xml += buildSheet(s.name, s.headers, s.rows)
+  xml += '</Workbook>'
+
+  c.header('Content-Type', 'application/vnd.ms-excel; charset=utf-8')
+  c.header('Content-Disposition', `attachment; filename="todoc_sales_report_${ts()}.xls"`)
+  return c.body('\uFEFF' + xml)
+})
+
 export default exports
