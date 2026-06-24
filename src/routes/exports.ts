@@ -707,6 +707,460 @@ exports.get('/report/sales', async (c) => {
     },
   ]
 
+  // ========================================================================
+  // HTML 포맷 요청 시: 상급자 보고용 전문 양식 (단조·진중한 톤)
+  // ========================================================================
+  if (format === 'html') {
+    const download = c.req.query('download') === '1'
+
+    // 표지/필터 정보
+    const filterDesc: string[] = []
+    if (hospitalId) {
+      const hospName = meetings[0]?.hospital_name || `ID ${hospitalId}`
+      filterDesc.push('대상 기관: ' + hospName)
+    }
+    if (mtype) filterDesc.push('미팅 유형: ' + (tyMap[mtype] || mtype))
+    if (userId) {
+      const userName = meetings[0]?.owner_name || `ID ${userId}`
+      filterDesc.push('담당자: ' + userName)
+    }
+
+    // KST 출력 시각
+    const nowKstStr = new Date(Date.now() + 9 * 3600 * 1000).toISOString().replace('T', ' ').substring(0, 16) + ' KST'
+
+    // 집계
+    const totalMeetings = meetings.length
+    const totalHospitals = Object.keys(hospitalAgg).length
+    const totalDoctors = new Set(attendees.map(a => a.doctor_id).filter(Boolean)).size
+    const totalAttendees = attendees.length
+
+    // 상위 유형/지역/담당자
+    const typeSorted = Object.entries(typeCount).sort((a, b) => Number(b[1]) - Number(a[1]))
+    const userSorted = Object.entries(userCount).sort((a, b) => Number(b[1]) - Number(a[1]))
+    const regionSorted = Object.entries(regionCount).sort((a, b) => Number(b[1]) - Number(a[1]))
+
+    // 기관별 요약 (상위)
+    const hospAgg = Object.values(hospitalAgg)
+      .sort((a: any, b: any) => b.meeting_count - a.meeting_count) as any[]
+
+    // ========== HTML 본문 ==========
+    let body = ''
+
+    // 표지 (Cover)
+    body += `
+    <section class="cover">
+      <div class="cover-eyebrow">CONFIDENTIAL · INTERNAL REPORT</div>
+      <h1 class="cover-title">영업 활동 보고서</h1>
+      <div class="cover-sub">TODOC CRM Sales Activity Report</div>
+      <div class="cover-divider"></div>
+      <table class="cover-meta">
+        <tr><th>보고 기간</th><td>${escHtml(periodLabel)}</td></tr>
+        <tr><th>생성 일시</th><td>${escHtml(nowKstStr)}</td></tr>
+        ${filterDesc.length ? `<tr><th>적용 필터</th><td>${escHtml(filterDesc.join(' · '))}</td></tr>` : ''}
+        <tr><th>총 미팅</th><td><strong>${totalMeetings.toLocaleString()}건</strong></td></tr>
+        <tr><th>방문 기관</th><td>${totalHospitals.toLocaleString()}곳</td></tr>
+        <tr><th>접촉 의료진</th><td>${totalDoctors.toLocaleString()}명</td></tr>
+      </table>
+    </section>`
+
+    // I. 요약 (Executive Summary)
+    body += `
+    <section class="section">
+      <h2 class="section-title"><span class="section-num">I.</span> 요약 (Executive Summary)</h2>
+      <div class="kpi-row">
+        <div class="kpi-cell"><div class="kpi-num">${totalMeetings.toLocaleString()}</div><div class="kpi-lbl">총 미팅 건수</div></div>
+        <div class="kpi-cell"><div class="kpi-num">${totalHospitals.toLocaleString()}</div><div class="kpi-lbl">방문 기관 수</div></div>
+        <div class="kpi-cell"><div class="kpi-num">${totalDoctors.toLocaleString()}</div><div class="kpi-lbl">접촉 의료진 수</div></div>
+        <div class="kpi-cell"><div class="kpi-num">${totalAttendees.toLocaleString()}</div><div class="kpi-lbl">연인원 (참석자 합계)</div></div>
+      </div>
+      <table class="data-table mt-3">
+        <thead><tr><th style="width:30%">구분</th><th>내용</th></tr></thead>
+        <tbody>
+          <tr><th>코드 등록 기관 미팅</th><td>${codeRegCount.active.toLocaleString()}건 (${totalMeetings ? Math.round((codeRegCount.active / totalMeetings) * 100) : 0}%)</td></tr>
+          <tr><th>미등록 기관 미팅</th><td>${codeRegCount.inactive.toLocaleString()}건 (${totalMeetings ? Math.round((codeRegCount.inactive / totalMeetings) * 100) : 0}%)</td></tr>
+          <tr><th>유형별 분포</th><td>${typeSorted.map(([k, v]) => `${escHtml(tyMap[k] || k)} ${v}건`).join(' · ') || '-'}</td></tr>
+          <tr><th>주요 지역</th><td>${regionSorted.slice(0, 5).map(([k, v]) => `${escHtml(k)} ${v}건`).join(' · ') || '-'}</td></tr>
+          <tr><th>담당자별 활동</th><td>${userSorted.slice(0, 5).map(([k, v]) => `${escHtml(k)} ${v}건`).join(' · ') || '-'}</td></tr>
+        </tbody>
+      </table>
+    </section>`
+
+    // II. 기관별 요약 표
+    body += `
+    <section class="section">
+      <h2 class="section-title"><span class="section-num">II.</span> 기관별 활동 요약</h2>
+      ${hospAgg.length === 0 ? '<p class="muted">해당 기간에 미팅이 없습니다.</p>' : `
+      <table class="data-table compact">
+        <thead>
+          <tr>
+            <th style="width:36px">No</th>
+            <th>기관명</th>
+            <th style="width:80px">지역</th>
+            <th style="width:80px">코드</th>
+            <th style="width:80px">파이프라인</th>
+            <th style="width:60px;text-align:right">미팅</th>
+            <th style="width:60px;text-align:right">의사</th>
+            <th style="width:100px">최근 미팅일</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${hospAgg.map((h: any, i: number) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td class="strong">${escHtml(h.hospital_name || '-')}</td>
+              <td>${escHtml(h.region || '-')}</td>
+              <td>${h.status === 'active' ? '<span class="badge badge-dark">등록</span>' : '<span class="badge badge-light">미등록</span>'}</td>
+              <td>${escHtml(pipeMap[h.pipeline_stage] || h.pipeline_stage || '-')}</td>
+              <td style="text-align:right" class="num">${h.meeting_count}</td>
+              <td style="text-align:right" class="num">${h.doctor_set.size}</td>
+              <td>${escHtml(h.last_meeting_date || '-')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </section>`
+
+    // III. 미팅 상세 내역
+    body += `
+    <section class="section">
+      <h2 class="section-title"><span class="section-num">III.</span> 미팅 상세 내역</h2>
+      ${meetings.length === 0 ? '<p class="muted">해당 기간에 미팅이 없습니다.</p>' : `
+      <div class="meet-detail-list">
+        ${meetings.map((m: any, i: number) => `
+          <article class="meet-item">
+            <header class="meet-item-head">
+              <span class="meet-no">No. ${String(i + 1).padStart(3, '0')}</span>
+              <span class="meet-date">${escHtml(m.meeting_date || '-')}</span>
+              ${m.start_time ? `<span class="meet-time">${escHtml(m.start_time)}${m.end_time ? ' - ' + escHtml(m.end_time) : ''}</span>` : (m.visit_time ? `<span class="meet-time">${escHtml(vtMap[m.visit_time] || m.visit_time)}</span>` : '')}
+              <span class="meet-type">${escHtml(tyMap[m.meeting_type] || m.meeting_type || '-')}</span>
+            </header>
+            <table class="meet-meta-table">
+              <tr>
+                <th>기관</th><td class="strong">${escHtml(m.hospital_name || '-')} <span class="muted-inline">(${escHtml(m.hospital_region || '-')})</span></td>
+                <th>코드 상태</th><td>${m.hospital_status === 'active' ? '<span class="badge badge-dark">등록</span>' : '<span class="badge badge-light">미등록</span>'}</td>
+              </tr>
+              <tr>
+                <th>파이프라인</th><td>${escHtml(pipeMap[m.hospital_pipeline] || m.hospital_pipeline || '-')}</td>
+                <th>담당자</th><td>${escHtml(m.owner_name || '-')}</td>
+              </tr>
+              <tr>
+                <th>참석 의료진</th><td colspan="3">${escHtml(m.doctor_details || m.doctor_names || '-')} <span class="muted-inline">(${m.doctor_count || 0}명)</span></td>
+              </tr>
+            </table>
+            ${m.purpose ? `<div class="meet-block"><span class="meet-block-lbl">목적</span><div class="meet-block-body">${escHtml(m.purpose)}</div></div>` : ''}
+            ${m.content ? `<div class="meet-block"><span class="meet-block-lbl">내용</span><div class="meet-block-body">${escHtml(m.content)}</div></div>` : ''}
+            ${m.result ? `<div class="meet-block"><span class="meet-block-lbl">결과</span><div class="meet-block-body">${escHtml(m.result)}</div></div>` : ''}
+            ${m.next_action ? `<div class="meet-block followup"><span class="meet-block-lbl">후속 액션</span><div class="meet-block-body">${escHtml(m.next_action)}${m.next_meeting_date ? ` <span class="muted-inline">(예정: ${escHtml(m.next_meeting_date)})</span>` : ''}</div></div>` : ''}
+          </article>`).join('')}
+      </div>`}
+    </section>`
+
+    // IV. 참석자별 명단 (테이블)
+    body += `
+    <section class="section">
+      <h2 class="section-title"><span class="section-num">IV.</span> 참석 의료진 명단</h2>
+      ${attendees.length === 0 ? '<p class="muted">참석자 정보가 없습니다.</p>' : `
+      <table class="data-table compact">
+        <thead>
+          <tr>
+            <th style="width:36px">No</th>
+            <th style="width:100px">미팅일</th>
+            <th>의료진</th>
+            <th>직책</th>
+            <th>부서</th>
+            <th>전문분야</th>
+            <th>소속 기관</th>
+            <th style="width:80px">담당자</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${attendees.map((a: any, i: number) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td>${escHtml(a.meeting_date || '-')}</td>
+              <td class="strong">${escHtml(a.doctor_name || '-')}</td>
+              <td>${escHtml(a.doctor_position || '-')}</td>
+              <td>${escHtml(a.doctor_department || '-')}</td>
+              <td>${escHtml(a.doctor_specialty || '-')}</td>
+              <td>${escHtml(a.hospital_name || '-')}</td>
+              <td>${escHtml(a.owner_name || '-')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </section>`
+
+    // 푸터
+    body += `
+    <footer class="report-footer">
+      <div>본 보고서는 TODOC CRM 시스템에 등록된 데이터를 기반으로 자동 생성된 내부 자료입니다.</div>
+      <div>생성: ${escHtml(nowKstStr)} · 문서 기밀 등급: 내부용</div>
+    </footer>`
+
+    // ========== CSS — 단조·진중한 보고서 디자인 ==========
+    const css = `
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: "Noto Sans KR", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #1a1a1a;
+      background: #f5f5f4;
+      line-height: 1.6;
+      font-size: 13px;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+    .doc { max-width: 880px; margin: 0 auto; background: #ffffff; padding: 56px 64px 72px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+    /* === 표지 === */
+    .cover { text-align: center; padding: 24px 0 40px; border-bottom: 2px solid #1a1a1a; margin-bottom: 36px; }
+    .cover-eyebrow { font-size: 10px; letter-spacing: 4px; color: #6b7280; font-weight: 600; margin-bottom: 28px; }
+    .cover-title {
+      font-family: "Noto Serif KR", "Times New Roman", serif;
+      font-size: 32px;
+      font-weight: 700;
+      margin: 0 0 6px;
+      color: #111;
+      letter-spacing: -.5px;
+    }
+    .cover-sub { font-size: 11px; color: #6b7280; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 28px; }
+    .cover-divider { width: 48px; height: 2px; background: #1a1a1a; margin: 0 auto 28px; }
+    .cover-meta { margin: 0 auto; border-collapse: collapse; font-size: 12px; min-width: 380px; }
+    .cover-meta th { text-align: left; padding: 6px 16px 6px 0; color: #6b7280; font-weight: 500; width: 110px; vertical-align: top; }
+    .cover-meta td { text-align: left; padding: 6px 0; color: #1a1a1a; font-weight: 500; }
+    .cover-meta strong { color: #111; font-weight: 700; }
+
+    /* === 섹션 === */
+    .section { margin-bottom: 44px; page-break-inside: auto; }
+    .section-title {
+      font-family: "Noto Serif KR", serif;
+      font-size: 17px;
+      font-weight: 700;
+      color: #111;
+      margin: 0 0 18px;
+      padding: 0 0 8px;
+      border-bottom: 1px solid #1a1a1a;
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .section-num {
+      font-family: "Times New Roman", serif;
+      font-size: 15px;
+      color: #6b7280;
+      font-weight: 600;
+      min-width: 26px;
+    }
+    .mt-3 { margin-top: 14px; }
+
+    /* === 핵심 지표 (KPI) === */
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border: 1px solid #d6d3d1; }
+    .kpi-cell { padding: 16px 18px; border-right: 1px solid #e7e5e4; text-align: center; }
+    .kpi-cell:last-child { border-right: none; }
+    .kpi-num {
+      font-family: "Noto Serif KR", serif;
+      font-size: 26px;
+      font-weight: 700;
+      color: #111;
+      line-height: 1;
+      margin-bottom: 6px;
+    }
+    .kpi-lbl { font-size: 11px; color: #6b7280; font-weight: 500; letter-spacing: .3px; }
+
+    /* === 데이터 테이블 === */
+    .data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .data-table thead th {
+      background: #f5f5f4;
+      color: #1a1a1a;
+      font-weight: 600;
+      text-align: left;
+      padding: 9px 10px;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+      font-size: 11px;
+      letter-spacing: .2px;
+    }
+    .data-table tbody td, .data-table tbody th {
+      padding: 8px 10px;
+      border-bottom: 1px solid #e7e5e4;
+      vertical-align: top;
+    }
+    .data-table tbody th { background: #fafaf9; color: #4b5563; font-weight: 500; text-align: left; }
+    .data-table tbody tr:last-child td, .data-table tbody tr:last-child th { border-bottom: 1px solid #1a1a1a; }
+    .data-table.compact tbody td { padding: 6px 10px; font-size: 12px; }
+    .data-table .strong { font-weight: 600; color: #111; }
+    .data-table .num { font-variant-numeric: tabular-nums; }
+
+    /* === 배지 === */
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 2px;
+      letter-spacing: .3px;
+    }
+    .badge-dark { background: #1a1a1a; color: #fff; }
+    .badge-light { background: #fff; color: #6b7280; border: 1px solid #d6d3d1; }
+
+    /* === 미팅 상세 카드 === */
+    .meet-detail-list { display: flex; flex-direction: column; gap: 18px; }
+    .meet-item {
+      border: 1px solid #d6d3d1;
+      padding: 16px 20px;
+      background: #fff;
+      page-break-inside: avoid;
+    }
+    .meet-item-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: baseline;
+      padding-bottom: 10px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .meet-no {
+      font-family: "Times New Roman", serif;
+      font-size: 13px;
+      font-weight: 700;
+      color: #1a1a1a;
+      letter-spacing: .5px;
+    }
+    .meet-date { font-size: 13px; font-weight: 700; color: #111; }
+    .meet-time { font-size: 11px; color: #6b7280; }
+    .meet-type {
+      margin-left: auto;
+      font-size: 11px;
+      font-weight: 600;
+      color: #1a1a1a;
+      padding: 3px 10px;
+      border: 1px solid #1a1a1a;
+      letter-spacing: .3px;
+    }
+    .meet-meta-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 10px; }
+    .meet-meta-table th {
+      text-align: left;
+      padding: 5px 12px 5px 0;
+      color: #6b7280;
+      font-weight: 500;
+      width: 80px;
+      vertical-align: top;
+      font-size: 11px;
+    }
+    .meet-meta-table td {
+      padding: 5px 24px 5px 0;
+      color: #1a1a1a;
+      vertical-align: top;
+    }
+    .meet-meta-table td.strong { font-weight: 600; }
+    .muted-inline { color: #6b7280; font-weight: 400; font-size: 11px; }
+    .meet-block { margin-top: 8px; padding-left: 12px; border-left: 2px solid #d6d3d1; }
+    .meet-block.followup { border-left-color: #1a1a1a; }
+    .meet-block-lbl {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      color: #6b7280;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      margin-bottom: 3px;
+    }
+    .meet-block.followup .meet-block-lbl { color: #1a1a1a; }
+    .meet-block-body { font-size: 12px; color: #1a1a1a; line-height: 1.6; white-space: pre-wrap; }
+
+    /* === 푸터 === */
+    .report-footer {
+      margin-top: 56px;
+      padding-top: 18px;
+      border-top: 1px solid #1a1a1a;
+      font-size: 10px;
+      color: #6b7280;
+      text-align: center;
+      line-height: 1.7;
+    }
+    .muted { color: #6b7280; font-size: 12px; padding: 12px 0; }
+
+    /* === 툴바 (인쇄 시 숨김) === */
+    .toolbar {
+      position: sticky;
+      top: 0;
+      background: rgba(255,255,255,.97);
+      backdrop-filter: blur(8px);
+      padding: 10px 24px;
+      border-bottom: 1px solid #d6d3d1;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      z-index: 100;
+    }
+    .toolbar .lbl { font-size: 11px; color: #6b7280; font-weight: 600; letter-spacing: .3px; }
+    .toolbar button {
+      background: #1a1a1a;
+      color: #fff;
+      border: 0;
+      padding: 6px 14px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: .3px;
+    }
+    .toolbar button:hover { background: #000; }
+    .toolbar button.secondary { background: #fff; color: #1a1a1a; border: 1px solid #1a1a1a; }
+    .toolbar button.secondary:hover { background: #f5f5f4; }
+
+    /* === 인쇄용 === */
+    @media print {
+      body { background: #fff; }
+      .toolbar { display: none; }
+      .doc { box-shadow: none; max-width: 100%; padding: 0 16mm; }
+      .section, .meet-item { page-break-inside: avoid; }
+      .cover { page-break-after: avoid; }
+    }
+
+    /* === 모바일 === */
+    @media (max-width: 720px) {
+      .doc { padding: 28px 20px 40px; }
+      .kpi-row { grid-template-columns: repeat(2, 1fr); }
+      .kpi-cell:nth-child(2) { border-right: none; }
+      .kpi-cell:nth-child(1), .kpi-cell:nth-child(2) { border-bottom: 1px solid #e7e5e4; }
+      .cover-title { font-size: 24px; }
+      .meet-item-head { gap: 8px; }
+      .meet-type { margin-left: 0; }
+      .data-table { font-size: 11px; }
+    }
+    `
+
+    const docTitle = `TODOC 영업 활동 보고서 ${from || ''} ~ ${to || ''}`.trim()
+    const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escHtml(docTitle)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@600;700&display=swap" rel="stylesheet">
+<style>${css}</style>
+</head>
+<body>
+<div class="toolbar">
+  <span class="lbl">${escHtml(docTitle)}</span>
+  <div style="flex:1"></div>
+  <button onclick="window.print()">인쇄 / PDF 저장</button>
+  <button class="secondary" onclick="window.close()">닫기</button>
+</div>
+<div class="doc">
+${body}
+</div>
+</body>
+</html>`
+
+    c.header('Content-Type', 'text/html; charset=utf-8')
+    if (download) {
+      const fn = `todoc_sales_report_${ts()}.html`
+      c.header('Content-Disposition', `attachment; filename="${fn}"`)
+    }
+    return c.body(html)
+  }
+
   // CSV 포맷 요청 시: 미팅 상세 시트만 단일 CSV 로 반환
   if (format === 'csv') {
     const lines: string[] = []

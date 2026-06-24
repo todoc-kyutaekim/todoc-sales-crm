@@ -1155,13 +1155,18 @@ function showSalesReport() {
     '</div>' +
     '<div>' +
       '<label class="block text-[11px] font-semibold text-slate-600 mb-1.5">파일 형식</label>' +
-      '<div class="flex gap-2">' +
-        '<label class="flex items-center gap-1.5 cursor-pointer flex-1 border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">' +
+      '<div class="grid grid-cols-3 gap-2">' +
+        '<label class="flex items-center gap-1.5 cursor-pointer border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">' +
           '<input type="radio" name="sr-format" value="xlsx" checked class="text-brand-500">' +
           '<i class="fas fa-file-excel text-emerald-600"></i>' +
-          '<span class="text-xs"><b>Excel</b> (.xls) — 4시트</span>' +
+          '<span class="text-xs"><b>Excel</b> (.xls)</span>' +
         '</label>' +
-        '<label class="flex items-center gap-1.5 cursor-pointer flex-1 border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">' +
+        '<label class="flex items-center gap-1.5 cursor-pointer border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">' +
+          '<input type="radio" name="sr-format" value="html" class="text-brand-500">' +
+          '<i class="fas fa-file-lines text-slate-700"></i>' +
+          '<span class="text-xs"><b>HTML</b> 보고서</span>' +
+        '</label>' +
+        '<label class="flex items-center gap-1.5 cursor-pointer border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 has-[:checked]:border-brand-500 has-[:checked]:bg-brand-50">' +
           '<input type="radio" name="sr-format" value="csv" class="text-brand-500">' +
           '<i class="fas fa-file-csv text-slate-600"></i>' +
           '<span class="text-xs"><b>CSV</b> (.csv)</span>' +
@@ -1169,12 +1174,11 @@ function showSalesReport() {
       '</div>' +
     '</div>' +
     '<div class="bg-slate-50 rounded-lg p-3 text-[11px] text-slate-500">' +
-      '<div class="font-semibold text-slate-700 mb-1"><i class="fas fa-list-check mr-1"></i>포함 시트 (Excel 선택 시)</div>' +
+      '<div class="font-semibold text-slate-700 mb-1"><i class="fas fa-list-check mr-1"></i>형식별 안내</div>' +
       '<div class="space-y-0.5">' +
-        '<div>① <b>요약</b> — 핵심 지표, 코드 상태별, 유형별, 담당자별, 지역별 집계</div>' +
-        '<div>② <b>미팅 상세</b> — 일자/장소/유형/병원·지역/코드상태/파이프라인/참석의료진/목적·내용·결과/후속액션</div>' +
-        '<div>③ <b>참석자별</b> — 1행 = 1미팅 × 1의사 (직책·부서·전문분야·영향력 포함)</div>' +
-        '<div>④ <b>병원별 요약</b> — 방문 횟수, 만난 의사 수, 코드 상태, 미팅 유형 분포</div>' +
+        '<div><b>Excel</b> — 요약/미팅상세/참석자별/병원별 4시트, 데이터 가공·정렬용</div>' +
+        '<div><b>HTML</b> — 상급자 보고용 단조·전문 양식. 브라우저에서 열람 후 인쇄 또는 PDF 저장 가능</div>' +
+        '<div><b>CSV</b> — 미팅상세 + 병원별요약 단일 파일</div>' +
       '</div>' +
     '</div>' +
     '<div class="flex gap-2 pt-2">' +
@@ -1211,8 +1215,15 @@ function _doSalesReportDownload() {
   if (type) qs.push('type=' + encodeURIComponent(type));
   qs.push('format=' + encodeURIComponent(format));
   var q = _withSid(qs.join('&'));
-  window.open('/api/export/report/sales' + (q ? ('?' + q) : ''), '_blank');
-  toast('보고서 다운로드 시작', 'ok');
+  var url = '/api/export/report/sales' + (q ? ('?' + q) : '');
+  if (format === 'html') {
+    // HTML 은 새 탭으로 열람 (인쇄/PDF 저장 가능)
+    window.open(url, '_blank');
+    toast('HTML 보고서를 새 탭에서 엽니다', 'ok');
+  } else {
+    window.open(url, '_blank');
+    toast('보고서 다운로드 시작', 'ok');
+  }
   closeModal();
 }
 // 제품 관리 전용 내보내기 메뉴 (재고 현황 + 이동 이력)
