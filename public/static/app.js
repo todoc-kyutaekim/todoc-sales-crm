@@ -1670,6 +1670,19 @@ var _pipelinePeriod = 90;
 
 // ===== Auto Report Preview (full page) =====
 var _reportRange = 'week';
+
+// HTML 보고서 새 탭 열기 / 다운로드 — sid 자동 첨부
+function openReportHtml(download) {
+  var qs = 'range=' + encodeURIComponent(_reportRange) + (download ? '&download=1' : '');
+  var url = '/api/export/report/html?' + _withSid(qs);
+  if (download) {
+    // download=1 → 브라우저가 Content-Disposition 으로 다운로드 트리거
+    window.location.href = url;
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
 async function showReportPreview() {
   // 페이지 헤더 업데이트
   var pt = document.getElementById('page-title'); if (pt) pt.textContent = '주/월간 자동 보고서';
@@ -1686,9 +1699,9 @@ async function showReportPreview() {
 
   var actionButtons =
     '<button class="btn btn-outline btn-sm" onclick="printReport()" title="보고서 인쇄/PDF"><i class="fas fa-print text-xs" aria-hidden="true"></i><span class="hidden sm:inline">인쇄</span></button>' +
-    '<button class="btn btn-outline btn-sm" onclick="window.open(\'/api/export/report/html?range=\' + encodeURIComponent(_reportRange),\'_blank\')" title="HTML 보고서 새 탭 열기 (보기 편한 형식)"><i class="fas fa-file-code text-xs" aria-hidden="true"></i><span class="hidden sm:inline">HTML 보기</span></button>' +
-    '<button class="btn btn-outline btn-sm" onclick="window.location.href=\'/api/export/report/html?range=\' + encodeURIComponent(_reportRange) + \'&download=1\'" title="HTML 파일로 다운로드"><i class="fas fa-download text-xs" aria-hidden="true"></i><span class="hidden sm:inline">HTML 저장</span></button>' +
-    '<button class="btn btn-primary btn-sm" onclick="window.open(\'/api/export/report/full\',\'_blank\')"><i class="fas fa-file-excel text-xs" aria-hidden="true"></i><span class="hidden sm:inline">엑셀</span></button>';
+    '<button class="btn btn-outline btn-sm" onclick="openReportHtml(false)" title="HTML 보고서 새 탭 열기 (보기 편한 형식)"><i class="fas fa-file-code text-xs" aria-hidden="true"></i><span class="hidden sm:inline">HTML 보기</span></button>' +
+    '<button class="btn btn-outline btn-sm" onclick="openReportHtml(true)" title="HTML 파일로 다운로드"><i class="fas fa-download text-xs" aria-hidden="true"></i><span class="hidden sm:inline">HTML 저장</span></button>' +
+    '<button class="btn btn-primary btn-sm" onclick="downloadFullReport()"><i class="fas fa-file-excel text-xs" aria-hidden="true"></i><span class="hidden sm:inline">엑셀</span></button>';
 
   var page =
     '<div class="p-4 lg:p-6 space-y-4 max-w-[1400px] mx-auto">' +
