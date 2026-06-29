@@ -6871,6 +6871,15 @@ var _schViewMode = 'time'; // 'time' or 'score'
 var _schDayLabel = '';
 var _schSelectedRegions = new Set();
 
+// ===== 다일 방문 계획 (Option A) =====
+// _schDayData[date] = { suggestions, timeOrdered, stats, dayLabel }
+// _schDayState[date] = { selected: Set, visitTimes: {}, selectedDoctors: {} }
+// _schActiveDay = 현재 활성 탭 날짜 (YYYY-MM-DD)
+var _schDayData = {};
+var _schDayState = {};
+var _schActiveDay = '';
+var _schDayList = []; // 정렬된 날짜 배열
+
 // ===== Calendar (week / day / month) =====
 var _calView = (localStorage.getItem('todoc_cal_view') || 'week'); // 'day' | 'week' | 'month'
 var _calAnchor = new Date(); // anchor date in current view
@@ -7329,6 +7338,8 @@ async function loadSchedule() {
   var tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   var defaultDate = tomorrow.toISOString().split('T')[0];
+  var defaultFrom = defaultDate;
+  var defaultTo = defaultDate;
 
   c.innerHTML = '<div class="p-4 lg:p-6 max-w-5xl mx-auto">' +
     '<div class="card p-5 lg:p-6 mb-5">' +
@@ -7338,7 +7349,7 @@ async function loadSchedule() {
         '</div>' +
         '<div>' +
           '<h3 class="font-bold text-slate-800 text-[15px]">영업 방문 플래너</h3>' +
-          '<p class="text-xs text-slate-400">교수 외래 일정에 맞춰 진료 끝나는 시간에 방문할 루트를 추천합니다</p>' +
+          '<p class="text-xs text-slate-400">교수 외래 일정에 맞춰 진료 끝나는 시간에 방문할 루트를 추천합니다 · <span class="text-blue-500 font-medium">최대 14일 범위</span></p>' +
         '</div>' +
       '</div>' +
       '<div class="flex flex-col sm:flex-row gap-3 mb-4">' +
@@ -7351,8 +7362,18 @@ async function loadSchedule() {
           '</div>' +
         '</div>' +
         '<div class="flex-1">' +
-          '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">방문 날짜</label>' +
-          '<input type="date" id="sch-date" class="input w-full" value="' + defaultDate + '" onchange="updateSchDayPreview()">' +
+          '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">방문 기간 <span class="text-[10px] text-slate-400 font-normal">(시작일 ~ 종료일)</span></label>' +
+          '<div class="flex items-center gap-1.5">' +
+            '<input type="date" id="sch-date-from" class="input w-full !min-w-0" value="' + defaultFrom + '" onchange="onSchDateFromChange()">' +
+            '<span class="text-slate-400 text-xs flex-shrink-0">~</span>' +
+            '<input type="date" id="sch-date-to" class="input w-full !min-w-0" value="' + defaultTo + '" onchange="updateSchDayPreview()">' +
+          '</div>' +
+          '<div class="flex flex-wrap gap-1 mt-1.5">' +
+            '<button type="button" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600" onclick="schSetDatePreset(\'tomorrow\')">내일</button>' +
+            '<button type="button" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600" onclick="schSetDatePreset(\'this_week\')">이번 주 (월~금)</button>' +
+            '<button type="button" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600" onclick="schSetDatePreset(\'next_week\')">다음 주 (월~금)</button>' +
+            '<button type="button" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600" onclick="schSetDatePreset(\'7d\')">앞으로 7일</button>' +
+          '</div>' +
         '</div>' +
         '<div class="flex items-end">' +
           '<button onclick="fetchScheduleSuggestions()" class="btn btn-primary whitespace-nowrap h-[42px]">' +
@@ -7363,6 +7384,7 @@ async function loadSchedule() {
       '<div id="sch-day-preview" class="text-xs text-slate-400 mb-2"></div>' +
       '<div id="sch-region-stats" class="hidden"></div>' +
     '</div>' +
+    '<div id="sch-day-tabs" class="hidden mb-3"></div>' +
     '<div id="sch-results"></div>' +
   '</div>';
 
@@ -7429,13 +7451,102 @@ function updateSchRegionChips() {
   onSchRegionChange();
 }
 
+// 시작일 ~ 종료일 사이의 모든 날짜를 YYYY-MM-DD 배열로 반환
+function _schDateRange(fromStr, toStr) {
+  var out = [];
+  if (!fromStr || !toStr) return out;
+  if (fromStr > toStr) return out;
+  var cur = new Date(fromStr + 'T00:00:00');
+  var end = new Date(toStr + 'T00:00:00');
+  var safety = 0;
+  while (cur.getTime() <= end.getTime() && safety < 60) {
+    var y = cur.getFullYear();
+    var m = String(cur.getMonth()+1).padStart(2,'0');
+    var d = String(cur.getDate()).padStart(2,'0');
+    out.push(y + '-' + m + '-' + d);
+    cur.setDate(cur.getDate() + 1);
+    safety++;
+  }
+  return out;
+}
+
+// 시작일 변경 시 종료일이 시작일보다 이르면 자동으로 시작일에 맞춤
+function onSchDateFromChange() {
+  var f = document.getElementById('sch-date-from');
+  var t = document.getElementById('sch-date-to');
+  if (f && t && f.value && (!t.value || t.value < f.value)) {
+    t.value = f.value;
+  }
+  updateSchDayPreview();
+}
+
+// 프리셋 (오늘/내일/이번 주/다음 주/7일)
+function schSetDatePreset(preset) {
+  var today = new Date();
+  today.setHours(0,0,0,0);
+  function fmt(d) {
+    var y = d.getFullYear();
+    var m = String(d.getMonth()+1).padStart(2,'0');
+    var dd = String(d.getDate()).padStart(2,'0');
+    return y + '-' + m + '-' + dd;
+  }
+  var from = new Date(today);
+  var to = new Date(today);
+  if (preset === 'today') {
+    // from = to = 오늘
+  } else if (preset === 'tomorrow') {
+    from.setDate(today.getDate() + 1);
+    to.setDate(today.getDate() + 1);
+  } else if (preset === 'this_week') {
+    // 이번 주 월~금
+    var dow = today.getDay(); // 0=일
+    var monOffset = dow === 0 ? -6 : (1 - dow); // 일요일이면 6일 전 월요일
+    from = new Date(today); from.setDate(today.getDate() + monOffset);
+    to = new Date(from); to.setDate(from.getDate() + 4); // 월+4=금
+  } else if (preset === 'next_week') {
+    var dow2 = today.getDay();
+    var monOffset2 = dow2 === 0 ? 1 : (8 - dow2); // 다음 주 월요일
+    from = new Date(today); from.setDate(today.getDate() + monOffset2);
+    to = new Date(from); to.setDate(from.getDate() + 4);
+  } else if (preset === '7d') {
+    to.setDate(today.getDate() + 6); // 오늘 포함 7일
+  }
+  var fEl = document.getElementById('sch-date-from');
+  var tEl = document.getElementById('sch-date-to');
+  if (fEl) fEl.value = fmt(from);
+  if (tEl) tEl.value = fmt(to);
+  updateSchDayPreview();
+}
+
 function updateSchDayPreview() {
-  var dateInput = document.getElementById('sch-date');
+  var fEl = document.getElementById('sch-date-from');
+  var tEl = document.getElementById('sch-date-to');
   var preview = document.getElementById('sch-day-preview');
-  if (!dateInput || !preview) return;
-  var d = new Date(dateInput.value + 'T00:00:00');
+  if (!fEl || !tEl || !preview) return;
+  var from = fEl.value;
+  var to = tEl.value;
+  if (!from || !to) { preview.textContent = ''; return; }
+  if (from > to) {
+    preview.innerHTML = '<i class="fas fa-circle-exclamation text-red-400 mr-1"></i>시작일이 종료일보다 늦습니다';
+    return;
+  }
+  var dates = _schDateRange(from, to);
+  if (dates.length > 14) {
+    preview.innerHTML = '<i class="fas fa-circle-exclamation text-amber-500 mr-1"></i>최대 14일까지 조회할 수 있습니다 (선택: ' + dates.length + '일)';
+    return;
+  }
   var dayNames = ['일','월','화','수','목','금','토'];
-  preview.innerHTML = '<i class="fas fa-calendar-day mr-1"></i>' + d.getFullYear() + '년 ' + (d.getMonth()+1) + '월 ' + d.getDate() + '일 <strong>' + dayNames[d.getDay()] + '요일</strong> — 해당 요일 외래 일정에 맞춰 추천합니다';
+  if (dates.length === 1) {
+    var d = new Date(from + 'T00:00:00');
+    preview.innerHTML = '<i class="fas fa-calendar-day mr-1"></i>' + d.getFullYear() + '년 ' + (d.getMonth()+1) + '월 ' + d.getDate() + '일 <strong>' + dayNames[d.getDay()] + '요일</strong> — 해당 요일 외래 일정에 맞춰 추천합니다';
+  } else {
+    var fd = new Date(from + 'T00:00:00');
+    var td = new Date(to + 'T00:00:00');
+    var dowLabel = dates.map(function(ds){ var dt = new Date(ds + 'T00:00:00'); return dayNames[dt.getDay()]; }).join(' · ');
+    preview.innerHTML = '<i class="fas fa-calendar-week mr-1"></i>' +
+      (fd.getMonth()+1) + '/' + fd.getDate() + ' ~ ' + (td.getMonth()+1) + '/' + td.getDate() +
+      ' <strong>총 ' + dates.length + '일</strong> <span class="text-slate-400">(' + dowLabel + ')</span> — 날짜별 외래 일정에 맞춰 추천합니다';
+  }
 }
 
 function onSchRegionChange() {
@@ -7464,41 +7575,208 @@ function schStatCard(label, value, icon, color) {
   '</div>';
 }
 
+// 현재 선택된 날짜 범위를 [from, to] 배열로 반환 (UI input 우선, 없으면 _schDayList)
+function _schGetDateRange() {
+  var fEl = document.getElementById('sch-date-from');
+  var tEl = document.getElementById('sch-date-to');
+  if (fEl && tEl && fEl.value && tEl.value) {
+    return [fEl.value, tEl.value];
+  }
+  if (_schDayList.length > 0) {
+    return [_schDayList[0], _schDayList[_schDayList.length - 1]];
+  }
+  return ['', ''];
+}
+
+// 현재 활성 날짜 반환 (탭 전환 시 사용)
+function _schGetActiveDate() {
+  return _schActiveDay || _schDayList[0] || '';
+}
+
 async function fetchScheduleSuggestions() {
   var regions = Array.from(_schSelectedRegions);
-  var date = document.getElementById('sch-date').value;
+  var fEl = document.getElementById('sch-date-from');
+  var tEl = document.getElementById('sch-date-to');
+  var from = fEl ? fEl.value : '';
+  var to = tEl ? tEl.value : '';
   if (regions.length === 0) { toast('지역을 선택해주세요', 'warn'); return; }
-  if (!date) { toast('날짜를 선택해주세요', 'warn'); return; }
+  if (!from || !to) { toast('방문 기간을 선택해주세요', 'warn'); return; }
+  if (from > to) { toast('시작일이 종료일보다 늦습니다', 'warn'); return; }
+  
+  var dates = _schDateRange(from, to);
+  if (dates.length === 0) { toast('유효한 날짜를 선택해주세요', 'warn'); return; }
+  if (dates.length > 14) { toast('최대 14일까지 조회할 수 있습니다', 'warn'); return; }
   
   // 드롭다운 닫기
   var dd = document.getElementById('sch-region-dropdown');
   if (dd) dd.classList.add('hidden');
   
   var resultsDiv = document.getElementById('sch-results');
-  resultsDiv.innerHTML = '<div class="flex items-center justify-center py-12"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div><span class="ml-3 text-sm text-slate-400">외래 일정 분석 중...</span></div>';
+  var tabsDiv = document.getElementById('sch-day-tabs');
+  if (tabsDiv) tabsDiv.classList.add('hidden');
+  
+  var loadingMsg = dates.length === 1
+    ? '외래 일정 분석 중...'
+    : dates.length + '일치 외래 일정 분석 중...';
+  resultsDiv.innerHTML = '<div class="flex items-center justify-center py-12"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div><span class="ml-3 text-sm text-slate-400">' + loadingMsg + '</span></div>';
   
   try {
     var regionParam = regions.map(function(r) { return encodeURIComponent(r); }).join(',');
-    var res = await API.get('/schedule/suggest?region=' + regionParam + '&date=' + date + '&max=20');
-    _scheduleSuggestions = res.data.data || [];
-    _scheduleTimeOrdered = res.data.time_ordered || [];
-    _scheduleSelected = new Set();
-    _scheduleVisitTimes = {};
-    _scheduleSelectedDoctors = {};
-    _schDayLabel = res.data.dayLabel || '';
-    var stats = res.data.stats || {};
     
-    if (_scheduleSuggestions.length === 0) {
-      resultsDiv.innerHTML = '<div class="card p-8 text-center"><i class="fas fa-map-marker-alt text-3xl text-slate-200 mb-3"></i><p class="text-sm text-slate-400">해당 지역에 등록된 기관이 없습니다</p></div>';
+    // 날짜별 병렬 호출
+    var promises = dates.map(function(d) {
+      return API.get('/schedule/suggest?region=' + regionParam + '&date=' + d + '&max=20')
+        .then(function(res) { return { date: d, data: res.data, error: null }; })
+        .catch(function(err) { return { date: d, data: null, error: err }; });
+    });
+    var results = await Promise.all(promises);
+    
+    // _schDayData / _schDayState 초기화
+    _schDayData = {};
+    _schDayState = {};
+    _schDayList = dates.slice();
+    
+    var anyError = false;
+    var totalCount = 0;
+    results.forEach(function(r) {
+      if (r.error || !r.data) {
+        anyError = true;
+        _schDayData[r.date] = { suggestions: [], timeOrdered: [], stats: {}, dayLabel: '', error: true };
+      } else {
+        var sug = r.data.data || [];
+        _schDayData[r.date] = {
+          suggestions: sug,
+          timeOrdered: r.data.time_ordered || [],
+          stats: r.data.stats || {},
+          dayLabel: r.data.dayLabel || '',
+          error: false
+        };
+        totalCount += sug.length;
+      }
+      _schDayState[r.date] = {
+        selected: new Set(),
+        visitTimes: {},
+        selectedDoctors: {}
+      };
+    });
+    
+    if (totalCount === 0) {
+      resultsDiv.innerHTML = '<div class="card p-8 text-center"><i class="fas fa-map-marker-alt text-3xl text-slate-200 mb-3"></i><p class="text-sm text-slate-400">해당 지역/기간에 추천할 기관이 없습니다</p></div>';
       return;
     }
     
-    renderScheduleResults(regions.join(', '), date, stats);
+    // 첫 번째 날짜를 활성화
+    _schActiveDay = dates[0];
+    renderSchDayTabs();
+    _schApplyActiveDayToGlobals();
+    var active = _schDayData[_schActiveDay];
+    renderScheduleResults(regions.join(', '), _schActiveDay, active.stats);
+    
+    if (anyError) {
+      toast('일부 날짜를 불러오지 못했습니다', 'warn');
+    }
     
   } catch(e) {
     console.error('Schedule suggestion error', e);
     resultsDiv.innerHTML = '<div class="card p-8 text-center"><i class="fas fa-exclamation-triangle text-3xl text-red-200 mb-3"></i><p class="text-sm text-red-400">추천 생성 중 오류가 발생했습니다</p></div>';
   }
+}
+
+// 활성 날짜의 데이터/상태를 전역 변수에 swap (기존 함수들이 그대로 동작하도록)
+function _schApplyActiveDayToGlobals() {
+  var d = _schActiveDay;
+  if (!d || !_schDayData[d]) return;
+  var data = _schDayData[d];
+  var state = _schDayState[d];
+  _scheduleSuggestions = data.suggestions || [];
+  _scheduleTimeOrdered = data.timeOrdered || [];
+  _schDayLabel = data.dayLabel || '';
+  _scheduleSelected = state.selected;
+  _scheduleVisitTimes = state.visitTimes;
+  _scheduleSelectedDoctors = state.selectedDoctors;
+}
+
+// 활성 날짜 변경 (탭 클릭)
+function setSchActiveDay(date) {
+  if (!date || !_schDayData[date]) return;
+  // 현재 활성 day의 selected/visitTimes/selectedDoctors는 이미 _schDayState[_schActiveDay]를 참조하고 있음 (Set/Object 참조 공유)
+  _schActiveDay = date;
+  _schApplyActiveDayToGlobals();
+  renderSchDayTabs();
+  var regions = Array.from(_schSelectedRegions).join(', ');
+  var data = _schDayData[date];
+  renderScheduleResults(regions, date, data.stats || {});
+  updateScheduleSelection();
+}
+
+// 일자 탭 UI 렌더 (선택 개수 배지 포함)
+function renderSchDayTabs() {
+  var tabsDiv = document.getElementById('sch-day-tabs');
+  if (!tabsDiv) return;
+  if (!_schDayList || _schDayList.length === 0) {
+    tabsDiv.classList.add('hidden');
+    return;
+  }
+  // 1일만 선택된 경우 탭 숨김 (단일 날짜 모드)
+  if (_schDayList.length === 1) {
+    tabsDiv.classList.add('hidden');
+    return;
+  }
+  
+  var dayNames = ['일','월','화','수','목','금','토'];
+  var totalSelected = 0;
+  _schDayList.forEach(function(d) {
+    var st = _schDayState[d];
+    if (st && st.selected) totalSelected += st.selected.size;
+  });
+  
+  var html = '<div class="card p-3">' +
+    '<div class="flex items-center justify-between mb-2 px-1">' +
+      '<div class="text-[11px] font-semibold text-slate-500 flex items-center gap-1.5">' +
+        '<i class="fas fa-calendar-days text-blue-500"></i>방문 일자 선택' +
+        '<span class="text-slate-300 font-normal">· 총 ' + _schDayList.length + '일</span>' +
+      '</div>' +
+      (totalSelected > 0
+        ? '<div class="text-[11px] font-semibold text-blue-600"><i class="fas fa-check-circle mr-0.5"></i>전체 선택 ' + totalSelected + '곳</div>'
+        : '') +
+    '</div>' +
+    '<div class="flex gap-1.5 overflow-x-auto pb-1">';
+  
+  _schDayList.forEach(function(d) {
+    var dt = new Date(d + 'T00:00:00');
+    var state = _schDayState[d] || { selected: new Set() };
+    var data = _schDayData[d] || {};
+    var selCount = state.selected ? state.selected.size : 0;
+    var sugCount = (data.suggestions || []).length;
+    var isActive = (d === _schActiveDay);
+    var hasError = data.error;
+    
+    var dowLabel = dayNames[dt.getDay()];
+    var dateLabel = (dt.getMonth()+1) + '/' + dt.getDate();
+    var bgCls = isActive
+      ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+      : (hasError ? 'bg-red-50 text-red-400 border-red-100 hover:bg-red-100' : 'bg-white text-slate-600 border-gray-200 hover:bg-slate-50');
+    
+    html += '<button type="button" onclick="setSchActiveDay(\'' + d + '\')" ' +
+      'class="flex-shrink-0 min-w-[78px] px-3 py-2 rounded-lg border transition text-left ' + bgCls + '">' +
+      '<div class="flex items-center justify-between gap-1">' +
+        '<span class="text-[13px] font-bold">' + dateLabel + '</span>' +
+        '<span class="text-[10px] ' + (isActive ? 'text-blue-100' : 'text-slate-400') + ' font-medium">' + dowLabel + '</span>' +
+      '</div>' +
+      '<div class="flex items-center justify-between mt-0.5 gap-1">' +
+        '<span class="text-[10px] ' + (isActive ? 'text-blue-100' : 'text-slate-400') + '">' +
+          (hasError ? '오류' : sugCount + '곳') +
+        '</span>' +
+        (selCount > 0
+          ? '<span class="text-[9px] font-bold px-1.5 py-0.5 rounded-full ' + (isActive ? 'bg-white text-blue-700' : 'bg-blue-100 text-blue-700') + '">' + selCount + '</span>'
+          : '') +
+      '</div>' +
+      '</button>';
+  });
+  
+  html += '</div></div>';
+  tabsDiv.innerHTML = html;
+  tabsDiv.classList.remove('hidden');
 }
 
 function renderScheduleResults(region, date, stats) {
@@ -7774,9 +8052,8 @@ function renderScoreView(list) {
 function setSchView(mode) {
   _schViewMode = mode;
   var regions = Array.from(_schSelectedRegions).join(', ');
-  var date = document.getElementById('sch-date').value;
-  // 기존 stats에서 가져오기 어려우므로 단순 re-render
-  var stats = {
+  var date = _schGetActiveDate();
+  var stats = (_schDayData[date] && _schDayData[date].stats) || {
     total_in_region: _scheduleSuggestions.length,
     suggested: _scheduleSuggestions.length,
     has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
@@ -7807,8 +8084,8 @@ function toggleScheduleDoctor(hospId, docId) {
   if (set.size > 0 && !_scheduleSelected.has(hospId)) _scheduleSelected.add(hospId);
   // 재렌더링
   var regions = Array.from(_schSelectedRegions).join(', ');
-  var date = document.getElementById('sch-date').value;
-  var stats = {
+  var date = _schGetActiveDate();
+  var stats = (_schDayData[date] && _schDayData[date].stats) || {
     total_in_region: _scheduleSuggestions.length,
     suggested: _scheduleSuggestions.length,
     has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
@@ -7828,8 +8105,8 @@ function toggleAllScheduleDoctors(hospId) {
   else s.doctors.forEach(function(d) { set.add(d.id); });
   if (set.size > 0 && !_scheduleSelected.has(hospId)) _scheduleSelected.add(hospId);
   var regions = Array.from(_schSelectedRegions).join(', ');
-  var date = document.getElementById('sch-date').value;
-  var stats = {
+  var date = _schGetActiveDate();
+  var stats = (_schDayData[date] && _schDayData[date].stats) || {
     total_in_region: _scheduleSuggestions.length,
     suggested: _scheduleSuggestions.length,
     has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
@@ -7845,8 +8122,8 @@ function setScheduleVisitTime(hospId, val) {
   if (!_scheduleSelected.has(hospId)) _scheduleSelected.add(hospId);
   // 화면 재렌더링
   var regions = Array.from(_schSelectedRegions).join(', ');
-  var date = document.getElementById('sch-date').value;
-  var stats = {
+  var date = _schGetActiveDate();
+  var stats = (_schDayData[date] && _schDayData[date].stats) || {
     total_in_region: _scheduleSuggestions.length,
     suggested: _scheduleSuggestions.length,
     has_clinic_data: _scheduleSuggestions.some(function(s) { return s.has_clinic_today; }),
@@ -7868,14 +8145,36 @@ function updateScheduleSelection() {
   var routeBtn = document.getElementById('sch-route-btn');
   var countSpan = document.getElementById('sch-sel-count');
   if (!btn) return;
-  if (_scheduleSelected.size > 0) {
+  
+  // 전체 day 선택 합계
+  var totalAcrossDays = 0;
+  if (_schDayList && _schDayList.length > 0) {
+    _schDayList.forEach(function(d) {
+      var st = _schDayState[d];
+      if (st && st.selected) totalAcrossDays += st.selected.size;
+    });
+  } else {
+    totalAcrossDays = _scheduleSelected.size;
+  }
+  
+  if (totalAcrossDays > 0) {
     btn.classList.remove('hidden');
-    countSpan.textContent = _scheduleSelected.size;
+    // 다일 모드면 "활성일/전체" 표시, 단일이면 그냥 숫자
+    if (_schDayList.length > 1) {
+      countSpan.textContent = _scheduleSelected.size + '/' + totalAcrossDays;
+    } else {
+      countSpan.textContent = _scheduleSelected.size;
+    }
     if (routeBtn && _scheduleSelected.size >= 2) routeBtn.classList.remove('hidden');
     else if (routeBtn) routeBtn.classList.add('hidden');
   } else {
     btn.classList.add('hidden');
     if (routeBtn) routeBtn.classList.add('hidden');
+  }
+  
+  // day 탭 배지 갱신 (다일 모드)
+  if (_schDayList && _schDayList.length > 1) {
+    renderSchDayTabs();
   }
 
   // 모바일 sticky bottom action bar 업데이트
@@ -8064,7 +8363,7 @@ function applyOptimizedRoute(ordered) {
   _scheduleTimeOrdered = _scheduleTimeOrdered.slice().sort(sortFn);
   _scheduleSuggestions = _scheduleSuggestions.slice().sort(sortFn);
 
-  var date = document.getElementById('sch-date').value;
+  var date = _schGetActiveDate();
   var regions = (document.getElementById('sch-region') || {}).value || '';
   var stats = window._lastScheduleStats || { has_clinic_data: true, clinic_today_count: 0, excluded_off_hospitals: 0 };
   renderScheduleResults(regions, date, stats);
@@ -8072,45 +8371,73 @@ function applyOptimizedRoute(ordered) {
 }
 
 async function createSchedulePlan() {
-  if (_scheduleSelected.size === 0) { toast('방문할 기관을 선택해주세요', 'warn'); return; }
-  var date = document.getElementById('sch-date').value;
-  if (!date) { toast('날짜를 선택해주세요', 'warn'); return; }
+  // 활성 day의 선택 상태를 _schDayState에 동기화 (참조 공유라 자동이지만 명시적으로)
+  // _scheduleSelected / _scheduleVisitTimes / _scheduleSelectedDoctors는 이미 _schDayState[_schActiveDay]의 같은 참조
   
-  var visits = [];
-  var skippedNoDoc = [];
-  _scheduleSuggestions.forEach(function(s) {
-    if (_scheduleSelected.has(s.hospital_id)) {
-      // 방문 시간대 결정 (사용자 선택 우선, 없으면 추천 슬롯 기반)
-      var vt = _scheduleVisitTimes[s.hospital_id];
-      if (vt === undefined) {
-        if (s.visit_slot === 'am_end') vt = 'am';
-        else if (s.visit_slot === 'pm_end') vt = 'pm';
-        else vt = '';
+  // 다일 모드: 모든 day의 선택을 모아 날짜별 visits 배열 구성
+  var perDay = []; // [{ date, visits, skippedNoDoc }]
+  var totalSelected = 0;
+  var totalVisits = 0;
+  var allSkipped = [];
+  
+  var daysToProcess = _schDayList.length > 0 ? _schDayList : [_schGetActiveDate()];
+  
+  daysToProcess.forEach(function(d) {
+    var data = _schDayData[d];
+    var state = _schDayState[d];
+    if (!data || !state) return;
+    var selSet = state.selected;
+    var visitTimes = state.visitTimes || {};
+    var selDocs = state.selectedDoctors || {};
+    if (!selSet || selSet.size === 0) return;
+    totalSelected += selSet.size;
+    
+    var dayVisits = [];
+    var skipped = [];
+    (data.suggestions || []).forEach(function(s) {
+      if (selSet.has(s.hospital_id)) {
+        // 방문 시간대 결정
+        var vt = visitTimes[s.hospital_id];
+        if (vt === undefined) {
+          if (s.visit_slot === 'am_end') vt = 'am';
+          else if (s.visit_slot === 'pm_end') vt = 'pm';
+          else vt = '';
+        }
+        var docSet = selDocs[s.hospital_id];
+        var docIds = (docSet && docSet.size > 0)
+          ? Array.from(docSet)
+          : (s.doctors || []).map(function(dd) { return dd.id; });
+        if (docIds.length === 0) { skipped.push(s.name); return; }
+        dayVisits.push({
+          hospital_id: s.hospital_id,
+          doctor_ids: docIds,
+          purpose: '영업 방문 (일정 플래너)',
+          meeting_type: 'visit',
+          visit_time: vt
+        });
       }
-      // 선택된 의료진만 미팅에 포함
-      var selDocSet = _scheduleSelectedDoctors[s.hospital_id];
-      var selDocIds = (selDocSet && selDocSet.size > 0)
-        ? Array.from(selDocSet)
-        : s.doctors.map(function(d) { return d.id; });
-      if (selDocIds.length === 0) { skippedNoDoc.push(s.name); return; }
-      visits.push({
-        hospital_id: s.hospital_id,
-        doctor_ids: selDocIds,
-        purpose: '영업 방문 (일정 플래너)',
-        meeting_type: 'visit',
-        visit_time: vt
-      });
+    });
+    
+    if (dayVisits.length > 0) {
+      perDay.push({ date: d, visits: dayVisits, skippedNoDoc: skipped });
+      totalVisits += dayVisits.length;
+    } else if (skipped.length > 0) {
+      allSkipped = allSkipped.concat(skipped);
     }
   });
-  if (visits.length === 0) {
-    toast(skippedNoDoc.length > 0 ? '선택된 기관의 의료진을 선택해주세요' : '방문할 기관을 선택해주세요', 'warn');
+  
+  if (totalSelected === 0) {
+    toast('방문할 기관을 선택해주세요', 'warn');
+    return;
+  }
+  if (totalVisits === 0) {
+    toast(allSkipped.length > 0 ? '선택된 기관의 의료진을 선택해주세요' : '방문할 기관을 선택해주세요', 'warn');
     return;
   }
   
-  // 영업사원 목록 가져오기 (복수 선택 체크박스)
+  // 영업사원 목록 가져오기
   var usersHtml = '<div class="text-left mt-2"><label class="text-xs font-semibold text-slate-500 mb-1 block"><i class="fas fa-user-tie mr-1"></i>방문 영업사원 <span class="text-[10px] text-slate-400 font-normal">(복수 선택 가능)</span></label>' +
     '<div id="confirm-users-list" class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1"><div class="text-xs text-slate-400 text-center py-2">로딩 중...</div></div></div>';
-
   try {
     var usersRes = await API.get('/users');
     var usersList = usersRes.data.data || [];
@@ -8122,30 +8449,73 @@ async function createSchedulePlan() {
       '<div class="border border-gray-200 rounded-xl max-h-[140px] overflow-y-auto p-2 space-y-1">' + userCbs + '</div></div>';
   } catch(e) {}
   
-  // 방문 시간대 요약
-  var amCount = visits.filter(function(v) { return v.visit_time === 'am'; }).length;
-  var pmCount = visits.filter(function(v) { return v.visit_time === 'pm'; }).length;
-  var fullCount = visits.filter(function(v) { return v.visit_time === 'full'; }).length;
-  var noneCount = visits.filter(function(v) { return !v.visit_time; }).length;
-  var slotSummary = '<div class="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">' +
-    (amCount   ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#fff7ed;color:#c2410c;border:1px solid #fed7aa"><i class="fas fa-sun mr-0.5"></i>오전 ' + amCount + '</span>' : '') +
-    (pmCount   ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe"><i class="fas fa-cloud-sun mr-0.5"></i>오후 ' + pmCount + '</span>' : '') +
-    (fullCount ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#f3e8ff;color:#7e22ce;border:1px solid #e9d5ff"><i class="fas fa-clock mr-0.5"></i>종일 ' + fullCount + '</span>' : '') +
-    (noneCount ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">미지정 ' + noneCount + '</span>' : '') +
-  '</div>';
+  // 날짜별 요약
+  var dayNames = ['일','월','화','수','목','금','토'];
+  var perDaySummary = '';
+  if (perDay.length === 1) {
+    var only = perDay[0];
+    var amC = only.visits.filter(function(v) { return v.visit_time === 'am'; }).length;
+    var pmC = only.visits.filter(function(v) { return v.visit_time === 'pm'; }).length;
+    var fullC = only.visits.filter(function(v) { return v.visit_time === 'full'; }).length;
+    var noneC = only.visits.filter(function(v) { return !v.visit_time; }).length;
+    perDaySummary = '<div class="flex flex-wrap items-center gap-1.5 mt-2 text-[11px]">' +
+      (amC   ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#fff7ed;color:#c2410c;border:1px solid #fed7aa"><i class="fas fa-sun mr-0.5"></i>오전 ' + amC + '</span>' : '') +
+      (pmC   ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe"><i class="fas fa-cloud-sun mr-0.5"></i>오후 ' + pmC + '</span>' : '') +
+      (fullC ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#f3e8ff;color:#7e22ce;border:1px solid #e9d5ff"><i class="fas fa-clock mr-0.5"></i>종일 ' + fullC + '</span>' : '') +
+      (noneC ? '<span class="px-2 py-0.5 rounded-md font-bold" style="background:#f1f5f9;color:#475569;border:1px solid #cbd5e1">미지정 ' + noneC + '</span>' : '') +
+    '</div>';
+  } else {
+    perDaySummary = '<div class="mt-2 space-y-1">' +
+      perDay.map(function(pd) {
+        var dt = new Date(pd.date + 'T00:00:00');
+        return '<div class="flex items-center justify-between text-[11px] px-2 py-1 rounded-md bg-slate-50 border border-slate-100">' +
+          '<span class="font-semibold text-slate-700"><i class="fas fa-calendar-day text-blue-500 mr-1"></i>' + (dt.getMonth()+1) + '/' + dt.getDate() + ' (' + dayNames[dt.getDay()] + ')</span>' +
+          '<span class="font-bold text-blue-600">' + pd.visits.length + '건</span>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+  
+  var summaryTitle = perDay.length === 1
+    ? perDay[0].date + '에 <strong>' + totalVisits + '건</strong>의 방문 미팅을 생성합니다.'
+    : '<strong>' + perDay.length + '일</strong>에 걸쳐 <strong>' + totalVisits + '건</strong>의 방문 미팅을 생성합니다.';
 
   showConfirm(
     '미팅 일괄 생성',
-    date + '에 <strong>' + visits.length + '건</strong>의 방문 미팅을 생성합니다.' + slotSummary,
+    summaryTitle + perDaySummary,
     async function() {
       var selUserIds = Array.from(document.querySelectorAll('input[name="confirm_user_ids"]:checked')).map(function(cb) { return Number(cb.value); });
+      var userIdsParam = selUserIds.length > 0 ? selUserIds : null;
       try {
-        var res = await API.post('/schedule/plan', { date: date, visits: visits, user_ids: selUserIds.length > 0 ? selUserIds : null });
-        toast(res.data.data.count + '건의 미팅이 생성되었습니다');
-        _scheduleSelected.clear();
-        _scheduleVisitTimes = {};
+        // 날짜별 병렬 호출
+        var results = await Promise.all(perDay.map(function(pd) {
+          return API.post('/schedule/plan', { date: pd.date, visits: pd.visits, user_ids: userIdsParam })
+            .then(function(res) { return { date: pd.date, ok: true, count: (res.data && res.data.data && res.data.data.count) || 0 }; })
+            .catch(function(err) { return { date: pd.date, ok: false, count: 0, error: err }; });
+        }));
+        
+        var totalCreated = results.reduce(function(s, r) { return s + (r.count || 0); }, 0);
+        var failed = results.filter(function(r) { return !r.ok; });
+        
+        if (failed.length === 0) {
+          if (perDay.length === 1) {
+            toast(totalCreated + '건의 미팅이 생성되었습니다');
+          } else {
+            toast(perDay.length + '일에 걸쳐 총 ' + totalCreated + '건의 미팅이 생성되었습니다');
+          }
+        } else if (totalCreated > 0) {
+          toast(totalCreated + '건 생성 완료 · ' + failed.length + '일 실패', 'warn');
+        } else {
+          toast('미팅 생성 중 오류가 발생했습니다', 'err');
+          return;
+        }
+        
+        // 상태 초기화 후 재조회
         fetchScheduleSuggestions();
-      } catch(e) { toast('미팅 생성 중 오류가 발생했습니다', 'err'); }
+      } catch(e) {
+        console.error('createSchedulePlan error', e);
+        toast('미팅 생성 중 오류가 발생했습니다', 'err');
+      }
     },
     { type: 'create', yesLabel: '미팅 생성', extraHtml: usersHtml }
   );
