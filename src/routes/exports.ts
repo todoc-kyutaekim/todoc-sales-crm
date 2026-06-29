@@ -25,6 +25,13 @@ function escXml(s: any): string {
   return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+// 기관 유형 라벨 변환 (hospital/clinic/other)
+function hospTypeLabel(t: any): string {
+  if (t === 'clinic') return '의원'
+  if (t === 'other') return '기타 기관'
+  return '병원'
+}
+
 function buildSheet(name: string, headers: string[], rows: any[][]): string {
   let xml = `<Worksheet ss:Name="${escXml(name)}"><Table>\n<Row>`
   for (const h of headers) xml += `<Cell ss:StyleID="header"><Data ss:Type="String">${escXml(h)}</Data></Cell>`
@@ -54,7 +61,7 @@ exports.get('/hospitals', async (c) => {
   const sql = 'SELECT h.*, COUNT(DISTINCT d.id) as doctor_count, COUNT(DISTINCT m.id) as meeting_count, MAX(m.meeting_date) as last_meeting FROM hospitals h LEFT JOIN doctors d ON h.id = d.hospital_id LEFT JOIN meeting_doctors md ON d.id = md.doctor_id LEFT JOIN meetings m ON md.meeting_id = m.id AND m.hospital_id = h.id' + whereSql + ' GROUP BY h.id ORDER BY h.name'
   const r = await c.env.DB.prepare(sql).bind(...params).all()
   const header = toCsvRow(['ID', '병원명', '유형', '지역', '주소', '전화번호', '상태', '파이프라인', '우선순위', '토닥접점', '의료진수', '미팅수', '최근미팅', '난청환자', '보청기판매', 'CI의뢰', '메모', '등록일'])
-  const rows = (r.results as any[]).map(h => toCsvRow([h.id, h.name, h.type === 'clinic' ? '의원' : '병원', h.region, h.address, h.phone, h.status === 'active' ? '활성' : '비활성', h.pipeline_stage || 'contact', h.priority || '', h.todoc_contact || '', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0, h.notes, h.created_at]))
+  const rows = (r.results as any[]).map(h => toCsvRow([h.id, h.name, hospTypeLabel(h.type), h.region, h.address, h.phone, h.status === 'active' ? '활성' : '비활성', h.pipeline_stage || 'contact', h.priority || '', h.todoc_contact || '', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0, h.notes, h.created_at]))
   const bom = '\uFEFF'
   c.header('Content-Type', 'text/csv; charset=utf-8')
   c.header('Content-Disposition', `attachment; filename="hospitals_${ts()}.csv"`)
@@ -162,7 +169,7 @@ exports.get('/xlsx/:type', async (c) => {
     sheets.push({
       name: '기관',
       headers: ['ID', '병원명', '유형', '지역', '주소', '전화번호', '상태', '파이프라인', '우선순위', '의료진수', '미팅수', '최근미팅', '난청환자', '보청기판매', 'CI의뢰'],
-      rows: (r.results as any[]).map(h => [h.id, h.name, h.type === 'clinic' ? '의원' : '병원', h.region, h.address, h.phone, h.status === 'active' ? '활성' : '비활성', h.pipeline_stage || 'contact', h.priority || '', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0])
+      rows: (r.results as any[]).map(h => [h.id, h.name, hospTypeLabel(h.type), h.region, h.address, h.phone, h.status === 'active' ? '활성' : '비활성', h.pipeline_stage || 'contact', h.priority || '', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0])
     })
   } else if (type === 'doctors') {
     const hospitalId = c.req.query('hospital_id') || ''
@@ -441,7 +448,7 @@ exports.get('/report/full', async (c) => {
     {
       name: '기관',
       headers: ['ID', '병원명', '유형', '지역', '상태', '파이프라인', '의료진수', '미팅수', '최근미팅', '난청환자', '보청기판매', 'CI의뢰'],
-      rows: hospitals.map(h => [h.id, h.name, h.type === 'clinic' ? '의원' : '병원', h.region, h.status === 'active' ? '활성' : '비활성', h.pipeline_stage || 'contact', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0])
+      rows: hospitals.map(h => [h.id, h.name, hospTypeLabel(h.type), h.region, h.status === 'active' ? '활성' : '비활성', h.pipeline_stage || 'contact', h.doctor_count, h.meeting_count, h.last_meeting || '', h.patient_count || 0, h.hearing_aid_sales || 0, h.ci_referrals || 0])
     },
     {
       name: '의료진',
@@ -678,7 +685,7 @@ exports.get('/report/sales', async (c) => {
       idx + 1,
       h.hospital_name || '',
       h.region || '',
-      h.type === 'clinic' ? '의원' : '병원',
+      hospTypeLabel(h.type),
       stMap[h.status] || (h.status === 'active' ? '코드 등록' : '미등록'),
       pipeMap[h.pipeline_stage] || h.pipeline_stage || 'contact',
       h.meeting_count,

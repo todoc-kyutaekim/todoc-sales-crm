@@ -2279,7 +2279,7 @@ async function loadHosp(typeFilter) {
     document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in">' +
       '<div class="filter-row">' +
       '<div class="relative flex-1 filter-search"><i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input id="h-search" oninput="filterH()" placeholder="기관명 검색" class="input pl-10"></div>' +
-      '<select id="h-type" onchange="filterH()" class="input filter-select"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option></select>' +
+      '<select id="h-type" onchange="filterH()" class="input filter-select"><option value="">전체 유형</option><option value="hospital">병원</option><option value="clinic">의원</option><option value="other">기타 기관</option></select>' +
       '<select id="h-region" onchange="filterH()" class="input filter-select"><option value="">전체 지역</option>' + regions.map(r => '<option>' + r + '</option>').join('') + '</select>' +
 
       '<label class="flex items-center gap-1.5 cursor-pointer select-none flex-shrink-0"><input type="checkbox" id="h-fav-only" onchange="filterH()" class="w-3.5 h-3.5 rounded border-gray-300 text-amber-500"><span class="text-[11px] text-slate-500"><i class="fas fa-star text-amber-400"></i></span></label>' +
@@ -5064,7 +5064,7 @@ async function showHospForm(id) {
   if (id) { try { h = (await API.get('/hospitals/' + id)).data.data } catch (e) { } }
   openModal(id ? '기관 정보 수정' : '새 기관 추가',
     '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
-    field('유형', 'type', 'select', h.type || 'hospital', [{ v: 'hospital', l: '병원' }, { v: 'clinic', l: '의원' }]) +
+    field('유형', 'type', 'select', h.type || 'hospital', [{ v: 'hospital', l: '병원' }, { v: 'clinic', l: '의원' }, { v: 'other', l: '기타 기관' }]) +
     '<div class="relative col-span-full sm:col-span-1"><label class="input-label">이름 *</label><input type="text" name="name" value="' + (h.name || '') + '" class="input" placeholder="기관명을 입력하세요" autocomplete="off"><div id="hosp-suggest" class="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-xl border border-gray-100 z-50 hidden max-h-60 overflow-y-auto"></div></div>' +
     field('지역', 'region', 'select', h.region || '', [
       { v: '', l: '선택하세요' },
