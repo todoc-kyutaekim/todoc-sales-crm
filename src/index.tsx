@@ -17,6 +17,7 @@ import schedule from './routes/schedule'
 import comments from './routes/comments'
 import products from './routes/products'
 import customers from './routes/customers'
+import customerGroups from './routes/customer_groups'
 import csInquiries from './routes/cs_inquiries'
 import csRepairs from './routes/cs_repairs'
 import csKb from './routes/cs_kb'
@@ -78,6 +79,7 @@ app.route('/api/schedule', schedule)
 app.route('/api/comments', comments)
 app.route('/api/products', products)
 app.route('/api/customers', customers)
+app.route('/api/customer-groups', customerGroups)
 app.route('/api/cs/inquiries', csInquiries)
 app.route('/api/cs/repairs', csRepairs)
 app.route('/api/cs/kb', csKb)

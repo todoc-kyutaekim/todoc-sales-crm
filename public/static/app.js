@@ -318,6 +318,23 @@ function toast(msg, type = 'ok') {
 
 // ===== Confirm =====
 function showConfirm(title, msg, cb, opts) {
+  // 옵션 스타일 호출 지원: showConfirm({title,message,onYes,theme,yesText,wide,...})
+  if (title && typeof title === 'object' && !msg && !cb) {
+    var o = title;
+    // theme → type 매핑
+    var themeMap = { danger: 'delete', default: 'default', confirm: 'confirm', warning: 'warning', create: 'create' };
+    return showConfirm(
+      o.title || '',
+      o.message || o.msg || '',
+      o.onYes || o.cb || null,
+      {
+        type: themeMap[o.theme] || o.type || 'default',
+        wide: !!o.wide,
+        yesLabel: o.yesText || o.yesLabel,
+        extraHtml: o.extraHtml
+      }
+    );
+  }
   opts = opts || {};
   var type = opts.type || 'delete';
   var themes = {
@@ -492,8 +509,10 @@ function csFmtDateTime(s) {
 // ===== 고객관리 =====
 // ============================================================
 var _custList = [];
-var _custFilter = { search: '', type: '', status: '', hospital_id: '', region: '' };
+var _custFilter = { search: '', type: '', status: '', hospital_id: '', region: '', group_id: '' };
 var _custHospitals = []; // 셀렉트용
+var _custGroups = [];    // 사이드바용
+var _custSelected = {};  // 다중선택 { customerId: true }
 
 async function loadCustomers() {
   var c = document.getElementById('content');
@@ -504,33 +523,301 @@ async function loadCustomers() {
 
   c.innerHTML = '<div class="p-4 lg:p-6 max-w-7xl mx-auto">' +
     '<div id="cust-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"></div>' +
-    '<div class="card p-4 mb-4">' +
-      '<div class="flex flex-wrap gap-2 items-center">' +
-        '<div class="relative flex-1 min-w-[200px] filter-search">' +
-          '<i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>' +
-          '<input id="cust-search" oninput="filterCust()" placeholder="이름 · 전화 · 이메일 · 시리얼 검색" class="input pl-10">' +
+    // 좌측 사이드바 + 우측 컨텐츠 그리드
+    '<div class="grid gap-4" style="grid-template-columns:220px 1fr">' +
+      '<aside id="cust-sidebar" class="card p-3 h-fit lg:sticky lg:top-4"></aside>' +
+      '<div>' +
+        '<div class="card p-4 mb-4">' +
+          '<div class="flex flex-wrap gap-2 items-center">' +
+            '<div class="relative flex-1 min-w-[200px] filter-search">' +
+              '<i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>' +
+              '<input id="cust-search" oninput="filterCust()" placeholder="이름 · 전화 · 이메일 · 시리얼 검색" class="input pl-10">' +
+            '</div>' +
+            '<select id="cust-type" onchange="filterCust()" class="input filter-select">' +
+              '<option value="">전체 유형</option>' +
+              '<option value="prospect">가망고객</option>' +
+              '<option value="guardian">보호자</option>' +
+              '<option value="patient">수술 환자</option>' +
+            '</select>' +
+            '<select id="cust-status" onchange="filterCust()" class="input filter-select">' +
+              '<option value="">전체 상태</option>' +
+              '<option value="active">활성</option>' +
+              '<option value="inactive">비활성</option>' +
+              '<option value="dormant">휴면</option>' +
+            '</select>' +
+            '<select id="cust-region" onchange="filterCust()" class="input filter-select">' +
+              '<option value="">전체 지역</option>' +
+            '</select>' +
+          '</div>' +
         '</div>' +
-        '<select id="cust-type" onchange="filterCust()" class="input filter-select">' +
-          '<option value="">전체 유형</option>' +
-          '<option value="prospect">가망고객</option>' +
-          '<option value="guardian">보호자</option>' +
-          '<option value="patient">수술 환자</option>' +
-        '</select>' +
-        '<select id="cust-status" onchange="filterCust()" class="input filter-select">' +
-          '<option value="">전체 상태</option>' +
-          '<option value="active">활성</option>' +
-          '<option value="inactive">비활성</option>' +
-          '<option value="dormant">휴면</option>' +
-        '</select>' +
-        '<select id="cust-region" onchange="filterCust()" class="input filter-select">' +
-          '<option value="">전체 지역</option>' +
-        '</select>' +
+        // 벌크 액션 바 (선택시에만 나타남)
+        '<div id="cust-bulk-bar" class="hidden card p-3 mb-4 bg-blue-50 border-blue-200 flex items-center justify-between">' +
+          '<div class="text-[13px] font-semibold text-blue-800">' +
+            '<i class="fas fa-check-square mr-1"></i><span id="cust-bulk-count">0</span>명 선택됨' +
+          '</div>' +
+          '<div class="flex gap-2">' +
+            '<button onclick="_custBulkAddToGroup()" class="btn btn-primary btn-xs"><i class="fas fa-layer-group mr-1"></i>그룹에 추가</button>' +
+            '<button onclick="_custBulkClear()" class="btn btn-ghost btn-xs">선택 해제</button>' +
+          '</div>' +
+        '</div>' +
+        '<div id="cust-list"></div>' +
       '</div>' +
     '</div>' +
-    '<div id="cust-list"></div>' +
   '</div>';
 
-  await Promise.all([_custLoadHospitals(), _custLoadRegions(), fetchCustomers()]);
+  // 모바일에선 그리드 자동 붕괴 (원컬럼) 처리
+  var mq = window.matchMedia('(max-width: 900px)');
+  var applyMq = function() {
+    var grid = document.querySelector('#content .grid[style*="grid-template-columns:220px"]');
+    if (grid) grid.style.gridTemplateColumns = mq.matches ? '1fr' : '220px 1fr';
+  };
+  applyMq();
+  try { mq.addEventListener('change', applyMq); } catch(_) { mq.addListener(applyMq); }
+
+  await Promise.all([_custLoadHospitals(), _custLoadRegions(), _custLoadGroups(), fetchCustomers()]);
+}
+
+// ─────────────────────────────────────────────────────────────
+// 그룹: 로드 · 사이드바 렌더 · CRUD
+// ─────────────────────────────────────────────────────────────
+async function _custLoadGroups() {
+  try {
+    var r = await API.get('/customer-groups');
+    _custGroups = r.data.data || [];
+  } catch(e) { _custGroups = []; }
+  _custRenderSidebar();
+}
+
+function _custRenderSidebar() {
+  var side = document.getElementById('cust-sidebar');
+  if (!side) return;
+
+  var totalMem = 0;
+  _custGroups.forEach(function(g) { totalMem += (g.member_count || 0); });
+
+  var html = '<div class="flex items-center justify-between mb-2 px-1">' +
+    '<div class="text-[11px] font-bold text-slate-500 uppercase tracking-wide">그룹</div>' +
+    '<button onclick="_custOpenGroupEdit()" class="text-[10px] text-blue-600 hover:text-blue-700 font-bold" title="새 그룹"><i class="fas fa-plus"></i></button>' +
+  '</div>';
+
+  function item(gid, name, color, count, isActive, actions) {
+    var actionsHtml = actions ? actions : '';
+    return '<button onclick="_custSelectGroup(\'' + gid + '\')" class="group w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[12px] font-medium transition ' +
+      (isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50') + '">' +
+      '<span class="w-2.5 h-2.5 rounded-full flex-shrink-0" style="background:' + color + '"></span>' +
+      '<span class="flex-1 text-left truncate">' + csEsc(name) + '</span>' +
+      '<span class="text-[10px] text-slate-400 font-normal">' + count + '</span>' +
+      actionsHtml +
+    '</button>';
+  }
+
+  // 특수 항목: 전체 / 미소속
+  html += item('', '전체 고객', '#0f172a', _custList.length || '', _custFilter.group_id === '');
+  html += item('none', '그룹 없음', '#cbd5e1', '', _custFilter.group_id === 'none');
+
+  html += '<div class="my-2 border-t border-slate-100"></div>';
+
+  if (!_custGroups.length) {
+    html += '<div class="text-center text-[11px] text-slate-300 py-3">그룹이 없습니다</div>';
+  } else {
+    _custGroups.forEach(function(g) {
+      var isActive = String(_custFilter.group_id) === String(g.id);
+      // 편집/삭제 아이콘 (hover시 노출)
+      var actions = '<span class="hidden group-hover:inline-flex ml-1 items-center gap-0.5" onclick="event.stopPropagation()">' +
+        '<span onclick="_custOpenGroupEdit(' + g.id + ')" class="text-[9px] text-slate-400 hover:text-blue-600 px-1"><i class="fas fa-pen"></i></span>' +
+        '<span onclick="_custDeleteGroup(' + g.id + ')" class="text-[9px] text-slate-400 hover:text-red-500 px-1"><i class="fas fa-trash"></i></span>' +
+      '</span>';
+      html += item(g.id, g.name, g.color, g.member_count || 0, isActive, actions);
+    });
+  }
+  side.innerHTML = html;
+}
+
+function _custSelectGroup(gid) {
+  _custFilter.group_id = gid;
+  _custRenderSidebar();
+  fetchCustomers();
+}
+
+// 그룹 편집 모달 (생성 or 수정)
+async function _custOpenGroupEdit(gid) {
+  var editing = !!gid;
+  var g = editing ? (_custGroups.filter(function(x) { return x.id === gid; })[0] || {}) : {};
+  var name = g.name || '';
+  var color = g.color || '#64748b';
+  var desc = g.description || '';
+  var sortOrder = (typeof g.sort_order === 'number') ? g.sort_order : 0;
+
+  var colors = ['#ef4444','#f97316','#f59e0b','#eab308','#84cc16','#22c55e','#10b981','#14b8a6','#06b6d4','#0ea5e9','#3b82f6','#6366f1','#8b5cf6','#a855f7','#d946ef','#ec4899','#f43f5e','#64748b'];
+  var colorBtns = colors.map(function(c2) {
+    var sel = (c2.toLowerCase() === color.toLowerCase());
+    return '<button type="button" data-color="' + c2 + '" onclick="_custPickColor(this,\'' + c2 + '\')" class="w-6 h-6 rounded-full ring-2 transition ' + (sel ? 'ring-slate-800 scale-110' : 'ring-transparent hover:ring-slate-300') + '" style="background:' + c2 + '"></button>';
+  }).join('');
+
+  var body = '<div class="text-left space-y-3">' +
+    '<div>' +
+      '<label class="text-[11px] font-bold text-slate-500 block mb-1">그룹 이름 <span class="text-red-500">*</span></label>' +
+      '<input id="cgrp-name" class="input w-full" maxlength="60" placeholder="예: VIP 고객, 2026 상반기 임상" value="' + csEsc(name) + '">' +
+    '</div>' +
+    '<div>' +
+      '<label class="text-[11px] font-bold text-slate-500 block mb-1">색상</label>' +
+      '<div class="flex flex-wrap gap-1.5" id="cgrp-color-picker">' + colorBtns + '</div>' +
+      '<input type="hidden" id="cgrp-color" value="' + color + '">' +
+    '</div>' +
+    '<div>' +
+      '<label class="text-[11px] font-bold text-slate-500 block mb-1">설명 (선택)</label>' +
+      '<textarea id="cgrp-desc" class="input w-full" rows="2" placeholder="이 그룹에 대한 메모">' + csEsc(desc) + '</textarea>' +
+    '</div>' +
+    '<div>' +
+      '<label class="text-[11px] font-bold text-slate-500 block mb-1">정렬 순서 <span class="text-slate-400 font-normal">(작을수록 위)</span></label>' +
+      '<input id="cgrp-sort" type="number" class="input w-full" value="' + sortOrder + '">' +
+    '</div>' +
+  '</div>';
+
+  showConfirm({
+    title: editing ? '그룹 수정' : '새 그룹',
+    message: body,
+    yesText: editing ? '저장' : '만들기',
+    theme: 'default',
+    wide: true,
+    onYes: async function() {
+      var nameVal = (document.getElementById('cgrp-name').value || '').trim();
+      if (!nameVal) { toast('그룹 이름을 입력하세요', 'error'); throw new Error('name'); }
+      var colorVal = document.getElementById('cgrp-color').value || '#64748b';
+      var descVal = (document.getElementById('cgrp-desc').value || '').trim();
+      var sortVal = parseInt(document.getElementById('cgrp-sort').value || '0', 10) || 0;
+      try {
+        if (editing) {
+          await API.put('/customer-groups/' + gid, { name: nameVal, color: colorVal, description: descVal, sort_order: sortVal });
+          toast('그룹이 수정되었습니다', 'success');
+        } else {
+          await API.post('/customer-groups', { name: nameVal, color: colorVal, description: descVal, sort_order: sortVal });
+          toast('그룹이 생성되었습니다', 'success');
+        }
+        await _custLoadGroups();
+      } catch(e) {
+        var msg = (e && e.response && e.response.data && e.response.data.error) || '저장 실패';
+        toast(msg, 'error');
+        throw e;
+      }
+    }
+  });
+}
+
+function _custPickColor(btn, colorVal) {
+  var picker = document.getElementById('cgrp-color-picker');
+  if (picker) {
+    picker.querySelectorAll('button').forEach(function(b) {
+      b.classList.remove('ring-slate-800','scale-110');
+      b.classList.add('ring-transparent');
+    });
+  }
+  btn.classList.remove('ring-transparent');
+  btn.classList.add('ring-slate-800','scale-110');
+  var hidden = document.getElementById('cgrp-color');
+  if (hidden) hidden.value = colorVal;
+}
+
+async function _custDeleteGroup(gid) {
+  var g = _custGroups.filter(function(x) { return x.id === gid; })[0];
+  if (!g) return;
+  showConfirm({
+    title: '그룹 삭제',
+    message: '그룹 <b>' + csEsc(g.name) + '</b> 를 삭제하시겠습니까?<br><span class="text-[11px] text-slate-500">고객 정보는 유지되며 그룹 소속만 해제됩니다.</span>',
+    yesText: '삭제',
+    theme: 'danger',
+    onYes: async function() {
+      try {
+        await API.delete('/customer-groups/' + gid);
+        toast('그룹이 삭제되었습니다', 'success');
+        // 현재 선택된 그룹이 삭제되면 전체로 이동
+        if (String(_custFilter.group_id) === String(gid)) _custFilter.group_id = '';
+        await _custLoadGroups();
+        await fetchCustomers();
+      } catch(e) {
+        toast('삭제 실패', 'error');
+        throw e;
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// 벌크 액션
+// ─────────────────────────────────────────────────────────────
+function _custToggleSelect(id, ev) {
+  if (ev) ev.stopPropagation();
+  if (_custSelected[id]) delete _custSelected[id];
+  else _custSelected[id] = true;
+  _custRenderBulkBar();
+  // 체크박스 UI 갱신
+  var cb = document.getElementById('cust-cb-' + id);
+  if (cb) cb.checked = !!_custSelected[id];
+  var row = document.getElementById('cust-row-' + id);
+  if (row) {
+    if (_custSelected[id]) row.classList.add('bg-blue-50/40');
+    else row.classList.remove('bg-blue-50/40');
+  }
+}
+
+function _custRenderBulkBar() {
+  var bar = document.getElementById('cust-bulk-bar');
+  var cnt = document.getElementById('cust-bulk-count');
+  if (!bar || !cnt) return;
+  var n = Object.keys(_custSelected).length;
+  cnt.textContent = n;
+  if (n > 0) bar.classList.remove('hidden');
+  else bar.classList.add('hidden');
+}
+
+function _custBulkClear() {
+  _custSelected = {};
+  // UI 리셋
+  document.querySelectorAll('input[id^="cust-cb-"]').forEach(function(cb) { cb.checked = false; });
+  document.querySelectorAll('[id^="cust-row-"]').forEach(function(r) { r.classList.remove('bg-blue-50/40'); });
+  _custRenderBulkBar();
+}
+
+async function _custBulkAddToGroup() {
+  var ids = Object.keys(_custSelected).map(function(k) { return parseInt(k, 10); }).filter(Boolean);
+  if (!ids.length) { toast('선택된 고객이 없습니다', 'error'); return; }
+
+  // 그룹 목록에서 선택
+  var options = _custGroups.map(function(g) {
+    return '<option value="' + g.id + '">' + csEsc(g.name) + ' (' + (g.member_count || 0) + '명)</option>';
+  }).join('');
+  var body = '<div class="text-left space-y-3">' +
+    '<div class="text-[13px] text-slate-600"><b>' + ids.length + '명</b>을 어느 그룹에 추가할까요?</div>' +
+    (options
+      ? '<select id="cust-bulk-gid" class="input w-full"><option value="">-- 그룹 선택 --</option>' + options + '</select>'
+      : '<div class="text-[12px] text-amber-600 bg-amber-50 border border-amber-100 rounded p-2">먼저 그룹을 만들어주세요.</div>') +
+    '<div class="text-[11px] text-slate-400">* 이미 그룹에 있는 고객은 자동으로 스킵됩니다.</div>' +
+  '</div>';
+
+  showConfirm({
+    title: '그룹에 추가',
+    message: body,
+    yesText: '추가',
+    theme: 'default',
+    wide: true,
+    onYes: async function() {
+      var sel = document.getElementById('cust-bulk-gid');
+      if (!sel) throw new Error('no select');
+      var gid = parseInt(sel.value, 10);
+      if (!gid) { toast('그룹을 선택하세요', 'error'); throw new Error('no group'); }
+      try {
+        var res = await API.post('/customer-groups/' + gid + '/members', { customer_ids: ids });
+        var added = (res.data.data && res.data.data.added) || 0;
+        toast(added + '명이 그룹에 추가되었습니다', 'success');
+        _custBulkClear();
+        await _custLoadGroups();
+        await fetchCustomers();
+      } catch(e) {
+        toast('추가 실패', 'error');
+        throw e;
+      }
+    }
+  });
 }
 
 async function _custLoadHospitals() {
@@ -563,11 +850,15 @@ async function fetchCustomers() {
     if (_custFilter.type) params.push('type=' + _custFilter.type);
     if (_custFilter.status) params.push('status=' + _custFilter.status);
     if (_custFilter.region) params.push('region=' + encodeURIComponent(_custFilter.region));
+    if (_custFilter.group_id !== '' && _custFilter.group_id !== undefined) {
+      params.push('group_id=' + encodeURIComponent(_custFilter.group_id));
+    }
     var qs = params.length ? '?' + params.join('&') : '';
     var res = await API.get('/customers' + qs);
     _custList = res.data.data || [];
     renderCustomers();
     renderCustomerStats();
+    _custRenderSidebar(); // 좌측 사이드바 상단 "전체 고객" 카운트 갱신
   } catch(e) {
     listDiv.innerHTML = '<div class="card p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle mr-2"></i>고객 목록을 불러올 수 없습니다</div>';
   }
@@ -606,9 +897,13 @@ function renderCustomers() {
     return;
   }
 
+  // 그리드 컬럼: [체크박스 34px | 이름 1fr | 유형 90 | 상태 100 | 병원 130 | 지역 80 | 그룹 140 | 문의 80 | 액션 80]
+  var GRID_COLS = '34px 1fr 90px 100px 130px 80px 140px 80px 80px';
+
   var html = '<div class="card overflow-hidden">' +
-    '<div class="hidden md:grid gap-2 px-4 py-2.5 text-[10px] font-bold text-slate-400 tracking-wide uppercase bg-slate-50/50 border-b border-slate-100" style="grid-template-columns:1fr 90px 100px 130px 90px 90px 80px">' +
-      '<div>이름 / 연락처</div><div>유형</div><div>상태</div><div>병원</div><div>지역</div><div class="text-center">문의</div><div class="text-right">액션</div>' +
+    '<div class="hidden md:grid gap-2 px-4 py-2.5 text-[10px] font-bold text-slate-400 tracking-wide uppercase bg-slate-50/50 border-b border-slate-100" style="grid-template-columns:' + GRID_COLS + '">' +
+      '<div><input type="checkbox" id="cust-cb-all" onclick="_custToggleAll(this)" class="w-3.5 h-3.5"></div>' +
+      '<div>이름 / 연락처</div><div>유형</div><div>상태</div><div>병원</div><div>지역</div><div>그룹</div><div class="text-center">문의</div><div class="text-right">액션</div>' +
     '</div>';
 
   _custList.forEach(function(cst) {
@@ -619,7 +914,29 @@ function renderCustomers() {
       : cst.status === 'dormant' ? 'text-amber-600 bg-amber-50 border-amber-100'
       : 'text-slate-500 bg-slate-50 border-slate-100';
 
-    html += '<div class="md:grid flex flex-col gap-2 md:gap-2 px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition cursor-pointer" style="grid-template-columns:1fr 90px 100px 130px 90px 90px 80px" onclick="viewCustomer(' + cst.id + ')">' +
+    // 그룹 뱃지 (최대 3개, 나머지는 +N)
+    var groups = cst.groups || [];
+    var groupsHtml = '';
+    if (groups.length === 0) {
+      groupsHtml = '<span class="text-[10px] text-slate-300">-</span>';
+    } else {
+      var shown = groups.slice(0, 2);
+      groupsHtml = shown.map(function(g) {
+        return '<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-md border" style="background:' + g.color + '18;color:' + g.color + ';border-color:' + g.color + '44" title="' + csEsc(g.name) + '">' +
+          '<span class="w-1.5 h-1.5 rounded-full" style="background:' + g.color + '"></span>' + csEsc(g.name).slice(0, 8) +
+        '</span>';
+      }).join(' ');
+      if (groups.length > 2) {
+        groupsHtml += ' <span class="text-[10px] text-slate-400 font-semibold">+' + (groups.length - 2) + '</span>';
+      }
+    }
+
+    var isSel = !!_custSelected[cst.id];
+    html += '<div id="cust-row-' + cst.id + '" class="md:grid flex flex-col gap-2 md:gap-2 px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition cursor-pointer' + (isSel ? ' bg-blue-50/40' : '') + '" style="grid-template-columns:' + GRID_COLS + '" onclick="viewCustomer(' + cst.id + ')">' +
+      // 체크박스
+      '<div class="flex items-center" onclick="_custToggleSelect(' + cst.id + ',event)">' +
+        '<input type="checkbox" id="cust-cb-' + cst.id + '" ' + (isSel ? 'checked' : '') + ' onclick="_custToggleSelect(' + cst.id + ',event)" class="w-3.5 h-3.5">' +
+      '</div>' +
       // 이름/연락처
       '<div class="min-w-0">' +
         '<div class="font-semibold text-[13px] text-slate-800 truncate">' + csEsc(cst.name) +
@@ -642,6 +959,8 @@ function renderCustomers() {
       '<div class="text-[11px] text-slate-500 truncate flex items-center">' + (cst.hospital_name ? '<i class="fas fa-hospital text-[9px] text-slate-300 mr-1"></i>' + csEsc(cst.hospital_name) : '<span class="text-slate-300">-</span>') + '</div>' +
       // 지역
       '<div class="text-[11px] text-slate-500 truncate flex items-center">' + (cst.region ? csEsc(cst.region) : '<span class="text-slate-300">-</span>') + '</div>' +
+      // 그룹
+      '<div class="flex items-center flex-wrap gap-1 min-w-0">' + groupsHtml + '</div>' +
       // 문의 수
       '<div class="text-center flex items-center justify-center">' +
         (cst.inquiry_count > 0
@@ -658,6 +977,26 @@ function renderCustomers() {
   });
   html += '</div>';
   listDiv.innerHTML = html;
+  _custRenderBulkBar();
+}
+
+// 전체 선택 토글
+function _custToggleAll(cb) {
+  _custSelected = {};
+  if (cb.checked) {
+    _custList.forEach(function(cst) { _custSelected[cst.id] = true; });
+  }
+  // 체크박스 & 배경 갱신
+  _custList.forEach(function(cst) {
+    var box = document.getElementById('cust-cb-' + cst.id);
+    if (box) box.checked = cb.checked;
+    var row = document.getElementById('cust-row-' + cst.id);
+    if (row) {
+      if (cb.checked) row.classList.add('bg-blue-50/40');
+      else row.classList.remove('bg-blue-50/40');
+    }
+  });
+  _custRenderBulkBar();
 }
 
 function filterCust() {
@@ -807,6 +1146,23 @@ async function openCustomerModal(id) {
         '</div>' +
         '<div id="cst-external-list">' + _custRenderExternalList(id) + '</div>' +
       '</div>' +
+
+      // ===== 그룹 카드 =====
+      (id ? (
+        '<div class="col-span-full p-3 rounded-lg border" style="background:#fefce8;border-color:#fde68a">' +
+          '<div class="flex items-center gap-2 mb-3">' +
+            '<div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:#fef3c7">' +
+              '<i class="fas fa-layer-group text-[13px]" style="color:#a16207"></i>' +
+            '</div>' +
+            '<div class="flex-1">' +
+              '<div class="text-[12px] font-bold" style="color:#a16207">그룹</div>' +
+              '<div class="text-[10px] text-slate-500">이 고객이 속한 그룹 · 여러 그룹에 소속 가능</div>' +
+            '</div>' +
+            '<button type="button" onclick="_custOpenAddGroupPicker(' + id + ')" class="btn btn-outline btn-sm text-[11px]" style="color:#a16207;border-color:#fde68a"><i class="fas fa-plus mr-1"></i>그룹 추가</button>' +
+          '</div>' +
+          '<div id="cst-groups-list">' + _custRenderGroupsInModal(id, cst.groups || []) + '</div>' +
+        '</div>'
+      ) : '') +
 
       // 기존 필드 (호환용) — 접이식 details
       '<details class="col-span-full">' +
@@ -1098,6 +1454,99 @@ function _custDeleteInternal(customerId, deviceId, side) {
       } catch(e) { toast('삭제 실패', 'err'); }
     },
     { type: 'delete', yesLabel: '삭제' });
+}
+
+// ───────── 고객 상세 모달 - 그룹 관리 ─────────
+function _custRenderGroupsInModal(custId, groups) {
+  if (!groups || !groups.length) {
+    return '<div class="text-center py-4 text-[11px] text-slate-400"><i class="fas fa-layer-group text-lg text-slate-200 block mb-1"></i>이 고객은 아직 어떤 그룹에도 속하지 않았습니다</div>';
+  }
+  return '<div class="flex flex-wrap gap-1.5">' + groups.map(function(g) {
+    return '<span class="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-md border" style="background:' + g.color + '18;color:' + g.color + ';border-color:' + g.color + '44">' +
+      '<span class="w-2 h-2 rounded-full" style="background:' + g.color + '"></span>' +
+      csEsc(g.name) +
+      ' <button type="button" onclick="_custRemoveFromGroup(' + custId + ',' + g.id + ',\'' + csEsc(g.name).replace(/\x27/g,'&#39;') + '\')" class="ml-1 text-slate-400 hover:text-red-500 text-[10px]" title="그룹에서 제거"><i class="fas fa-times"></i></button>' +
+    '</span>';
+  }).join('') + '</div>';
+}
+
+async function _custRefreshGroupsInModal(custId) {
+  try {
+    var res = await API.get('/customers/' + custId);
+    var box = document.getElementById('cst-groups-list');
+    if (box) box.innerHTML = _custRenderGroupsInModal(custId, res.data.data.groups || []);
+    // 상단 사이드바/목록도 갱신
+    await _custLoadGroups();
+    await fetchCustomers();
+  } catch(e) {}
+}
+
+async function _custOpenAddGroupPicker(custId) {
+  // 그룹 로드 (최신)
+  try {
+    var r = await API.get('/customer-groups');
+    _custGroups = r.data.data || [];
+  } catch(e) {}
+  // 현재 이 고객이 속한 그룹 id 확인 → 제외
+  var box = document.getElementById('cst-groups-list');
+  var already = {};
+  if (box) box.querySelectorAll('button[onclick^="_custRemoveFromGroup"]').forEach(function(b) {
+    var m = b.getAttribute('onclick').match(/_custRemoveFromGroup\(\d+,(\d+)/);
+    if (m) already[m[1]] = true;
+  });
+
+  var options = _custGroups.filter(function(g) { return !already[String(g.id)]; }).map(function(g) {
+    return '<option value="' + g.id + '">' + csEsc(g.name) + '</option>';
+  }).join('');
+
+  var body = '<div class="text-left space-y-3">' +
+    '<div class="text-[13px] text-slate-600">이 고객을 어느 그룹에 추가할까요?</div>' +
+    (options
+      ? '<select id="cst-add-gid" class="input w-full"><option value="">-- 그룹 선택 --</option>' + options + '</select>'
+      : (_custGroups.length
+          ? '<div class="text-[12px] text-slate-500 bg-slate-50 border border-slate-200 rounded p-2">이미 모든 그룹에 소속되어 있습니다.</div>'
+          : '<div class="text-[12px] text-amber-600 bg-amber-50 border border-amber-100 rounded p-2">먼저 좌측 사이드바에서 그룹을 만들어주세요.</div>')) +
+  '</div>';
+
+  showConfirm({
+    title: '그룹에 추가',
+    message: body,
+    yesText: '추가',
+    theme: 'default',
+    onYes: async function() {
+      var sel = document.getElementById('cst-add-gid');
+      if (!sel) throw new Error('no sel');
+      var gid = parseInt(sel.value, 10);
+      if (!gid) { toast('그룹을 선택하세요', 'error'); throw new Error('no group'); }
+      try {
+        await API.post('/customer-groups/' + gid + '/members', { customer_ids: [custId] });
+        toast('그룹에 추가되었습니다', 'success');
+        await _custRefreshGroupsInModal(custId);
+      } catch(e) {
+        toast('추가 실패', 'error');
+        throw e;
+      }
+    }
+  });
+}
+
+function _custRemoveFromGroup(custId, gid, gname) {
+  showConfirm({
+    title: '그룹에서 제거',
+    message: '<b>' + gname + '</b> 그룹에서 이 고객을 제거하시겠습니까?<br><span class="text-[11px] text-slate-500">고객 정보 자체는 삭제되지 않습니다.</span>',
+    yesText: '제거',
+    theme: 'danger',
+    onYes: async function() {
+      try {
+        await API.delete('/customer-groups/' + gid + '/members/' + custId);
+        toast('그룹에서 제거되었습니다', 'success');
+        await _custRefreshGroupsInModal(custId);
+      } catch(e) {
+        toast('제거 실패', 'error');
+        throw e;
+      }
+    }
+  });
 }
 
 // ───────── 외부기 CRUD ─────────

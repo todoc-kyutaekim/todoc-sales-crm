@@ -13,9 +13,11 @@ function normSide(v: any): 'left' | 'right' | null {
   return null
 }
 
-// GET /api/customers?search=&type=&status=&hospital_id=&region=&limit=
+// GET /api/customers?search=&type=&status=&hospital_id=&region=&group_id=&limit=
+//   group_id: 숫자 → 해당 그룹 소속 고객만
+//              'none' → 어떤 그룹에도 속하지 않은 고객만
 customers.get('/', async (c) => {
-  const { search, type, status, hospital_id, region, limit } = c.req.query()
+  const { search, type, status, hospital_id, region, group_id, limit } = c.req.query()
   const lim = safeLimit(limit, 500)
 
   let q = `
@@ -26,7 +28,10 @@ customers.get('/', async (c) => {
       (SELECT COUNT(*) FROM cs_inquiries WHERE customer_id = c.id) AS inquiry_count,
       (SELECT MAX(created_at) FROM cs_inquiries WHERE customer_id = c.id) AS last_inquiry_at,
       (SELECT COUNT(*) FROM customer_internal_devices WHERE customer_id = c.id) AS internal_devices_count,
-      (SELECT COUNT(*) FROM customer_external_devices WHERE customer_id = c.id) AS external_devices_count
+      (SELECT COUNT(*) FROM customer_external_devices WHERE customer_id = c.id) AS external_devices_count,
+      (SELECT GROUP_CONCAT(cg.id || '::' || cg.name || '::' || cg.color, '||')
+        FROM customer_group_members m JOIN customer_groups cg ON cg.id = m.group_id
+        WHERE m.customer_id = c.id) AS groups_raw
     FROM customers c
     LEFT JOIN hospitals h ON h.id = c.hospital_id
     LEFT JOIN customers g ON g.id = c.guardian_of
@@ -38,6 +43,12 @@ customers.get('/', async (c) => {
   if (status) { conds.push('c.status = ?'); params.push(status) }
   if (hospital_id) { conds.push('c.hospital_id = ?'); params.push(safeInt(hospital_id)) }
   if (region) { conds.push('c.region = ?'); params.push(region) }
+  if (group_id === 'none') {
+    conds.push('NOT EXISTS (SELECT 1 FROM customer_group_members WHERE customer_id = c.id)')
+  } else if (group_id) {
+    conds.push('EXISTS (SELECT 1 FROM customer_group_members WHERE customer_id = c.id AND group_id = ?)')
+    params.push(safeInt(group_id))
+  }
   if (search) {
     const s = `%${safeLike(search)}%`
     // 다중 디바이스 시리얼도 검색 대상에 포함
@@ -51,7 +62,20 @@ customers.get('/', async (c) => {
   params.push(lim)
 
   const r = await c.env.DB.prepare(q).bind(...params).all()
-  return c.json({ data: r.results })
+  // groups_raw 문자열을 배열로 파싱
+  const rows = (r.results as any[]).map((row) => {
+    const raw = row.groups_raw as string | null
+    const groups = raw
+      ? raw.split('||').map((s) => {
+          const [gid, name, color] = s.split('::')
+          return { id: Number(gid), name, color }
+        })
+      : []
+    delete row.groups_raw
+    row.groups = groups
+    return row
+  })
+  return c.json({ data: rows })
 })
 
 // GET /api/customers/stats — dashboard용 요약
@@ -86,8 +110,8 @@ customers.get('/:id', async (c) => {
   `).bind(id).first()
   if (!row) return apiError(c, 404, '고객을 찾을 수 없습니다', ErrorCodes.NOT_FOUND)
 
-  // 병렬 조회: 문의 이력 + 내부기 + 외부기
-  const [inquiries, intDevs, extDevs] = await Promise.all([
+  // 병렬 조회: 문의 이력 + 내부기 + 외부기 + 그룹
+  const [inquiries, intDevs, extDevs, groups] = await Promise.all([
     c.env.DB.prepare(`
       SELECT i.id, i.subject, i.category, i.status, i.priority, i.created_at, i.resolved_at,
         u.name AS assignee_name
@@ -109,6 +133,13 @@ customers.get('/:id', async (c) => {
       WHERE customer_id = ?
       ORDER BY is_active DESC, supply_date DESC, id DESC
     `).bind(id).all(),
+    c.env.DB.prepare(`
+      SELECT g.id, g.name, g.color, g.description, m.added_at
+      FROM customer_group_members m
+      JOIN customer_groups g ON g.id = m.group_id
+      WHERE m.customer_id = ?
+      ORDER BY g.sort_order ASC, g.name ASC
+    `).bind(id).all(),
   ])
 
   return c.json({
@@ -117,6 +148,7 @@ customers.get('/:id', async (c) => {
       inquiries: inquiries.results || [],
       internal_devices: intDevs.results || [],
       external_devices: extDevs.results || [],
+      groups: groups.results || [],
     }
   })
 })
