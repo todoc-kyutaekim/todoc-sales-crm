@@ -337,6 +337,18 @@ const HTML = `<!DOCTYPE html>
   </div>
 </div>
 
+<!-- Side Panel (오른쪽 슬라이드 패널 — CS/CRM 폼용) -->
+<div id="side-panel-overlay" onclick="closeSidePanel()" aria-hidden="true"></div>
+<aside id="side-panel" class="hidden" role="dialog" aria-modal="false" aria-labelledby="side-panel-title" aria-hidden="true">
+  <div class="side-panel-header">
+    <h2 id="side-panel-title"><i id="side-panel-icon" class="fas fa-pen text-slate-400"></i><span class="sp-title-text">패널</span></h2>
+    <div id="side-panel-actions" class="side-panel-actions"></div>
+    <button type="button" class="side-panel-close" onclick="closeSidePanel()" aria-label="패널 닫기"><i class="fas fa-xmark"></i></button>
+  </div>
+  <div id="side-panel-body" class="side-panel-body"></div>
+  <div id="side-panel-footer" class="side-panel-footer hidden"></div>
+</aside>
+
 <!-- Confirm Dialog (z-[80]: above main modal z-[70]) -->
 <div id="confirm-dialog" class="fixed inset-0 modal-bg z-[80] hidden flex items-center justify-center p-4">
   <div class="bg-white w-full max-w-sm p-6 text-center" style="border-radius:20px;box-shadow:0 24px 48px -12px rgba(16,24,40,.18);animation:scaleIn .2s ease">

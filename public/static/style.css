@@ -1463,3 +1463,133 @@ html[data-theme="dark"] #header-actions .btn-ghost:hover { background: var(--gra
   to { transform: rotate(360deg); }
 }
 html[data-theme="dark"] #modal-progress { background: rgba(99, 102, 241, 0.15); }
+
+/* ============================================================ */
+/* Side Panel (오른쪽 슬라이드 패널) */
+/* ============================================================ */
+#side-panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  z-index: 90;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+#side-panel-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+#side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 560px;
+  max-width: 100vw;
+  background: #fff;
+  z-index: 91;
+  box-shadow: -12px 0 40px rgba(15, 23, 42, 0.12);
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#side-panel.open {
+  transform: translateX(0);
+}
+.side-panel-header {
+  flex-shrink: 0;
+  padding: 16px 20px;
+  border-bottom: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  min-height: 60px;
+}
+.side-panel-header h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.side-panel-header h2 .sp-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.side-panel-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.side-panel-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.side-panel-close:hover {
+  background: #f8fafc;
+  color: #1e293b;
+}
+.side-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  -webkit-overflow-scrolling: touch;
+}
+.side-panel-footer {
+  flex-shrink: 0;
+  padding: 12px 20px;
+  border-top: 1px solid #f1f5f9;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  background: #fafbfc;
+}
+/* 다크 모드 */
+html[data-theme="dark"] #side-panel {
+  background: #1a1f2c;
+  box-shadow: -12px 0 40px rgba(0, 0, 0, 0.5);
+}
+html[data-theme="dark"] .side-panel-header,
+html[data-theme="dark"] .side-panel-footer {
+  background: #1a1f2c;
+  border-color: #2a2f3c;
+}
+html[data-theme="dark"] .side-panel-header h2 { color: #e2e8f0; }
+html[data-theme="dark"] .side-panel-close {
+  background: #262b38;
+  border-color: #2a2f3c;
+  color: #94a3b8;
+}
+html[data-theme="dark"] .side-panel-footer { background: #151a26; }
+
+/* 모바일 — 전체 화면 */
+@media (max-width: 640px) {
+  #side-panel {
+    width: 100vw;
+    max-width: 100vw;
+    box-shadow: none;
+  }
+  .side-panel-header { padding: 14px 16px; }
+  .side-panel-body { padding: 16px; }
+  .side-panel-footer { padding: 10px 16px; }
+}

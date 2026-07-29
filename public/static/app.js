@@ -637,6 +637,9 @@ function filterCust() {
   window._custFilterTimer = setTimeout(fetchCustomers, 250);
 }
 
+// 새 함수: 사이드 패널로 통합. openCustomerModal은 아래에서 alias 처리.
+async function openCustomerPanel(id) { return openCustomerModal(id); }
+
 async function openCustomerModal(id) {
   var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'prospect', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '' };
   if (id) {
@@ -653,8 +656,23 @@ async function openCustomerModal(id) {
     ['서울','경기','인천','강원','충북','충남','대전','세종','전북','전남','광주','경북','경남','대구','울산','부산','제주']
     .map(function(r) { return '<option value="' + r + '"' + (cst.region === r ? ' selected' : '') + '>' + r + '</option>'; }).join('');
 
-  openModal(id ? '고객 편집' : '새 고객 등록',
-    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+  // 문의 이력 (편집 모드에서만)
+  var inqRows = '';
+  if (id && cst.inquiries && cst.inquiries.length) {
+    inqRows = cst.inquiries.map(function(inq) {
+      var stCol = CS_INQ_STATUS_COLORS[inq.status] || CS_INQ_STATUS_COLORS.open;
+      return '<div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0 hover:bg-slate-50 px-2 -mx-2 rounded cursor-pointer" onclick="viewCsInquiry(' + inq.id + ')">' +
+        '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + stCol.bg + ';color:' + stCol.fg + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
+        '<span class="text-[12px] text-slate-700 font-medium flex-1 truncate">' + csEsc(inq.subject) + '</span>' +
+        '<span class="text-[10px] text-slate-400">' + csFmtDate(inq.created_at) + '</span>' +
+      '</div>';
+    }).join('');
+  } else if (id) {
+    inqRows = '<div class="text-[12px] text-slate-400 py-3 text-center">문의 이력이 없습니다</div>';
+  }
+
+  var body =
+    '<form id="fm-customer" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
       '<div><label class="input-label">이름 *</label><input name="name" type="text" value="' + csEsc(cst.name) + '" class="input" required></div>' +
       '<div><label class="input-label">유형</label><select name="customer_type" class="input">' +
         ['prospect','guardian','patient'].map(function(t) { return '<option value="' + t + '"' + (cst.customer_type === t ? ' selected' : '') + '>' + CUST_TYPE_LABELS[t] + '</option>'; }).join('') +
@@ -678,83 +696,72 @@ async function openCustomerModal(id) {
         ['active','inactive','dormant'].map(function(s) { return '<option value="' + s + '"' + (cst.status === s ? ' selected' : '') + '>' + CUST_STATUS_LABELS[s] + '</option>'; }).join('') +
       '</select></div>' +
       '<div class="col-span-full"><label class="input-label">메모</label><textarea name="notes" rows="3" class="input">' + csEsc(cst.notes) + '</textarea></div>' +
-      '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2">' +
-        '<button type="button" onclick="closeModal()" class="btn btn-outline">취소</button>' +
-        '<button type="submit" class="btn btn-primary">' + (id ? '저장' : '추가') + '</button>' +
-      '</div>' +
-    '</form>');
+    '</form>' +
+    // 편집 모드에서만 문의 이력 표시
+    (id ? (
+      '<div class="mt-5 pt-4 border-t border-slate-100">' +
+        '<div class="flex items-center justify-between mb-2">' +
+          '<div class="text-[11px] font-semibold text-slate-500 flex items-center gap-2"><i class="fas fa-headset text-blue-500"></i>문의 이력 <span class="text-slate-300">(' + ((cst.inquiries || []).length) + ')</span></div>' +
+          '<button type="button" onclick="openCsInquiryModal(null,' + id + ')" class="btn btn-outline btn-sm text-[11px]"><i class="fas fa-plus mr-1"></i>문의 접수</button>' +
+        '</div>' +
+        inqRows +
+      '</div>'
+    ) : '');
 
-  document.getElementById('fm').onsubmit = async function(e) {
-    e.preventDefault();
-    var f = Object.fromEntries(new FormData(e.target));
-    if (!f.name || !f.name.trim()) { toast('이름을 입력하세요', 'warn'); return; }
-    try {
-      if (id) await API.put('/customers/' + id, f);
-      else await API.post('/customers', f);
-      toast(id ? '고객 정보가 저장되었습니다' : '새 고객이 등록되었습니다');
-      closeModal();
-      fetchCustomers();
-    } catch(err) { toast('저장 실패', 'err'); }
-  };
+  var actions = id ?
+    '<button type="button" onclick="_custDeleteFromPanel(' + id + ',&quot;' + csEsc(cst.name).replace(/"/g, '&quot;') + '&quot;)" class="btn btn-outline text-red-500 border-red-100 hover:bg-red-50 btn-sm text-[11px]" title="삭제"><i class="fas fa-trash"></i></button>'
+    : '';
+
+  var footer =
+    '<button type="button" onclick="closeSidePanel()" class="btn btn-outline">닫기</button>' +
+    '<button type="button" onclick="_custSaveFromPanel(' + (id || 'null') + ')" class="btn btn-primary">' + (id ? '저장' : '추가') + '</button>';
+
+  openSidePanel({
+    title: id ? '고객 편집 · ' + (cst.name || '') : '새 고객 등록',
+    icon: id ? 'fa-user-pen' : 'fa-user-plus',
+    body: body,
+    actions: actions,
+    footer: footer,
+    onOpen: function() {
+      var fm = document.getElementById('fm-customer');
+      if (fm) fm.onsubmit = function(e) { e.preventDefault(); _custSaveFromPanel(id); };
+    }
+  });
 }
 
-async function viewCustomer(id) {
+async function _custSaveFromPanel(id) {
+  var fm = document.getElementById('fm-customer');
+  if (!fm) return;
+  var f = Object.fromEntries(new FormData(fm));
+  if (!f.name || !f.name.trim()) { toast('이름을 입력하세요', 'warn'); return; }
   try {
-    var res = await API.get('/customers/' + id);
-    var cst = res.data.data;
-    if (!cst) { toast('고객을 찾을 수 없습니다', 'err'); return; }
-
-    var typeCol = CUST_TYPE_COLORS[cst.customer_type] || CUST_TYPE_COLORS.prospect;
-    var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || '-';
-    var inqRows = (cst.inquiries || []).map(function(inq) {
-      var stCol = CS_INQ_STATUS_COLORS[inq.status] || CS_INQ_STATUS_COLORS.open;
-      return '<div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0 hover:bg-slate-50 px-2 -mx-2 rounded cursor-pointer" onclick="closeModal();setTimeout(function(){viewCsInquiry(' + inq.id + ')},100)">' +
-        '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + stCol.bg + ';color:' + stCol.fg + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
-        '<span class="text-[12px] text-slate-700 font-medium flex-1 truncate">' + csEsc(inq.subject) + '</span>' +
-        '<span class="text-[10px] text-slate-400">' + csFmtDate(inq.created_at) + '</span>' +
-      '</div>';
-    }).join('') || '<div class="text-[12px] text-slate-400 py-4 text-center">문의 이력이 없습니다</div>';
-
-    openModal('고객 상세',
-      '<div class="space-y-4">' +
-        '<div class="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">' +
-          '<div class="flex-1 min-w-0">' +
-            '<div class="flex items-center gap-2 mb-1">' +
-              '<span class="text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + typeCol.bg + ';color:' + typeCol.fg + ';border-color:' + typeCol.bd + '">' + typeLabel + '</span>' +
-              '<span class="text-[10px] text-slate-400">#' + cst.id + '</span>' +
-            '</div>' +
-            '<h3 class="text-[18px] font-bold text-slate-800">' + csEsc(cst.name) + '</h3>' +
-            '<div class="text-[12px] text-slate-500 mt-0.5">' +
-              (cst.phone ? '<i class="fas fa-phone text-[10px] mr-1"></i>' + csEsc(cst.phone) : '') +
-              (cst.email ? ' <span class="text-slate-300">·</span> ' + csEsc(cst.email) : '') +
-            '</div>' +
-          '</div>' +
-          '<div class="flex gap-1">' +
-            '<button onclick="openCsInquiryModal(null,' + cst.id + ')" class="btn btn-primary btn-sm text-[11px]"><i class="fas fa-headset mr-1"></i>문의 접수</button>' +
-            '<button onclick="closeModal();setTimeout(function(){openCustomerModal(' + cst.id + ')},100)" class="btn btn-outline btn-sm text-[11px]"><i class="fas fa-pen mr-1"></i>편집</button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="grid grid-cols-2 gap-3 text-[12px]">' +
-          _custInfoRow('생년월일', cst.birth_date || '-') +
-          _custInfoRow('성별', cst.gender === 'M' ? '남' : cst.gender === 'F' ? '여' : '-') +
-          _custInfoRow('병원', cst.hospital_name || '-') +
-          _custInfoRow('지역', cst.region || '-') +
-          _custInfoRow('주소', cst.address || '-', true) +
-          _custInfoRow('시술일', cst.implant_date || '-') +
-          _custInfoRow('시술 부위', cst.implant_side === 'L' ? '좌측' : cst.implant_side === 'R' ? '우측' : cst.implant_side === 'BOTH' ? '양측' : '-') +
-          _custInfoRow('기기 모델', cst.device_model || '-') +
-          _custInfoRow('시리얼', cst.device_serial || '-') +
-          _custInfoRow('등록자', cst.created_by_name || '-') +
-          _custInfoRow('등록일', csFmtDate(cst.created_at)) +
-        '</div>' +
-        (cst.notes ? '<div class="bg-slate-50 rounded-lg p-3 text-[12px] text-slate-600 leading-relaxed"><i class="fas fa-sticky-note text-slate-300 mr-1"></i>' + csEsc(cst.notes).replace(/\n/g, '<br>') + '</div>' : '') +
-        '<div>' +
-          '<div class="text-[11px] font-semibold text-slate-500 mb-2 flex items-center gap-2"><i class="fas fa-headset text-blue-500"></i>문의 이력 <span class="text-slate-300">(' + (cst.inquiries || []).length + ')</span></div>' +
-          inqRows +
-        '</div>' +
-      '</div>');
-  } catch(e) { toast('고객 정보를 불러올 수 없습니다', 'err'); }
+    if (id) await API.put('/customers/' + id, f);
+    else await API.post('/customers', f);
+    toast(id ? '고객 정보가 저장되었습니다' : '새 고객이 등록되었습니다');
+    closeSidePanel(true);
+    fetchCustomers();
+  } catch(err) {
+    var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
+    toast(msg, 'err');
+  }
 }
+
+function _custDeleteFromPanel(id, name) {
+  showConfirm('고객 삭제',
+    '<strong>' + csEsc(name) + '</strong> 고객을 삭제하시겠습니까?<br><span class="text-[11px] text-red-500">문의 이력이 있으면 문의의 고객 연결이 해제됩니다.</span>',
+    async function() {
+      try {
+        await API.delete('/customers/' + id);
+        toast('삭제되었습니다');
+        closeSidePanel(true);
+        fetchCustomers();
+      } catch(e) { toast('삭제 실패', 'err'); }
+    },
+    { type: 'delete', yesLabel: '삭제' });
+}
+
+// 상세 = 편집 통합 (사이드 패널). 하위 호환용 alias.
+async function viewCustomer(id) { return openCustomerModal(id); }
 
 function _custInfoRow(label, value, wide) {
   return '<div' + (wide ? ' class="col-span-2"' : '') + '>' +
@@ -961,9 +968,9 @@ async function openCsInquiryModal(id, prefillCustomerId) {
   }
   if (!_csInqUsers.length) await _csInqLoadUsers();
 
-  // 고객 선택용 옵션: 프리필된 고객이 있으면 함께 로드
-  var custName = '';
-  if (inq.customer_id) {
+  // 고객 이름 조회 (프리필 또는 연결됨)
+  var custName = inq.customer_name || '';
+  if (!custName && inq.customer_id) {
     try {
       var cr = await API.get('/customers/' + inq.customer_id);
       custName = (cr.data.data || {}).name || '';
@@ -988,109 +995,10 @@ async function openCsInquiryModal(id, prefillCustomerId) {
     return '<option value="' + k + '"' + (inq.status === k ? ' selected' : '') + '>' + CS_INQ_STATUS_LABELS[k] + '</option>';
   }).join('');
 
-  openModal(id ? '문의 편집' : '문의 접수',
-    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
-      '<div class="col-span-full"><label class="input-label">제목 *</label><input name="subject" type="text" value="' + csEsc(inq.subject) + '" class="input" required placeholder="문의 요약"></div>' +
-      '<div><label class="input-label">유형</label><select name="category" class="input">' + catOpts + '</select></div>' +
-      '<div><label class="input-label">채널</label><select name="channel" class="input">' + chOpts + '</select></div>' +
-      '<div><label class="input-label">우선순위</label><select name="priority" class="input">' + prOpts + '</select></div>' +
-      '<div><label class="input-label">상태</label><select name="status" class="input">' + stOpts + '</select></div>' +
-      '<div><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
-      '<div>' +
-        '<label class="input-label">고객' + (inq.customer_id ? ' <span class="text-[10px] text-blue-500">(연결됨)</span>' : '') + '</label>' +
-        '<div class="flex gap-1">' +
-          '<input name="customer_id" type="hidden" value="' + csEsc(inq.customer_id) + '">' +
-          '<input id="cs-inq-cust-name" type="text" value="' + csEsc(custName) + '" class="input flex-1" placeholder="고객 검색 (선택)" autocomplete="off">' +
-          (inq.customer_id ? '<button type="button" onclick="_csInqClearCustomer()" class="text-[10px] px-2 rounded bg-slate-100 hover:bg-slate-200" title="연결 해제"><i class="fas fa-times"></i></button>' : '') +
-        '</div>' +
-        '<div id="cs-inq-cust-dd" class="hidden mt-1 border border-gray-200 rounded-xl bg-white shadow-lg max-h-[180px] overflow-y-auto absolute z-30" style="width:calc(50% - 2rem)"></div>' +
-      '</div>' +
-      '<div class="col-span-full grid grid-cols-1 sm:grid-cols-3 gap-3">' +
-        '<div><label class="input-label">연락처 이름 <span class="text-[10px] text-slate-400">(고객 미연결 시)</span></label><input name="contact_name" type="text" value="' + csEsc(inq.contact_name) + '" class="input"></div>' +
-        '<div><label class="input-label">전화번호</label><input name="contact_phone" type="tel" value="' + csEsc(inq.contact_phone) + '" class="input"></div>' +
-        '<div><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(inq.contact_email) + '" class="input"></div>' +
-      '</div>' +
-      '<div class="col-span-full"><label class="input-label">문의 내용</label><textarea name="first_message" rows="4" class="input" placeholder="최초 문의 내용">' + csEsc(inq.first_message) + '</textarea></div>' +
-      '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2">' +
-        '<button type="button" onclick="closeModal()" class="btn btn-outline">취소</button>' +
-        '<button type="submit" class="btn btn-primary">' + (id ? '저장' : '접수') + '</button>' +
-      '</div>' +
-    '</form>');
-
-  // 고객 자동완성
-  var nameInput = document.getElementById('cs-inq-cust-name');
-  var dd = document.getElementById('cs-inq-cust-dd');
-  if (nameInput) {
-    nameInput.addEventListener('input', function() {
-      clearTimeout(window._csInqCustTimer);
-      var q = this.value.trim();
-      if (q.length < 1) { dd.classList.add('hidden'); return; }
-      window._csInqCustTimer = setTimeout(async function() {
-        try {
-          var res = await API.get('/customers?search=' + encodeURIComponent(q) + '&limit=8');
-          var list = res.data.data || [];
-          if (list.length === 0) { dd.classList.add('hidden'); return; }
-          dd.innerHTML = list.map(function(cst) {
-            var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || '';
-            return '<div class="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-50 last:border-0" data-id="' + cst.id + '" data-name="' + csEsc(cst.name) + '" data-phone="' + csEsc(cst.phone || '') + '" data-email="' + csEsc(cst.email || '') + '">' +
-              '<div class="text-[12px] font-medium text-slate-700">' + csEsc(cst.name) + ' <span class="text-[10px] text-slate-400 font-normal">' + typeLabel + '</span></div>' +
-              '<div class="text-[10px] text-slate-400">' + csEsc(cst.phone || '') + (cst.email ? ' · ' + csEsc(cst.email) : '') + '</div>' +
-            '</div>';
-          }).join('');
-          dd.classList.remove('hidden');
-          dd.querySelectorAll('[data-id]').forEach(function(el) {
-            el.onclick = function() {
-              var fm = document.getElementById('fm');
-              fm.customer_id.value = this.dataset.id;
-              nameInput.value = this.dataset.name;
-              fm.contact_name.value = '';
-              fm.contact_phone.value = this.dataset.phone || '';
-              fm.contact_email.value = this.dataset.email || '';
-              dd.classList.add('hidden');
-            };
-          });
-        } catch(e) { dd.classList.add('hidden'); }
-      }, 250);
-    });
-    document.addEventListener('click', function(ev) {
-      if (dd && !dd.contains(ev.target) && ev.target !== nameInput) dd.classList.add('hidden');
-    });
-  }
-
-  document.getElementById('fm').onsubmit = async function(e) {
-    e.preventDefault();
-    var f = Object.fromEntries(new FormData(e.target));
-    if (!f.subject || !f.subject.trim()) { toast('제목을 입력하세요', 'warn'); return; }
-    if (f.customer_id === '') delete f.customer_id;
-    if (f.assignee_id === '') delete f.assignee_id;
-    try {
-      if (id) await API.put('/cs/inquiries/' + id, f);
-      else await API.post('/cs/inquiries', f);
-      toast(id ? '문의가 저장되었습니다' : '문의가 접수되었습니다');
-      closeModal();
-      fetchCsInquiries();
-    } catch(err) { toast('저장 실패', 'err'); }
-  };
-}
-
-function _csInqClearCustomer() {
-  var fm = document.getElementById('fm');
-  if (!fm) return;
-  fm.customer_id.value = '';
-  var ni = document.getElementById('cs-inq-cust-name');
-  if (ni) ni.value = '';
-}
-
-async function viewCsInquiry(id) {
-  try {
-    var res = await API.get('/cs/inquiries/' + id);
-    var inq = res.data.data;
-    if (!inq) { toast('문의를 찾을 수 없습니다', 'err'); return; }
-
-    var stCol = CS_INQ_STATUS_COLORS[inq.status] || CS_INQ_STATUS_COLORS.open;
-    var prCol = CS_INQ_PRIORITY_COLORS[inq.priority] || CS_INQ_PRIORITY_COLORS.mid;
-
-    var timeline = (inq.responses || []).map(function(r) {
+  // 응답 이력 타임라인 (편집 모드)
+  var timeline = '';
+  if (id) {
+    timeline = (inq.responses || []).map(function(r) {
       var typeCfg = {
         reply:           { icon: 'fa-reply',      color: '#2563eb', label: '응답' },
         note:            { icon: 'fa-sticky-note', color: '#f59e0b', label: '내부 메모' },
@@ -1099,12 +1007,12 @@ async function viewCsInquiry(id) {
       };
       var cfg = typeCfg[r.response_type] || typeCfg.reply;
       var chLabel = r.channel ? ' · ' + (CS_INQ_CHANNEL_LABELS[r.channel] || r.channel) : '';
-      return '<div class="flex gap-3 py-3 border-b border-slate-100 last:border-0">' +
-        '<div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style="background:' + cfg.color + '15">' +
-          '<i class="fas ' + cfg.icon + ' text-[11px]" style="color:' + cfg.color + '"></i>' +
+      return '<div class="flex gap-2 py-2.5 border-b border-slate-100 last:border-0">' +
+        '<div class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center" style="background:' + cfg.color + '15">' +
+          '<i class="fas ' + cfg.icon + ' text-[10px]" style="color:' + cfg.color + '"></i>' +
         '</div>' +
         '<div class="flex-1 min-w-0">' +
-          '<div class="flex items-center gap-2 mb-1">' +
+          '<div class="flex items-center gap-2 mb-0.5 flex-wrap">' +
             '<span class="text-[11px] font-bold" style="color:' + cfg.color + '">' + cfg.label + '</span>' +
             '<span class="text-[10px] text-slate-400">' + csEsc(r.user_name || '시스템') + chLabel + '</span>' +
             '<span class="text-[10px] text-slate-300 ml-auto">' + csFmtDateTime(r.created_at) + '</span>' +
@@ -1112,37 +1020,62 @@ async function viewCsInquiry(id) {
           '<div class="text-[12px] text-slate-700 whitespace-pre-wrap leading-relaxed">' + csEsc(r.content).replace(/\n/g, '<br>') + '</div>' +
         '</div>' +
       '</div>';
-    }).join('') || '<div class="text-[12px] text-slate-400 py-6 text-center">응답 이력이 없습니다</div>';
+    }).join('');
+    if (!timeline) timeline = '<div class="text-[12px] text-slate-400 py-4 text-center">응답 이력이 없습니다</div>';
+  }
 
-    var custName = inq.customer_name || inq.contact_name || '비회원';
-    var custPhone = inq.customer_phone || inq.contact_phone || '';
+  // 상세 헤더 (편집 모드에서 표시)
+  var detailHeader = '';
+  if (id) {
+    var stCol = CS_INQ_STATUS_COLORS[inq.status] || CS_INQ_STATUS_COLORS.open;
+    var prCol = CS_INQ_PRIORITY_COLORS[inq.priority] || CS_INQ_PRIORITY_COLORS.mid;
+    var displayCustName = inq.customer_name || inq.contact_name || '비회원';
+    detailHeader =
+      '<div class="pb-3 mb-4 border-b border-slate-100">' +
+        '<div class="flex items-center gap-1.5 mb-2 flex-wrap">' +
+          '<span class="text-[10px] text-slate-400 font-mono">#' + inq.id + '</span>' +
+          '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border-color:' + stCol.bd + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
+          '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + (inq.priority === 'urgent' ? '<i class="fas fa-fire mr-0.5"></i>' : '') + (CS_INQ_PRIORITY_LABELS[inq.priority] || inq.priority) + '</span>' +
+        '</div>' +
+        '<div class="grid grid-cols-3 gap-2 text-[11px]">' +
+          '<div><div class="text-slate-400 font-semibold text-[10px]">고객</div><div class="text-slate-700 truncate">' + csEsc(displayCustName) + (inq.customer_id ? ' <a href="javascript:void(0)" onclick="openCustomerModal(' + inq.customer_id + ')" class="text-blue-500 text-[10px]">↗</a>' : '') + '</div></div>' +
+          '<div><div class="text-slate-400 font-semibold text-[10px]">담당자</div><div class="text-slate-700 truncate">' + csEsc(inq.assignee_name || '미지정') + '</div></div>' +
+          '<div><div class="text-slate-400 font-semibold text-[10px]">접수일</div><div class="text-slate-700">' + csFmtDate(inq.created_at) + '</div></div>' +
+        '</div>' +
+      '</div>';
+  }
 
-    openModal('문의 상세 #' + inq.id,
-      '<div class="space-y-4">' +
-        '<div class="pb-3 border-b border-slate-100">' +
-          '<div class="flex items-center gap-2 mb-2 flex-wrap">' +
-            '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border-color:' + stCol.bd + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
-            '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + (inq.priority === 'urgent' ? '<i class="fas fa-fire mr-0.5"></i>' : '') + (CS_INQ_PRIORITY_LABELS[inq.priority] || inq.priority) + '</span>' +
-            '<span class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">' + (CS_INQ_CATEGORY_LABELS[inq.category] || inq.category) + '</span>' +
-            '<span class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">' + (CS_INQ_CHANNEL_LABELS[inq.channel] || inq.channel) + '</span>' +
-          '</div>' +
-          '<h3 class="text-[17px] font-bold text-slate-800 mb-2">' + csEsc(inq.subject) + '</h3>' +
-          '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">' +
-            '<div><div class="text-slate-400 font-semibold">고객</div><div class="text-slate-700 truncate">' + csEsc(custName) + (inq.customer_id ? ' <a href="javascript:void(0)" onclick="closeModal();setTimeout(function(){viewCustomer(' + inq.customer_id + ')},100)" class="text-blue-500 text-[10px]">↗</a>' : '') + '</div></div>' +
-            '<div><div class="text-slate-400 font-semibold">연락처</div><div class="text-slate-700 truncate">' + csEsc(custPhone || '-') + '</div></div>' +
-            '<div><div class="text-slate-400 font-semibold">담당자</div><div class="text-slate-700 truncate">' + csEsc(inq.assignee_name || '미지정') + '</div></div>' +
-            '<div><div class="text-slate-400 font-semibold">접수</div><div class="text-slate-700">' + csFmtDate(inq.created_at) + '</div></div>' +
-          '</div>' +
+  var body =
+    detailHeader +
+    '<form id="fm-inquiry" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+      '<div class="col-span-full"><label class="input-label">제목 *</label><input name="subject" type="text" value="' + csEsc(inq.subject) + '" class="input" required placeholder="문의 요약"></div>' +
+      '<div><label class="input-label">유형</label><select name="category" class="input">' + catOpts + '</select></div>' +
+      '<div><label class="input-label">채널</label><select name="channel" class="input">' + chOpts + '</select></div>' +
+      '<div><label class="input-label">우선순위</label><select name="priority" class="input">' + prOpts + '</select></div>' +
+      '<div><label class="input-label">상태</label><select name="status" class="input">' + stOpts + '</select></div>' +
+      '<div class="col-span-full"><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
+      '<div class="col-span-full relative">' +
+        '<label class="input-label">고객' + (inq.customer_id ? ' <span class="text-[10px] text-blue-500">(연결됨)</span>' : '') + '</label>' +
+        '<div class="flex gap-1">' +
+          '<input name="customer_id" type="hidden" value="' + csEsc(inq.customer_id) + '">' +
+          '<input id="cs-inq-cust-name" type="text" value="' + csEsc(custName) + '" class="input flex-1" placeholder="고객 검색 (선택)" autocomplete="off">' +
+          '<button type="button" onclick="_csInqClearCustomer()" class="text-[10px] px-2 rounded bg-slate-100 hover:bg-slate-200" title="연결 해제"><i class="fas fa-times"></i></button>' +
         '</div>' +
-        (inq.first_message ? '<div class="bg-slate-50 rounded-lg p-3 text-[12px] text-slate-700 whitespace-pre-wrap leading-relaxed"><div class="text-[10px] font-bold text-slate-400 mb-1"><i class="fas fa-quote-left mr-1"></i>최초 문의</div>' + csEsc(inq.first_message).replace(/\n/g, '<br>') + '</div>' : '') +
-        '<div>' +
-          '<div class="text-[11px] font-bold text-slate-500 mb-2 flex items-center gap-2"><i class="fas fa-comments text-blue-500"></i>응답 이력 <span class="text-slate-300">(' + (inq.responses || []).length + ')</span></div>' +
-          '<div class="border border-slate-100 rounded-lg px-3 max-h-[360px] overflow-y-auto">' + timeline + '</div>' +
-        '</div>' +
-        // 응답 추가 폼
-        '<div class="border-t border-slate-100 pt-3">' +
+        '<div id="cs-inq-cust-dd" class="hidden mt-1 border border-gray-200 rounded-xl bg-white shadow-lg max-h-[180px] overflow-y-auto absolute z-30 left-0 right-0"></div>' +
+      '</div>' +
+      '<div><label class="input-label">연락처 이름 <span class="text-[10px] text-slate-400">(고객 미연결 시)</span></label><input name="contact_name" type="text" value="' + csEsc(inq.contact_name) + '" class="input"></div>' +
+      '<div><label class="input-label">전화번호</label><input name="contact_phone" type="tel" value="' + csEsc(inq.contact_phone) + '" class="input"></div>' +
+      '<div class="col-span-full"><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(inq.contact_email) + '" class="input"></div>' +
+      '<div class="col-span-full"><label class="input-label">문의 내용</label><textarea name="first_message" rows="4" class="input" placeholder="최초 문의 내용">' + csEsc(inq.first_message) + '</textarea></div>' +
+    '</form>' +
+    // 응답 이력 + 응답 추가 (편집 모드)
+    (id ? (
+      '<div class="mt-5 pt-4 border-t border-slate-100">' +
+        '<div class="text-[11px] font-bold text-slate-500 mb-2 flex items-center gap-2"><i class="fas fa-comments text-blue-500"></i>응답 이력 <span class="text-slate-300">(' + (inq.responses || []).length + ')</span></div>' +
+        '<div class="border border-slate-100 rounded-lg px-3 max-h-[280px] overflow-y-auto">' + timeline + '</div>' +
+        '<div class="mt-3 pt-3 border-t border-slate-50">' +
           '<div class="text-[11px] font-bold text-slate-500 mb-2"><i class="fas fa-plus text-blue-500 mr-1"></i>응답/메모 추가</div>' +
-          '<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">' +
+          '<div class="grid grid-cols-2 gap-2 mb-2">' +
             '<select id="cs-resp-type" class="input text-[12px]">' +
               '<option value="reply">응답</option>' +
               '<option value="note">내부 메모</option>' +
@@ -1153,14 +1086,117 @@ async function viewCsInquiry(id) {
             '</select>' +
           '</div>' +
           '<textarea id="cs-resp-content" rows="3" class="input mb-2" placeholder="내용 입력..."></textarea>' +
-          '<div class="flex justify-end gap-2">' +
-            '<button onclick="closeModal();setTimeout(function(){openCsInquiryModal(' + inq.id + ')},100)" class="btn btn-outline btn-sm text-[11px]"><i class="fas fa-pen mr-1"></i>문의 편집</button>' +
-            '<button onclick="_csInqAddResponse(' + inq.id + ')" class="btn btn-primary btn-sm text-[11px]"><i class="fas fa-paper-plane mr-1"></i>추가</button>' +
+          '<div class="flex justify-end">' +
+            '<button type="button" onclick="_csInqAddResponse(' + inq.id + ')" class="btn btn-primary btn-sm text-[11px]"><i class="fas fa-paper-plane mr-1"></i>응답 추가</button>' +
           '</div>' +
         '</div>' +
-      '</div>');
-  } catch(e) { toast('문의 정보를 불러올 수 없습니다', 'err'); }
+      '</div>'
+    ) : '');
+
+  var actions = id ?
+    '<button type="button" onclick="_csInqDeleteFromPanel(' + id + ')" class="btn btn-outline text-red-500 border-red-100 hover:bg-red-50 btn-sm text-[11px]" title="삭제"><i class="fas fa-trash"></i></button>'
+    : '';
+
+  var footer =
+    '<button type="button" onclick="closeSidePanel()" class="btn btn-outline">닫기</button>' +
+    '<button type="button" onclick="_csInqSaveFromPanel(' + (id || 'null') + ')" class="btn btn-primary">' + (id ? '저장' : '접수') + '</button>';
+
+  openSidePanel({
+    title: id ? '문의 · ' + (inq.subject || '') : '새 문의 접수',
+    icon: id ? 'fa-headset' : 'fa-plus',
+    body: body,
+    actions: actions,
+    footer: footer,
+    onOpen: function() {
+      var fm = document.getElementById('fm-inquiry');
+      if (fm) fm.onsubmit = function(e) { e.preventDefault(); _csInqSaveFromPanel(id); };
+
+      // 고객 자동완성
+      var nameInput = document.getElementById('cs-inq-cust-name');
+      var dd = document.getElementById('cs-inq-cust-dd');
+      if (nameInput) {
+        nameInput.addEventListener('input', function() {
+          clearTimeout(window._csInqCustTimer);
+          var q = this.value.trim();
+          if (q.length < 1) { dd.classList.add('hidden'); return; }
+          window._csInqCustTimer = setTimeout(async function() {
+            try {
+              var res = await API.get('/customers?search=' + encodeURIComponent(q) + '&limit=8');
+              var list = res.data.data || [];
+              if (list.length === 0) { dd.classList.add('hidden'); return; }
+              dd.innerHTML = list.map(function(cst) {
+                var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || '';
+                return '<div class="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-50 last:border-0" data-id="' + cst.id + '" data-name="' + csEsc(cst.name) + '" data-phone="' + csEsc(cst.phone || '') + '" data-email="' + csEsc(cst.email || '') + '">' +
+                  '<div class="text-[12px] font-medium text-slate-700">' + csEsc(cst.name) + ' <span class="text-[10px] text-slate-400 font-normal">' + typeLabel + '</span></div>' +
+                  '<div class="text-[10px] text-slate-400">' + csEsc(cst.phone || '') + (cst.email ? ' · ' + csEsc(cst.email) : '') + '</div>' +
+                '</div>';
+              }).join('');
+              dd.classList.remove('hidden');
+              dd.querySelectorAll('[data-id]').forEach(function(el) {
+                el.onclick = function() {
+                  var fm2 = document.getElementById('fm-inquiry');
+                  fm2.customer_id.value = this.dataset.id;
+                  nameInput.value = this.dataset.name;
+                  fm2.contact_name.value = '';
+                  fm2.contact_phone.value = this.dataset.phone || '';
+                  fm2.contact_email.value = this.dataset.email || '';
+                  dd.classList.add('hidden');
+                };
+              });
+            } catch(e) { dd.classList.add('hidden'); }
+          }, 250);
+        });
+        document.addEventListener('click', function(ev) {
+          if (dd && !dd.contains(ev.target) && ev.target !== nameInput) dd.classList.add('hidden');
+        });
+      }
+    }
+  });
 }
+
+async function _csInqSaveFromPanel(id) {
+  var fm = document.getElementById('fm-inquiry');
+  if (!fm) return;
+  var f = Object.fromEntries(new FormData(fm));
+  if (!f.subject || !f.subject.trim()) { toast('제목을 입력하세요', 'warn'); return; }
+  if (f.customer_id === '') delete f.customer_id;
+  if (f.assignee_id === '') delete f.assignee_id;
+  try {
+    if (id) await API.put('/cs/inquiries/' + id, f);
+    else await API.post('/cs/inquiries', f);
+    toast(id ? '문의가 저장되었습니다' : '문의가 접수되었습니다');
+    closeSidePanel(true);
+    if (typeof fetchCsInquiries === 'function') fetchCsInquiries();
+  } catch(err) {
+    var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
+    toast(msg, 'err');
+  }
+}
+
+function _csInqDeleteFromPanel(id) {
+  showConfirm('문의 삭제',
+    '이 문의를 삭제하시겠습니까?<br><span class="text-[11px] text-red-500">응답 이력도 함께 삭제됩니다.</span>',
+    async function() {
+      try {
+        await API.delete('/cs/inquiries/' + id);
+        toast('삭제되었습니다');
+        closeSidePanel(true);
+        if (typeof fetchCsInquiries === 'function') fetchCsInquiries();
+      } catch(e) { toast('삭제 실패', 'err'); }
+    },
+    { type: 'delete', yesLabel: '삭제' });
+}
+
+function _csInqClearCustomer() {
+  var fm = document.getElementById('fm-inquiry');
+  if (!fm) return;
+  fm.customer_id.value = '';
+  var ni = document.getElementById('cs-inq-cust-name');
+  if (ni) ni.value = '';
+}
+
+// 상세 = 편집 통합 (사이드 패널). 하위 호환용 alias.
+async function viewCsInquiry(id) { return openCsInquiryModal(id); }
 
 async function _csInqAddResponse(inqId) {
   var content = (document.getElementById('cs-resp-content') || {}).value || '';
@@ -1170,8 +1206,9 @@ async function _csInqAddResponse(inqId) {
   try {
     await API.post('/cs/inquiries/' + inqId + '/responses', { content: content.trim(), response_type: type, channel: channel });
     toast('응답이 추가되었습니다');
-    closeModal();
-    setTimeout(function() { viewCsInquiry(inqId); }, 100);
+    // 패널 새로고침 (동일 문의 다시 로드)
+    openCsInquiryModal(inqId);
+    if (typeof fetchCsInquiries === 'function') fetchCsInquiries();
   } catch(e) { toast('응답 추가 실패', 'err'); }
 }
 
@@ -1466,8 +1503,81 @@ async function openCsRepairModal(id, prefillCustomerId) {
     :
     '<div id="rep-linked-product" class="col-span-full"><input type="hidden" name="product_unit_id" value=""></div>';
 
-  openModal(id ? '수리 요청 편집' : '수리 접수',
-    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+  // 상세 헤더 (편집 모드에서 표시): 상태/우선순위/보증 배지 + 접수/완료 일자
+  var detailHeader = '';
+  if (id) {
+    var stCol = CS_REP_STATUS_COLORS[r.status] || CS_REP_STATUS_COLORS.received;
+    var prCol = CS_INQ_PRIORITY_COLORS[r.priority] || CS_INQ_PRIORITY_COLORS.mid;
+    var wrCol = CS_REP_WARRANTY_COLORS[r.warranty_status] || CS_REP_WARRANTY_COLORS.unknown;
+    detailHeader =
+      '<div class="pb-3 mb-4 border-b border-slate-100">' +
+        '<div class="flex flex-wrap items-center gap-1.5 mb-2">' +
+          '<span class="text-[10px] text-slate-400 font-mono">#' + r.id + '</span>' +
+          '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border:1px solid ' + stCol.bd + '">' + csEsc(CS_REP_STATUS_LABELS[r.status] || r.status) + '</span>' +
+          '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + csEsc(CS_INQ_PRIORITY_LABELS[r.priority] || r.priority) + '</span>' +
+          '<span class="text-[10px] px-2 py-0.5 rounded" style="background:' + wrCol.bg + ';color:' + wrCol.fg + ';border:1px solid ' + wrCol.bd + '">' + csEsc(CS_REP_WARRANTY_LABELS[r.warranty_status] || r.warranty_status) + '</span>' +
+        '</div>' +
+        '<div class="grid grid-cols-3 gap-2 text-[11px]">' +
+          '<div><div class="text-slate-400 font-semibold text-[10px]">접수일</div><div class="text-slate-700">' + csFmtDate(r.received_at) + '</div></div>' +
+          '<div><div class="text-slate-400 font-semibold text-[10px]">완료 예정</div><div class="text-slate-700">' + (r.expected_completion_at ? csFmtDate(r.expected_completion_at) : '-') + '</div></div>' +
+          '<div><div class="text-slate-400 font-semibold text-[10px]">' + (r.closed_at ? '종료일' : r.shipped_at ? '발송일' : '완료일') + '</div><div class="text-slate-700">' + (r.closed_at ? csFmtDate(r.closed_at) : r.shipped_at ? csFmtDate(r.shipped_at) : r.completed_at ? csFmtDate(r.completed_at) : '-') + '</div></div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  // 진행 이력 (편집 모드)
+  var stepsSection = '';
+  if (id) {
+    var steps = r.steps || [];
+    var stepsHtml = steps.length ? steps.map(function(s) {
+      var meta = CS_REP_STEP_LABELS[s.step_type] || CS_REP_STEP_LABELS.note;
+      var body = '';
+      if (s.step_type === 'status_change') {
+        body = (s.from_value ? (CS_REP_STATUS_LABELS[s.from_value] || s.from_value) + ' → ' : '') + (CS_REP_STATUS_LABELS[s.to_value] || s.to_value || '');
+      } else if (s.step_type === 'assignee_change') {
+        body = '담당자 변경';
+      } else if (s.step_type === 'cost_update') {
+        body = csRepFmtCost(s.from_value) + ' → ' + csRepFmtCost(s.to_value);
+      } else {
+        body = s.content || '';
+      }
+      return '<div class="flex gap-2 py-2 border-b border-slate-100 last:border-0">' +
+        '<div class="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style="background:' + meta.bg + ';color:' + meta.fg + '"><i class="fas ' + meta.icon + ' text-[11px]"></i></div>' +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="flex items-center justify-between mb-0.5">' +
+            '<span class="text-[11px] font-semibold" style="color:' + meta.fg + '">' + meta.label + '</span>' +
+            '<span class="text-[10px] text-slate-400">' + csFmtDateTime(s.created_at) + (s.user_name ? ' · ' + csEsc(s.user_name) : '') + '</span>' +
+          '</div>' +
+          '<div class="text-[12px] text-slate-700 whitespace-pre-wrap">' + csEsc(body) + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('') : '<div class="text-[12px] text-slate-400 py-4 text-center">진행 이력이 없습니다</div>';
+
+    stepsSection =
+      '<div class="mt-5 pt-4 border-t border-slate-100">' +
+        '<div class="text-[11px] font-bold text-slate-500 mb-2 flex items-center gap-2"><i class="fas fa-clock-rotate-left text-blue-500"></i>진행 이력 <span class="text-slate-300">(' + steps.length + ')</span></div>' +
+        '<div class="border border-slate-100 rounded-lg px-3 max-h-[240px] overflow-y-auto">' + stepsHtml + '</div>' +
+        '<div class="mt-3 pt-3 border-t border-slate-50">' +
+          '<div class="text-[11px] font-bold text-slate-500 mb-2"><i class="fas fa-plus text-blue-500 mr-1"></i>메모/단계 추가</div>' +
+          '<div class="grid grid-cols-3 gap-2 mb-2">' +
+            '<select id="rep-step-type" class="input text-[12px] col-span-1">' +
+              '<option value="note">메모</option>' +
+              '<option value="part_order">부품 주문</option>' +
+              '<option value="diagnosis">진단</option>' +
+              '<option value="resolution">처리</option>' +
+            '</select>' +
+            '<input id="rep-step-content" type="text" placeholder="내용 입력" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_csRepAddStep(' + id + ')}" class="input text-[12px] col-span-2">' +
+          '</div>' +
+          '<div class="flex justify-end">' +
+            '<button type="button" onclick="_csRepAddStep(' + id + ')" class="btn btn-primary btn-sm text-[11px]"><i class="fas fa-paper-plane mr-1"></i>추가</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  var body =
+    detailHeader +
+    '<form id="fm-repair" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
       '<div class="col-span-full"><label class="input-label">증상 <span class="text-rose-500">*</span></label><textarea name="symptom" rows="2" class="input" required placeholder="예: 전원이 켜지지 않음, 특정 주파수 소리 안 남">' + csEsc(r.symptom) + '</textarea></div>' +
       '<div><label class="input-label">상태</label><select name="status" class="input">' +
         Object.keys(CS_REP_STATUS_LABELS).map(function(k) { return '<option value="' + k + '"' + (r.status === k ? ' selected' : '') + '>' + CS_REP_STATUS_LABELS[k] + '</option>'; }).join('') +
@@ -1481,22 +1591,20 @@ async function openCsRepairModal(id, prefillCustomerId) {
       '<div><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
 
       // 제품 섹션
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
         '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-microchip mr-1 text-indigo-500"></i>제품 정보</div>' +
-        '<div class="grid grid-cols-1 sm:grid-cols-3 gap-2">' +
-          '<div class="sm:col-span-2 flex gap-2">' +
-            '<input id="rep-serial-lookup" type="text" placeholder="시리얼/자산번호 조회" class="input flex-1">' +
-            '<button type="button" onclick="_csRepLookupSerial()" class="btn btn-outline btn-sm whitespace-nowrap"><i class="fas fa-search mr-1"></i>조회</button>' +
-          '</div>' +
-          '<div id="rep-serial-results" class="sm:col-span-3"></div>' +
+        '<div class="flex gap-2">' +
+          '<input id="rep-serial-lookup" type="text" placeholder="시리얼/자산번호 조회" class="input flex-1 text-[12px]" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_csRepLookupSerial()}">' +
+          '<button type="button" onclick="_csRepLookupSerial()" class="btn btn-outline btn-sm whitespace-nowrap text-[11px]"><i class="fas fa-search mr-1"></i>조회</button>' +
         '</div>' +
+        '<div id="rep-serial-results" class="mt-2"></div>' +
       '</div>' +
       linkedProductHtml +
       '<div><label class="input-label">제품명 (자유 입력)</label><input name="product_name" type="text" value="' + csEsc(r.product_name) + '" class="input" placeholder="미등록 제품"></div>' +
       '<div><label class="input-label">시리얼 (자유 입력)</label><input name="serial_no_text" type="text" value="' + csEsc(r.serial_no_text) + '" class="input"></div>' +
 
       // 고객 섹션
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
         '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-user mr-1 text-slate-500"></i>고객/연락처</div>' +
       '</div>' +
       '<div class="col-span-full"><label class="input-label">등록 고객 연결</label><select name="customer_id" onchange="_csRepOnCustomerChange()" class="input">' + custOpts + '</select></div>' +
@@ -1505,7 +1613,7 @@ async function openCsRepairModal(id, prefillCustomerId) {
       '<div class="col-span-full"><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(r.contact_email) + '" class="input"></div>' +
 
       // 비용/일정
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
         '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-calendar-check mr-1 text-slate-500"></i>비용 · 일정</div>' +
       '</div>' +
       '<div><label class="input-label">비용 (원)</label><input name="cost" type="number" value="' + (r.cost != null ? r.cost : '') + '" class="input" min="0" step="1"></div>' +
@@ -1513,7 +1621,7 @@ async function openCsRepairModal(id, prefillCustomerId) {
 
       // 진단/처리 (편집 모드만)
       (id ?
-        '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+        '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
           '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-clipboard-check mr-1 text-slate-500"></i>진단 · 처리</div>' +
         '</div>' +
         '<div class="col-span-full"><label class="input-label">진단 결과</label><textarea name="diagnosis" rows="2" class="input">' + csEsc(r.diagnosis) + '</textarea></div>' +
@@ -1521,31 +1629,62 @@ async function openCsRepairModal(id, prefillCustomerId) {
         : '') +
 
       '<div class="col-span-full"><label class="input-label">비고</label><textarea name="notes" rows="2" class="input">' + csEsc(r.notes) + '</textarea></div>' +
-      '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2">' +
-        '<button type="button" onclick="closeModal()" class="btn btn-outline">취소</button>' +
-        '<button type="submit" class="btn btn-primary">' + (id ? '저장' : '접수') + '</button>' +
-      '</div>' +
-    '</form>',
-    'wide');
+    '</form>' +
+    stepsSection;
 
-  document.getElementById('fm').onsubmit = async function(e) {
-    e.preventDefault();
-    var f = Object.fromEntries(new FormData(e.target));
-    if (!f.symptom || !f.symptom.trim()) { toast('증상은 필수입니다', 'warn'); return; }
-    // 빈 문자열 → null
-    ['customer_id','hospital_id','assignee_id','product_unit_id','cost','expected_completion_at']
-      .forEach(function(k) { if (f[k] === '') f[k] = null; });
-    try {
-      if (id) await API.put('/cs/repairs/' + id, f);
-      else await API.post('/cs/repairs', f);
-      toast(id ? '수리 요청이 저장되었습니다' : '수리 요청이 접수되었습니다');
-      closeModal();
-      fetchCsRepairs();
-    } catch(err) {
-      var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
-      toast(msg, 'err');
+  var actions = id ?
+    '<button type="button" onclick="_csRepDeleteFromPanel(' + id + ')" class="btn btn-outline text-red-500 border-red-100 hover:bg-red-50 btn-sm text-[11px]" title="삭제"><i class="fas fa-trash"></i></button>'
+    : '';
+
+  var footer =
+    '<button type="button" onclick="closeSidePanel()" class="btn btn-outline">닫기</button>' +
+    '<button type="button" onclick="_csRepSaveFromPanel(' + (id || 'null') + ')" class="btn btn-primary">' + (id ? '저장' : '접수') + '</button>';
+
+  openSidePanel({
+    title: id ? '수리 요청 · #' + id : '새 수리 접수',
+    icon: id ? 'fa-screwdriver-wrench' : 'fa-plus',
+    body: body,
+    actions: actions,
+    footer: footer,
+    onOpen: function() {
+      var fm = document.getElementById('fm-repair');
+      if (fm) fm.onsubmit = function(e) { e.preventDefault(); _csRepSaveFromPanel(id); };
     }
-  };
+  });
+}
+
+async function _csRepSaveFromPanel(id) {
+  var fm = document.getElementById('fm-repair');
+  if (!fm) return;
+  var f = Object.fromEntries(new FormData(fm));
+  if (!f.symptom || !f.symptom.trim()) { toast('증상은 필수입니다', 'warn'); return; }
+  // 빈 문자열 → null
+  ['customer_id','hospital_id','assignee_id','product_unit_id','cost','expected_completion_at']
+    .forEach(function(k) { if (f[k] === '') f[k] = null; });
+  try {
+    if (id) await API.put('/cs/repairs/' + id, f);
+    else await API.post('/cs/repairs', f);
+    toast(id ? '수리 요청이 저장되었습니다' : '수리 요청이 접수되었습니다');
+    closeSidePanel(true);
+    if (typeof fetchCsRepairs === 'function') fetchCsRepairs();
+  } catch(err) {
+    var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
+    toast(msg, 'err');
+  }
+}
+
+function _csRepDeleteFromPanel(id) {
+  showConfirm('수리 요청 삭제',
+    '이 수리 요청을 삭제하시겠습니까?<br><span class="text-[11px] text-red-500">관련 진행 이력도 함께 삭제됩니다.</span>',
+    async function() {
+      try {
+        await API.delete('/cs/repairs/' + id);
+        toast('수리 요청이 삭제되었습니다');
+        closeSidePanel(true);
+        if (typeof fetchCsRepairs === 'function') fetchCsRepairs();
+      } catch(e) { toast('삭제 실패', 'err'); }
+    },
+    { type: 'delete', yesLabel: '삭제' });
 }
 
 function _csRepClearProduct() {
@@ -1602,12 +1741,12 @@ function _csRepPickProduct(unitId, label, serialNo, assetCode) {
 }
 
 function _csRepOnCustomerChange() {
-  var sel = document.querySelector('#fm select[name="customer_id"]');
+  var fm = document.getElementById('fm-repair');
+  if (!fm) return;
+  var sel = fm.elements['customer_id'];
   if (!sel || !sel.value) return;
   var c = _csRepCustomers.find(function(x) { return String(x.id) === String(sel.value); });
   if (!c) return;
-  var fm = document.getElementById('fm');
-  if (!fm) return;
   var n = fm.elements['contact_name'];
   var p = fm.elements['contact_phone'];
   var e = fm.elements['contact_email'];
@@ -1616,123 +1755,8 @@ function _csRepOnCustomerChange() {
   if (e && !e.value) e.value = c.email || '';
 }
 
-// ---------- 상세 보기 ----------
-async function viewCsRepair(id) {
-  try {
-    var res = await API.get('/cs/repairs/' + id);
-    var r = res.data.data;
-    if (!r) { toast('수리 요청을 찾을 수 없습니다', 'err'); return; }
-    var steps = r.steps || [];
-
-    var stCol = CS_REP_STATUS_COLORS[r.status] || CS_REP_STATUS_COLORS.received;
-    var prCol = CS_INQ_PRIORITY_COLORS[r.priority] || CS_INQ_PRIORITY_COLORS.mid;
-    var wrCol = CS_REP_WARRANTY_COLORS[r.warranty_status] || CS_REP_WARRANTY_COLORS.unknown;
-    var custName = r.customer_name || r.contact_name || '(연락처 없음)';
-    var custPhone = r.customer_phone || r.contact_phone || '';
-    var custEmail = r.customer_email || r.contact_email || '';
-
-    var productHtml = '';
-    if (r.product_master_name || r.product_serial_no) {
-      productHtml =
-        '<div class="p-3 bg-indigo-50 border border-indigo-200 rounded-lg">' +
-          '<div class="text-[11px] font-semibold text-indigo-700 mb-1"><i class="fas fa-link mr-1"></i>연결된 등록 제품</div>' +
-          '<div class="text-[13px] font-semibold text-indigo-900">' + csEsc(r.product_master_name || '-') + '</div>' +
-          '<div class="text-[11px] text-indigo-700 mt-0.5">S/N: ' + csEsc(r.product_serial_no || '-') + (r.product_asset_code ? ' · 자산: ' + csEsc(r.product_asset_code) : '') + ' · ' + csEsc(r.product_unit_status || '') + '</div>' +
-        '</div>';
-    } else if (r.product_name || r.serial_no_text) {
-      productHtml =
-        '<div class="p-3 bg-slate-50 border border-slate-200 rounded-lg">' +
-          '<div class="text-[11px] font-semibold text-slate-700 mb-1"><i class="fas fa-microchip mr-1"></i>제품 (자유 입력)</div>' +
-          '<div class="text-[13px] font-semibold text-slate-900">' + csEsc(r.product_name || '-') + '</div>' +
-          (r.serial_no_text ? '<div class="text-[11px] text-slate-600 mt-0.5">S/N: ' + csEsc(r.serial_no_text) + '</div>' : '') +
-        '</div>';
-    }
-
-    var stepsHtml = steps.length ? steps.map(function(s) {
-      var meta = CS_REP_STEP_LABELS[s.step_type] || CS_REP_STEP_LABELS.note;
-      var body = '';
-      if (s.step_type === 'status_change') {
-        body = (s.from_value ? (CS_REP_STATUS_LABELS[s.from_value] || s.from_value) + ' → ' : '') + (CS_REP_STATUS_LABELS[s.to_value] || s.to_value || '');
-      } else if (s.step_type === 'assignee_change') {
-        body = '담당자 변경';
-      } else if (s.step_type === 'cost_update') {
-        body = csRepFmtCost(s.from_value) + ' → ' + csRepFmtCost(s.to_value);
-      } else {
-        body = s.content || '';
-      }
-      return '<div class="flex gap-2">' +
-        '<div class="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style="background:' + meta.bg + ';color:' + meta.fg + '"><i class="fas ' + meta.icon + ' text-[11px]"></i></div>' +
-        '<div class="flex-1 bg-white border border-slate-100 rounded-lg px-3 py-2">' +
-          '<div class="flex items-center justify-between mb-0.5">' +
-            '<span class="text-[11px] font-semibold" style="color:' + meta.fg + '">' + meta.label + '</span>' +
-            '<span class="text-[10px] text-slate-400">' + csFmtDateTime(s.created_at) + (s.user_name ? ' · ' + csEsc(s.user_name) : '') + '</span>' +
-          '</div>' +
-          '<div class="text-[12px] text-slate-700 whitespace-pre-wrap">' + csEsc(body) + '</div>' +
-        '</div>' +
-      '</div>';
-    }).join('') : '<div class="text-[12px] text-slate-400 py-3 text-center">진행 이력이 없습니다</div>';
-
-    openModal('수리 요청 상세',
-      '<div class="space-y-3">' +
-        '<div class="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">' +
-          '<div class="flex-1 min-w-0">' +
-            '<div class="flex flex-wrap items-center gap-1.5 mb-1">' +
-              '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border:1px solid ' + stCol.bd + '">' + csEsc(CS_REP_STATUS_LABELS[r.status] || r.status) + '</span>' +
-              '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + csEsc(CS_INQ_PRIORITY_LABELS[r.priority] || r.priority) + '</span>' +
-              '<span class="text-[10px] px-2 py-0.5 rounded" style="background:' + wrCol.bg + ';color:' + wrCol.fg + ';border:1px solid ' + wrCol.bd + '">' + csEsc(CS_REP_WARRANTY_LABELS[r.warranty_status] || r.warranty_status) + '</span>' +
-              '<span class="text-[10px] text-slate-400">#' + r.id + '</span>' +
-            '</div>' +
-            '<h3 class="text-[16px] font-bold text-slate-800 whitespace-pre-wrap">' + csEsc(r.symptom || '') + '</h3>' +
-          '</div>' +
-          '<div class="flex gap-1">' +
-            '<button onclick="closeModal();setTimeout(function(){openCsRepairModal(' + r.id + ')},100)" class="btn btn-outline btn-sm text-[11px]"><i class="fas fa-pen mr-1"></i>편집</button>' +
-          '</div>' +
-        '</div>' +
-        (productHtml ? productHtml : '') +
-        '<div class="grid grid-cols-2 gap-3 text-[12px]">' +
-          _custInfoRow('고객', custName + (r.customer_id ? ' <a onclick="closeModal();setTimeout(function(){viewCustomer(' + r.customer_id + ')},100)" class="text-blue-500 cursor-pointer hover:underline">(상세)</a>' : '')) +
-          _custInfoRow('연락처', custPhone || '-') +
-          _custInfoRow('이메일', custEmail || '-') +
-          _custInfoRow('기관', r.hospital_name || '-') +
-          _custInfoRow('담당자', r.assignee_name || '미지정') +
-          _custInfoRow('비용', r.cost != null ? csRepFmtCost(r.cost) : '-') +
-          _custInfoRow('접수일', csFmtDateTime(r.received_at)) +
-          _custInfoRow('완료 예정', r.expected_completion_at ? csFmtDate(r.expected_completion_at) : '-') +
-          (r.completed_at ? _custInfoRow('완료일', csFmtDateTime(r.completed_at)) : '') +
-          (r.shipped_at ? _custInfoRow('발송일', csFmtDateTime(r.shipped_at)) : '') +
-          (r.closed_at ? _custInfoRow('종료일', csFmtDateTime(r.closed_at)) : '') +
-        '</div>' +
-        (r.diagnosis ? '<div class="p-3 bg-indigo-50 border border-indigo-100 rounded-lg"><div class="text-[11px] font-semibold text-indigo-700 mb-1">진단</div><div class="text-[12px] text-indigo-900 whitespace-pre-wrap">' + csEsc(r.diagnosis) + '</div></div>' : '') +
-        (r.resolution ? '<div class="p-3 bg-emerald-50 border border-emerald-100 rounded-lg"><div class="text-[11px] font-semibold text-emerald-700 mb-1">처리 내용</div><div class="text-[12px] text-emerald-900 whitespace-pre-wrap">' + csEsc(r.resolution) + '</div></div>' : '') +
-        (r.notes ? '<div class="p-3 bg-slate-50 border border-slate-100 rounded-lg"><div class="text-[11px] font-semibold text-slate-600 mb-1">비고</div><div class="text-[12px] text-slate-700 whitespace-pre-wrap">' + csEsc(r.notes) + '</div></div>' : '') +
-
-        '<div class="border-t border-slate-100 pt-3">' +
-          '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-plus-circle mr-1"></i>메모/단계 추가</div>' +
-          '<div class="flex gap-2">' +
-            '<select id="rep-step-type" class="input" style="max-width:120px">' +
-              '<option value="note">메모</option>' +
-              '<option value="part_order">부품 주문</option>' +
-              '<option value="diagnosis">진단</option>' +
-              '<option value="resolution">처리</option>' +
-            '</select>' +
-            '<input id="rep-step-content" type="text" placeholder="내용 입력 후 Enter" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_csRepAddStep(' + r.id + ')}" class="input flex-1">' +
-            '<button onclick="_csRepAddStep(' + r.id + ')" class="btn btn-primary btn-sm whitespace-nowrap"><i class="fas fa-paper-plane"></i></button>' +
-          '</div>' +
-        '</div>' +
-        '<div class="border-t border-slate-100 pt-3">' +
-          '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-clock-rotate-left mr-1"></i>진행 이력 (' + steps.length + ')</div>' +
-          '<div class="space-y-2">' + stepsHtml + '</div>' +
-        '</div>' +
-        '<div class="flex justify-between pt-3 border-t border-gray-50 mt-2">' +
-          '<button onclick="deleteCsRepair(' + r.id + ')" class="btn btn-outline text-red-500 border-red-100 hover:bg-red-50"><i class="fas fa-trash mr-1"></i>삭제</button>' +
-          '<button onclick="closeModal()" class="btn btn-outline">닫기</button>' +
-        '</div>' +
-      '</div>',
-      'wide');
-  } catch(e) {
-    toast('불러오기 실패', 'err');
-  }
-}
+// 상세 = 편집 통합 (사이드 패널). 하위 호환용 alias.
+async function viewCsRepair(id) { return openCsRepairModal(id); }
 
 async function _csRepAddStep(id) {
   var step_type = (document.getElementById('rep-step-type') || {}).value || 'note';
@@ -1741,19 +1765,24 @@ async function _csRepAddStep(id) {
   if (!content) return;
   try {
     await API.post('/cs/repairs/' + id + '/steps', { step_type: step_type, content: content });
-    closeModal();
-    setTimeout(function() { viewCsRepair(id); }, 100);
+    // 패널 새로고침 (동일 수리요청 다시 로드)
+    openCsRepairModal(id);
+    if (typeof fetchCsRepairs === 'function') fetchCsRepairs();
   } catch(e) { toast('추가 실패', 'err'); }
 }
 
 async function deleteCsRepair(id) {
-  if (!confirm('이 수리 요청을 삭제하시겠습니까?\n(관련 진행 이력도 함께 삭제됩니다)')) return;
-  try {
-    await API.delete('/cs/repairs/' + id);
-    toast('수리 요청이 삭제되었습니다');
-    closeModal();
-    fetchCsRepairs();
-  } catch(e) { toast('삭제 실패', 'err'); }
+  showConfirm('수리 요청 삭제',
+    '이 수리 요청을 삭제하시겠습니까?<br><span class="text-[11px] text-red-500">관련 진행 이력도 함께 삭제됩니다.</span>',
+    async function() {
+      try {
+        await API.delete('/cs/repairs/' + id);
+        toast('수리 요청이 삭제되었습니다');
+        closeSidePanel(true);
+        if (typeof fetchCsRepairs === 'function') fetchCsRepairs();
+      } catch(e) { toast('삭제 실패', 'err'); }
+    },
+    { type: 'delete', yesLabel: '삭제' });
 }
 
 function loadCsContactLogPending() {
@@ -1895,6 +1924,112 @@ function setupModalSwipeClose(mc) {
     }
   });
 }
+// ============================================================
+// Side Panel — 오른쪽 슬라이드 편집 패널
+// ============================================================
+// opts: {
+//   title: string | html,
+//   icon: 'fas fa-...',
+//   body: html,
+//   footer?: html,
+//   actions?: html (header 우측),
+//   onOpen?: fn,       // 열린 뒤 호출 (form 이벤트 바인딩 등)
+//   onClose?: fn,      // 닫힐 때 호출
+//   dirtyGuard?: fn -> bool  // true면 닫기 전 confirm
+// }
+var _sidePanelOpts = null;
+function openSidePanel(opts) {
+  opts = opts || {};
+  // 기존 열려 있으면 onClose 실행
+  if (_sidePanelOpts && typeof _sidePanelOpts.onClose === 'function') {
+    try { _sidePanelOpts.onClose(); } catch(e) {}
+  }
+  _sidePanelOpts = opts;
+
+  var titleEl = document.querySelector('#side-panel-title .sp-title-text');
+  var iconEl = document.getElementById('side-panel-icon');
+  var bodyEl = document.getElementById('side-panel-body');
+  var footerEl = document.getElementById('side-panel-footer');
+  var actionsEl = document.getElementById('side-panel-actions');
+  var panel = document.getElementById('side-panel');
+  var overlay = document.getElementById('side-panel-overlay');
+
+  if (titleEl) {
+    if (typeof opts.title === 'string' && /<[a-z][^>]*>/i.test(opts.title)) titleEl.innerHTML = opts.title;
+    else titleEl.textContent = opts.title || '';
+  }
+  if (iconEl) {
+    iconEl.className = 'fas ' + (opts.icon || 'fa-pen') + ' text-slate-400';
+  }
+  if (bodyEl) bodyEl.innerHTML = opts.body || '';
+  if (actionsEl) actionsEl.innerHTML = opts.actions || '';
+  if (footerEl) {
+    if (opts.footer) {
+      footerEl.innerHTML = opts.footer;
+      footerEl.classList.remove('hidden');
+    } else {
+      footerEl.innerHTML = '';
+      footerEl.classList.add('hidden');
+    }
+  }
+  if (panel) {
+    panel.classList.remove('hidden');
+    panel.setAttribute('aria-hidden', 'false');
+    // 다음 프레임에 open 클래스 추가 (transition 효과)
+    requestAnimationFrame(function() {
+      panel.classList.add('open');
+      if (overlay) overlay.classList.add('open');
+    });
+  }
+  // 모바일에서만 body 스크롤 잠금
+  if (window.innerWidth < 640) document.body.style.overflow = 'hidden';
+
+  // Restore focus target
+  window._sidePanelLastFocus = document.activeElement;
+  setTimeout(function() {
+    if (bodyEl) {
+      var first = bodyEl.querySelector('input:not([type=hidden]),textarea,select,button,[href]');
+      if (first) first.focus();
+    }
+    if (typeof opts.onOpen === 'function') { try { opts.onOpen(); } catch(e) {} }
+  }, 60);
+}
+function closeSidePanel(force) {
+  var opts = _sidePanelOpts;
+  if (!force && opts && typeof opts.dirtyGuard === 'function') {
+    try {
+      if (opts.dirtyGuard() && !confirm('저장하지 않은 변경사항이 있습니다. 정말 닫으시겠습니까?')) return;
+    } catch(e) {}
+  }
+  var panel = document.getElementById('side-panel');
+  var overlay = document.getElementById('side-panel-overlay');
+  if (panel) {
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    // transition 완료 후 hidden
+    setTimeout(function() {
+      panel.classList.add('hidden');
+      var bodyEl = document.getElementById('side-panel-body');
+      if (bodyEl) bodyEl.innerHTML = '';
+    }, 300);
+  }
+  if (overlay) overlay.classList.remove('open');
+  document.body.style.overflow = '';
+  if (opts && typeof opts.onClose === 'function') { try { opts.onClose(); } catch(e) {} }
+  _sidePanelOpts = null;
+  try { if (window._sidePanelLastFocus && window._sidePanelLastFocus.focus) window._sidePanelLastFocus.focus(); } catch(e) {}
+  window._sidePanelLastFocus = null;
+}
+// ESC 로 사이드 패널 닫기
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    var panel = document.getElementById('side-panel');
+    if (panel && panel.classList.contains('open')) {
+      closeSidePanel();
+    }
+  }
+});
+
 function closeModal() {
   var mdl = document.getElementById('modal');
   mdl.classList.add('hidden');
