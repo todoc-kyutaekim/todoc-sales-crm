@@ -16,6 +16,8 @@ import pipeline from './routes/pipeline'
 import schedule from './routes/schedule'
 import comments from './routes/comments'
 import products from './routes/products'
+import customers from './routes/customers'
+import csInquiries from './routes/cs_inquiries'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number; user?: { id: number, name: string, email: string } }
@@ -73,6 +75,8 @@ app.route('/api/pipeline', pipeline)
 app.route('/api/schedule', schedule)
 app.route('/api/comments', comments)
 app.route('/api/products', products)
+app.route('/api/customers', customers)
+app.route('/api/cs/inquiries', csInquiries)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
@@ -205,7 +209,11 @@ const HTML = `<!DOCTYPE html>
     <div onclick="nav('products')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('products')}" id="n-products" class="nav-item hidden" role="link" tabindex="0" aria-label="제품 관리" aria-hidden="true"><span class="nav-icon" aria-hidden="true"><i class="fas fa-box-archive"></i></span>제품 관리</div>
     <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
     <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">CS Main</span></div>
+    <div onclick="nav('customers')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('customers')}" id="n-customers" class="nav-item" role="link" tabindex="0" aria-label="고객관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-user-group"></i></span>고객관리</div>
     <div onclick="nav('cs_inquiry')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cs_inquiry')}" id="n-cs_inquiry" class="nav-item" role="link" tabindex="0" aria-label="고객 문의"><span class="nav-icon" aria-hidden="true"><i class="fas fa-headset"></i></span>고객 문의</div>
+    <div onclick="nav('cs_repair')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cs_repair')}" id="n-cs_repair" class="nav-item" role="link" tabindex="0" aria-label="AS/수리 요청"><span class="nav-icon" aria-hidden="true"><i class="fas fa-screwdriver-wrench"></i></span>AS/수리 요청</div>
+    <div onclick="nav('cs_contact_log')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cs_contact_log')}" id="n-cs_contact_log" class="nav-item" role="link" tabindex="0" aria-label="응대 로그"><span class="nav-icon" aria-hidden="true"><i class="fas fa-phone-volume"></i></span>응대 로그</div>
+    <div onclick="nav('cs_faq')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cs_faq')}" id="n-cs_faq" class="nav-item" role="link" tabindex="0" aria-label="FAQ / 지식베이스"><span class="nav-icon" aria-hidden="true"><i class="fas fa-book-open"></i></span>FAQ / 지식베이스</div>
     <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
     <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Analytics</span></div>
     <div onclick="nav('cistats')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cistats')}" id="n-cistats" class="nav-item" role="link" tabindex="0" aria-label="인공와우 통계"><span class="nav-icon" aria-hidden="true"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>

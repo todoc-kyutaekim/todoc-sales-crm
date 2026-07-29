@@ -383,30 +383,831 @@ function nav(p) {
     const sb = document.getElementById('sidebar');
     if (sb && !sb.classList.contains('-translate-x-full')) toggleSidebar();
   }
-  ({ dashboard: loadDash, hospitals: loadHosp, doctors: loadDoc, meetings: loadMeet, cistats: loadCIStats, activity: loadActivity, schedule: loadSchedule, products: loadProducts, cs_inquiry: loadCsInquiry })[p]?.();
+  ({
+    dashboard: loadDash,
+    hospitals: loadHosp,
+    doctors: loadDoc,
+    meetings: loadMeet,
+    cistats: loadCIStats,
+    activity: loadActivity,
+    schedule: loadSchedule,
+    products: loadProducts,
+    customers: loadCustomers,
+    cs_inquiry: loadCsInquiry,
+    cs_repair: loadCsRepairPending,
+    cs_contact_log: loadCsContactLogPending,
+    cs_faq: loadCsFaqPending,
+  })[p]?.();
 }
 
-// ===== CS Main — 고객 문의 (준비 중 플레이스홀더) =====
-function loadCsInquiry() {
+// ============================================================
+// ===== CS Main =====
+// ============================================================
+// 공용 라벨/색상 매핑
+var CUST_TYPE_LABELS = { prospect: '가망고객', guardian: '보호자', patient: '수술 환자' };
+var CUST_TYPE_COLORS = {
+  prospect:  { bg: '#eff6ff', fg: '#1d4ed8', bd: '#bfdbfe' },
+  guardian:  { bg: '#f5f3ff', fg: '#6d28d9', bd: '#ddd6fe' },
+  patient:   { bg: '#ecfdf5', fg: '#047857', bd: '#a7f3d0' }
+};
+var CUST_STATUS_LABELS = { active: '활성', inactive: '비활성', dormant: '휴면' };
+var CS_INQ_STATUS_LABELS = { open: '접수', in_progress: '처리 중', resolved: '해결', closed: '종료', canceled: '취소' };
+var CS_INQ_STATUS_COLORS = {
+  open:        { bg: '#fef3c7', fg: '#92400e', bd: '#fde68a' },
+  in_progress: { bg: '#dbeafe', fg: '#1d4ed8', bd: '#bfdbfe' },
+  resolved:    { bg: '#dcfce7', fg: '#166534', bd: '#bbf7d0' },
+  closed:      { bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0' },
+  canceled:    { bg: '#fee2e2', fg: '#b91c1c', bd: '#fecaca' }
+};
+var CS_INQ_PRIORITY_LABELS = { low: '낮음', mid: '보통', high: '높음', urgent: '긴급' };
+var CS_INQ_PRIORITY_COLORS = {
+  low:    { bg: '#f1f5f9', fg: '#475569' },
+  mid:    { bg: '#dbeafe', fg: '#1d4ed8' },
+  high:   { bg: '#ffedd5', fg: '#c2410c' },
+  urgent: { bg: '#fee2e2', fg: '#b91c1c' }
+};
+var CS_INQ_CATEGORY_LABELS = {
+  product: '제품', usage: '사용법', billing: '비용/보험',
+  appointment: '예약', complaint: '불만', general: '일반'
+};
+var CS_INQ_CHANNEL_LABELS = {
+  phone: '전화', email: '이메일', kakao: '카카오톡',
+  visit: '방문', web: '웹', referral: '지인 소개'
+};
+
+function csEsc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function csFmtDate(s) {
+  if (!s) return '-';
+  var d = new Date(String(s).replace(' ', 'T') + (String(s).endsWith('Z') || String(s).includes('+') ? '' : 'Z'));
+  if (isNaN(d.getTime())) return String(s).slice(0, 10);
+  var y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), dd = String(d.getDate()).padStart(2,'0');
+  return y + '-' + m + '-' + dd;
+}
+
+function csFmtDateTime(s) {
+  if (!s) return '-';
+  var d = new Date(String(s).replace(' ', 'T') + (String(s).endsWith('Z') || String(s).includes('+') ? '' : 'Z'));
+  if (isNaN(d.getTime())) return String(s);
+  var pad = function(n) { return String(n).padStart(2,'0'); };
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+// ============================================================
+// ===== 고객관리 =====
+// ============================================================
+var _custList = [];
+var _custFilter = { search: '', type: '', status: '', hospital_id: '', region: '' };
+var _custHospitals = []; // 셀렉트용
+
+async function loadCustomers() {
+  var c = document.getElementById('content');
+  document.getElementById('page-title').textContent = '고객관리';
+  document.getElementById('page-subtitle').textContent = '가망고객 · 보호자 · 수술 환자 통합 관리';
+  document.getElementById('header-actions').innerHTML =
+    '<button onclick="openCustomerModal()" class="btn btn-primary btn-sm"><i class="fas fa-plus mr-1"></i>새 고객</button>';
+
+  c.innerHTML = '<div class="p-4 lg:p-6 max-w-7xl mx-auto">' +
+    '<div id="cust-stats" class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5"></div>' +
+    '<div class="card p-4 mb-4">' +
+      '<div class="flex flex-wrap gap-2 items-center">' +
+        '<div class="relative flex-1 min-w-[200px] filter-search">' +
+          '<i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>' +
+          '<input id="cust-search" oninput="filterCust()" placeholder="이름 · 전화 · 이메일 · 시리얼 검색" class="input pl-10">' +
+        '</div>' +
+        '<select id="cust-type" onchange="filterCust()" class="input filter-select">' +
+          '<option value="">전체 유형</option>' +
+          '<option value="prospect">가망고객</option>' +
+          '<option value="guardian">보호자</option>' +
+          '<option value="patient">수술 환자</option>' +
+        '</select>' +
+        '<select id="cust-status" onchange="filterCust()" class="input filter-select">' +
+          '<option value="">전체 상태</option>' +
+          '<option value="active">활성</option>' +
+          '<option value="inactive">비활성</option>' +
+          '<option value="dormant">휴면</option>' +
+        '</select>' +
+        '<select id="cust-region" onchange="filterCust()" class="input filter-select">' +
+          '<option value="">전체 지역</option>' +
+        '</select>' +
+      '</div>' +
+    '</div>' +
+    '<div id="cust-list"></div>' +
+  '</div>';
+
+  await Promise.all([_custLoadHospitals(), _custLoadRegions(), fetchCustomers()]);
+}
+
+async function _custLoadHospitals() {
+  try {
+    var r = await API.get('/hospitals');
+    _custHospitals = r.data.data || [];
+  } catch(e) { _custHospitals = []; }
+}
+
+async function _custLoadRegions() {
+  try {
+    var r = await API.get('/regions');
+    var sel = document.getElementById('cust-region');
+    if (!sel) return;
+    (r.data.data || []).forEach(function(rg) {
+      var opt = document.createElement('option');
+      opt.value = rg; opt.textContent = rg;
+      sel.appendChild(opt);
+    });
+  } catch(e) {}
+}
+
+async function fetchCustomers() {
+  var listDiv = document.getElementById('cust-list');
+  if (!listDiv) return;
+  listDiv.innerHTML = '<div class="flex items-center justify-center py-10"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div></div>';
+  try {
+    var params = [];
+    if (_custFilter.search) params.push('search=' + encodeURIComponent(_custFilter.search));
+    if (_custFilter.type) params.push('type=' + _custFilter.type);
+    if (_custFilter.status) params.push('status=' + _custFilter.status);
+    if (_custFilter.region) params.push('region=' + encodeURIComponent(_custFilter.region));
+    var qs = params.length ? '?' + params.join('&') : '';
+    var res = await API.get('/customers' + qs);
+    _custList = res.data.data || [];
+    renderCustomers();
+    renderCustomerStats();
+  } catch(e) {
+    listDiv.innerHTML = '<div class="card p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle mr-2"></i>고객 목록을 불러올 수 없습니다</div>';
+  }
+}
+
+function renderCustomerStats() {
+  var statsDiv = document.getElementById('cust-stats');
+  if (!statsDiv) return;
+  var total = _custList.length;
+  var byType = { prospect: 0, guardian: 0, patient: 0 };
+  _custList.forEach(function(cst) {
+    var t = cst.customer_type || 'prospect';
+    if (byType[t] !== undefined) byType[t]++;
+  });
+  function card(label, value, color, icon) {
+    return '<div class="card p-3 flex items-center gap-3">' +
+      '<div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:' + color + '15">' +
+        '<i class="' + icon + '" style="color:' + color + '"></i>' +
+      '</div>' +
+      '<div><div class="text-[10px] text-slate-400 font-semibold">' + label + '</div>' +
+      '<div class="text-[18px] font-extrabold" style="color:' + color + '">' + value + '</div></div>' +
+    '</div>';
+  }
+  statsDiv.innerHTML =
+    card('전체', total, '#0f172a', 'fas fa-user-group') +
+    card('가망고객', byType.prospect, '#2563eb', 'fas fa-user-plus') +
+    card('보호자', byType.guardian, '#7c3aed', 'fas fa-user-shield') +
+    card('수술 환자', byType.patient, '#059669', 'fas fa-user-check');
+}
+
+function renderCustomers() {
+  var listDiv = document.getElementById('cust-list');
+  if (!listDiv) return;
+  if (_custList.length === 0) {
+    listDiv.innerHTML = '<div class="card p-10 text-center"><i class="fas fa-user-group text-3xl text-slate-200 mb-3"></i><p class="text-sm text-slate-400">등록된 고객이 없습니다</p></div>';
+    return;
+  }
+
+  var html = '<div class="card overflow-hidden">' +
+    '<div class="hidden md:grid gap-2 px-4 py-2.5 text-[10px] font-bold text-slate-400 tracking-wide uppercase bg-slate-50/50 border-b border-slate-100" style="grid-template-columns:1fr 90px 100px 130px 90px 90px 80px">' +
+      '<div>이름 / 연락처</div><div>유형</div><div>상태</div><div>병원</div><div>지역</div><div class="text-center">문의</div><div class="text-right">액션</div>' +
+    '</div>';
+
+  _custList.forEach(function(cst) {
+    var typeCol = CUST_TYPE_COLORS[cst.customer_type] || CUST_TYPE_COLORS.prospect;
+    var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || cst.customer_type || '-';
+    var statusLabel = CUST_STATUS_LABELS[cst.status] || cst.status || '-';
+    var statusCls = cst.status === 'active' ? 'text-emerald-600 bg-emerald-50 border-emerald-100'
+      : cst.status === 'dormant' ? 'text-amber-600 bg-amber-50 border-amber-100'
+      : 'text-slate-500 bg-slate-50 border-slate-100';
+
+    html += '<div class="md:grid flex flex-col gap-2 md:gap-2 px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition cursor-pointer" style="grid-template-columns:1fr 90px 100px 130px 90px 90px 80px" onclick="viewCustomer(' + cst.id + ')">' +
+      // 이름/연락처
+      '<div class="min-w-0">' +
+        '<div class="font-semibold text-[13px] text-slate-800 truncate">' + csEsc(cst.name) +
+          (cst.birth_date ? ' <span class="text-[10px] text-slate-400 font-normal">' + csEsc(cst.birth_date) + '</span>' : '') +
+        '</div>' +
+        '<div class="text-[11px] text-slate-400 truncate">' +
+          (cst.phone ? '<i class="fas fa-phone text-[9px] mr-1"></i>' + csEsc(cst.phone) : '') +
+          (cst.email ? ' <span class="text-slate-300">·</span> ' + csEsc(cst.email) : '') +
+        '</div>' +
+      '</div>' +
+      // 유형
+      '<div class="flex items-center">' +
+        '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border" style="background:' + typeCol.bg + ';color:' + typeCol.fg + ';border-color:' + typeCol.bd + '">' + typeLabel + '</span>' +
+      '</div>' +
+      // 상태
+      '<div class="flex items-center">' +
+        '<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border ' + statusCls + '">' + statusLabel + '</span>' +
+      '</div>' +
+      // 병원
+      '<div class="text-[11px] text-slate-500 truncate flex items-center">' + (cst.hospital_name ? '<i class="fas fa-hospital text-[9px] text-slate-300 mr-1"></i>' + csEsc(cst.hospital_name) : '<span class="text-slate-300">-</span>') + '</div>' +
+      // 지역
+      '<div class="text-[11px] text-slate-500 truncate flex items-center">' + (cst.region ? csEsc(cst.region) : '<span class="text-slate-300">-</span>') + '</div>' +
+      // 문의 수
+      '<div class="text-center flex items-center justify-center">' +
+        (cst.inquiry_count > 0
+          ? '<span class="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">' + cst.inquiry_count + '건</span>'
+          : '<span class="text-[11px] text-slate-300">-</span>') +
+      '</div>' +
+      // 액션
+      '<div class="flex items-center justify-end gap-1" onclick="event.stopPropagation()">' +
+        '<button onclick="openCsInquiryModal(null,' + cst.id + ')" class="text-[10px] px-2 py-1 rounded hover:bg-blue-50 text-blue-600 font-semibold" title="문의 접수"><i class="fas fa-headset"></i></button>' +
+        '<button onclick="openCustomerModal(' + cst.id + ')" class="text-[10px] px-2 py-1 rounded hover:bg-slate-100 text-slate-500" title="편집"><i class="fas fa-pen"></i></button>' +
+        '<button onclick="deleteCustomer(' + cst.id + ',\'' + csEsc(cst.name).replace(/'/g,'&#39;') + '\')" class="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-400" title="삭제"><i class="fas fa-trash"></i></button>' +
+      '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+  listDiv.innerHTML = html;
+}
+
+function filterCust() {
+  _custFilter.search = (document.getElementById('cust-search') || {}).value || '';
+  _custFilter.type = (document.getElementById('cust-type') || {}).value || '';
+  _custFilter.status = (document.getElementById('cust-status') || {}).value || '';
+  _custFilter.region = (document.getElementById('cust-region') || {}).value || '';
+  clearTimeout(window._custFilterTimer);
+  window._custFilterTimer = setTimeout(fetchCustomers, 250);
+}
+
+async function openCustomerModal(id) {
+  var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'prospect', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '' };
+  if (id) {
+    try { var r = await API.get('/customers/' + id); cst = Object.assign(cst, r.data.data || {}); } catch(e) { toast('고객 정보를 불러올 수 없습니다', 'err'); return; }
+  }
+  if (!_custHospitals.length) await _custLoadHospitals();
+
+  var hospOpts = '<option value="">선택 안 함</option>' + _custHospitals.map(function(h) {
+    var sel = (String(cst.hospital_id || '') === String(h.id)) ? ' selected' : '';
+    return '<option value="' + h.id + '"' + sel + '>' + csEsc(h.name) + '</option>';
+  }).join('');
+
+  var regionOpts = '<option value="">선택 안 함</option>' +
+    ['서울','경기','인천','강원','충북','충남','대전','세종','전북','전남','광주','경북','경남','대구','울산','부산','제주']
+    .map(function(r) { return '<option value="' + r + '"' + (cst.region === r ? ' selected' : '') + '>' + r + '</option>'; }).join('');
+
+  openModal(id ? '고객 편집' : '새 고객 등록',
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+      '<div><label class="input-label">이름 *</label><input name="name" type="text" value="' + csEsc(cst.name) + '" class="input" required></div>' +
+      '<div><label class="input-label">유형</label><select name="customer_type" class="input">' +
+        ['prospect','guardian','patient'].map(function(t) { return '<option value="' + t + '"' + (cst.customer_type === t ? ' selected' : '') + '>' + CUST_TYPE_LABELS[t] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label class="input-label">전화번호</label><input name="phone" type="tel" value="' + csEsc(cst.phone) + '" class="input" placeholder="010-1234-5678"></div>' +
+      '<div><label class="input-label">이메일</label><input name="email" type="email" value="' + csEsc(cst.email) + '" class="input"></div>' +
+      '<div><label class="input-label">생년월일</label><input name="birth_date" type="date" value="' + csEsc(cst.birth_date) + '" class="input"></div>' +
+      '<div><label class="input-label">성별</label><select name="gender" class="input">' +
+        ['','M','F'].map(function(g) { var l = g === 'M' ? '남' : g === 'F' ? '여' : '선택 안 함'; return '<option value="' + g + '"' + (cst.gender === g ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label class="input-label">병원</label><select name="hospital_id" class="input">' + hospOpts + '</select></div>' +
+      '<div><label class="input-label">지역</label><select name="region" class="input">' + regionOpts + '</select></div>' +
+      '<div class="col-span-full"><label class="input-label">주소</label><input name="address" type="text" value="' + csEsc(cst.address) + '" class="input"></div>' +
+      '<div><label class="input-label">시술일 <span class="text-[10px] text-slate-400">(수술 환자)</span></label><input name="implant_date" type="date" value="' + csEsc(cst.implant_date) + '" class="input"></div>' +
+      '<div><label class="input-label">시술 부위</label><select name="implant_side" class="input">' +
+        ['','L','R','BOTH'].map(function(s) { var l = s === 'L' ? '좌측' : s === 'R' ? '우측' : s === 'BOTH' ? '양측' : '선택 안 함'; return '<option value="' + s + '"' + (cst.implant_side === s ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label class="input-label">기기 모델</label><input name="device_model" type="text" value="' + csEsc(cst.device_model) + '" class="input" placeholder="예: Nucleus 8"></div>' +
+      '<div><label class="input-label">기기 시리얼</label><input name="device_serial" type="text" value="' + csEsc(cst.device_serial) + '" class="input"></div>' +
+      '<div><label class="input-label">상태</label><select name="status" class="input">' +
+        ['active','inactive','dormant'].map(function(s) { return '<option value="' + s + '"' + (cst.status === s ? ' selected' : '') + '>' + CUST_STATUS_LABELS[s] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div class="col-span-full"><label class="input-label">메모</label><textarea name="notes" rows="3" class="input">' + csEsc(cst.notes) + '</textarea></div>' +
+      '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2">' +
+        '<button type="button" onclick="closeModal()" class="btn btn-outline">취소</button>' +
+        '<button type="submit" class="btn btn-primary">' + (id ? '저장' : '추가') + '</button>' +
+      '</div>' +
+    '</form>');
+
+  document.getElementById('fm').onsubmit = async function(e) {
+    e.preventDefault();
+    var f = Object.fromEntries(new FormData(e.target));
+    if (!f.name || !f.name.trim()) { toast('이름을 입력하세요', 'warn'); return; }
+    try {
+      if (id) await API.put('/customers/' + id, f);
+      else await API.post('/customers', f);
+      toast(id ? '고객 정보가 저장되었습니다' : '새 고객이 등록되었습니다');
+      closeModal();
+      fetchCustomers();
+    } catch(err) { toast('저장 실패', 'err'); }
+  };
+}
+
+async function viewCustomer(id) {
+  try {
+    var res = await API.get('/customers/' + id);
+    var cst = res.data.data;
+    if (!cst) { toast('고객을 찾을 수 없습니다', 'err'); return; }
+
+    var typeCol = CUST_TYPE_COLORS[cst.customer_type] || CUST_TYPE_COLORS.prospect;
+    var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || '-';
+    var inqRows = (cst.inquiries || []).map(function(inq) {
+      var stCol = CS_INQ_STATUS_COLORS[inq.status] || CS_INQ_STATUS_COLORS.open;
+      return '<div class="flex items-center gap-2 py-2 border-b border-slate-100 last:border-0 hover:bg-slate-50 px-2 -mx-2 rounded cursor-pointer" onclick="closeModal();setTimeout(function(){viewCsInquiry(' + inq.id + ')},100)">' +
+        '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + stCol.bg + ';color:' + stCol.fg + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
+        '<span class="text-[12px] text-slate-700 font-medium flex-1 truncate">' + csEsc(inq.subject) + '</span>' +
+        '<span class="text-[10px] text-slate-400">' + csFmtDate(inq.created_at) + '</span>' +
+      '</div>';
+    }).join('') || '<div class="text-[12px] text-slate-400 py-4 text-center">문의 이력이 없습니다</div>';
+
+    openModal('고객 상세',
+      '<div class="space-y-4">' +
+        '<div class="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">' +
+          '<div class="flex-1 min-w-0">' +
+            '<div class="flex items-center gap-2 mb-1">' +
+              '<span class="text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + typeCol.bg + ';color:' + typeCol.fg + ';border-color:' + typeCol.bd + '">' + typeLabel + '</span>' +
+              '<span class="text-[10px] text-slate-400">#' + cst.id + '</span>' +
+            '</div>' +
+            '<h3 class="text-[18px] font-bold text-slate-800">' + csEsc(cst.name) + '</h3>' +
+            '<div class="text-[12px] text-slate-500 mt-0.5">' +
+              (cst.phone ? '<i class="fas fa-phone text-[10px] mr-1"></i>' + csEsc(cst.phone) : '') +
+              (cst.email ? ' <span class="text-slate-300">·</span> ' + csEsc(cst.email) : '') +
+            '</div>' +
+          '</div>' +
+          '<div class="flex gap-1">' +
+            '<button onclick="openCsInquiryModal(null,' + cst.id + ')" class="btn btn-primary btn-sm text-[11px]"><i class="fas fa-headset mr-1"></i>문의 접수</button>' +
+            '<button onclick="closeModal();setTimeout(function(){openCustomerModal(' + cst.id + ')},100)" class="btn btn-outline btn-sm text-[11px]"><i class="fas fa-pen mr-1"></i>편집</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="grid grid-cols-2 gap-3 text-[12px]">' +
+          _custInfoRow('생년월일', cst.birth_date || '-') +
+          _custInfoRow('성별', cst.gender === 'M' ? '남' : cst.gender === 'F' ? '여' : '-') +
+          _custInfoRow('병원', cst.hospital_name || '-') +
+          _custInfoRow('지역', cst.region || '-') +
+          _custInfoRow('주소', cst.address || '-', true) +
+          _custInfoRow('시술일', cst.implant_date || '-') +
+          _custInfoRow('시술 부위', cst.implant_side === 'L' ? '좌측' : cst.implant_side === 'R' ? '우측' : cst.implant_side === 'BOTH' ? '양측' : '-') +
+          _custInfoRow('기기 모델', cst.device_model || '-') +
+          _custInfoRow('시리얼', cst.device_serial || '-') +
+          _custInfoRow('등록자', cst.created_by_name || '-') +
+          _custInfoRow('등록일', csFmtDate(cst.created_at)) +
+        '</div>' +
+        (cst.notes ? '<div class="bg-slate-50 rounded-lg p-3 text-[12px] text-slate-600 leading-relaxed"><i class="fas fa-sticky-note text-slate-300 mr-1"></i>' + csEsc(cst.notes).replace(/\n/g, '<br>') + '</div>' : '') +
+        '<div>' +
+          '<div class="text-[11px] font-semibold text-slate-500 mb-2 flex items-center gap-2"><i class="fas fa-headset text-blue-500"></i>문의 이력 <span class="text-slate-300">(' + (cst.inquiries || []).length + ')</span></div>' +
+          inqRows +
+        '</div>' +
+      '</div>');
+  } catch(e) { toast('고객 정보를 불러올 수 없습니다', 'err'); }
+}
+
+function _custInfoRow(label, value, wide) {
+  return '<div' + (wide ? ' class="col-span-2"' : '') + '>' +
+    '<div class="text-[10px] text-slate-400 font-semibold mb-0.5">' + label + '</div>' +
+    '<div class="text-slate-700">' + csEsc(value) + '</div>' +
+  '</div>';
+}
+
+function deleteCustomer(id, name) {
+  showConfirm('고객 삭제',
+    '<strong>' + csEsc(name) + '</strong> 고객을 삭제하시겠습니까?<br><span class="text-[11px] text-red-500">문의 이력이 있으면 문의의 고객 연결이 해제됩니다.</span>',
+    async function() {
+      try { await API.delete('/customers/' + id); toast('삭제되었습니다'); fetchCustomers(); }
+      catch(e) { toast('삭제 실패', 'err'); }
+    },
+    { type: 'delete', yesLabel: '삭제' });
+}
+
+// ============================================================
+// ===== 고객 문의 =====
+// ============================================================
+var _csInqList = [];
+var _csInqFilter = { search: '', status: '', category: '', priority: '', assignee_id: '', channel: '' };
+var _csInqUsers = [];
+var _csInqCustomers = []; // 자동완성용 캐시
+
+async function loadCsInquiry() {
   var c = document.getElementById('content');
   document.getElementById('page-title').textContent = '고객 문의';
-  document.getElementById('page-subtitle').textContent = 'CS · 준비 중';
+  document.getElementById('page-subtitle').textContent = '접수 · 처리 · 응답 이력 관리';
+  document.getElementById('header-actions').innerHTML =
+    '<button onclick="openCsInquiryModal()" class="btn btn-primary btn-sm"><i class="fas fa-plus mr-1"></i>문의 접수</button>';
+
+  c.innerHTML = '<div class="p-4 lg:p-6 max-w-7xl mx-auto">' +
+    '<div id="cs-inq-stats" class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5"></div>' +
+    '<div class="card p-4 mb-4">' +
+      '<div class="flex flex-wrap gap-2 items-center">' +
+        '<div class="relative flex-1 min-w-[200px] filter-search">' +
+          '<i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>' +
+          '<input id="cs-inq-search" oninput="filterCsInq()" placeholder="제목 · 고객명 · 연락처 검색" class="input pl-10">' +
+        '</div>' +
+        '<select id="cs-inq-status" onchange="filterCsInq()" class="input filter-select">' +
+          '<option value="">전체 상태</option>' +
+          '<option value="open">접수</option>' +
+          '<option value="in_progress">처리 중</option>' +
+          '<option value="resolved">해결</option>' +
+          '<option value="closed">종료</option>' +
+          '<option value="canceled">취소</option>' +
+        '</select>' +
+        '<select id="cs-inq-category" onchange="filterCsInq()" class="input filter-select">' +
+          '<option value="">전체 유형</option>' +
+          Object.keys(CS_INQ_CATEGORY_LABELS).map(function(k) { return '<option value="' + k + '">' + CS_INQ_CATEGORY_LABELS[k] + '</option>'; }).join('') +
+        '</select>' +
+        '<select id="cs-inq-priority" onchange="filterCsInq()" class="input filter-select">' +
+          '<option value="">전체 우선순위</option>' +
+          '<option value="urgent">긴급</option>' +
+          '<option value="high">높음</option>' +
+          '<option value="mid">보통</option>' +
+          '<option value="low">낮음</option>' +
+        '</select>' +
+        '<select id="cs-inq-assignee" onchange="filterCsInq()" class="input filter-select">' +
+          '<option value="">전체 담당자</option>' +
+        '</select>' +
+      '</div>' +
+    '</div>' +
+    '<div id="cs-inq-list"></div>' +
+  '</div>';
+
+  await Promise.all([_csInqLoadUsers(), fetchCsInquiries()]);
+}
+
+async function _csInqLoadUsers() {
+  try {
+    var r = await API.get('/users');
+    _csInqUsers = r.data.data || [];
+    var sel = document.getElementById('cs-inq-assignee');
+    if (sel) {
+      _csInqUsers.forEach(function(u) {
+        var opt = document.createElement('option');
+        opt.value = u.id; opt.textContent = u.name;
+        sel.appendChild(opt);
+      });
+    }
+  } catch(e) { _csInqUsers = []; }
+}
+
+async function fetchCsInquiries() {
+  var listDiv = document.getElementById('cs-inq-list');
+  if (!listDiv) return;
+  listDiv.innerHTML = '<div class="flex items-center justify-center py-10"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div></div>';
+  try {
+    var params = [];
+    if (_csInqFilter.search) params.push('search=' + encodeURIComponent(_csInqFilter.search));
+    if (_csInqFilter.status) params.push('status=' + _csInqFilter.status);
+    if (_csInqFilter.category) params.push('category=' + _csInqFilter.category);
+    if (_csInqFilter.priority) params.push('priority=' + _csInqFilter.priority);
+    if (_csInqFilter.assignee_id) params.push('assignee_id=' + _csInqFilter.assignee_id);
+    var qs = params.length ? '?' + params.join('&') : '';
+    var res = await API.get('/cs/inquiries' + qs);
+    _csInqList = res.data.data || [];
+    renderCsInquiries();
+    renderCsInqStats();
+  } catch(e) {
+    listDiv.innerHTML = '<div class="card p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle mr-2"></i>문의 목록을 불러올 수 없습니다</div>';
+  }
+}
+
+function renderCsInqStats() {
+  var statsDiv = document.getElementById('cs-inq-stats');
+  if (!statsDiv) return;
+  var counts = { open: 0, in_progress: 0, resolved: 0, closed: 0, urgent: 0 };
+  _csInqList.forEach(function(inq) {
+    if (counts[inq.status] !== undefined) counts[inq.status]++;
+    if (inq.priority === 'urgent' && (inq.status === 'open' || inq.status === 'in_progress')) counts.urgent++;
+  });
+  function card(label, value, color, icon) {
+    return '<div class="card p-3 flex items-center gap-3">' +
+      '<div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:' + color + '15">' +
+        '<i class="' + icon + '" style="color:' + color + '"></i>' +
+      '</div>' +
+      '<div><div class="text-[10px] text-slate-400 font-semibold">' + label + '</div>' +
+      '<div class="text-[18px] font-extrabold" style="color:' + color + '">' + value + '</div></div>' +
+    '</div>';
+  }
+  statsDiv.innerHTML =
+    card('접수', counts.open, '#f59e0b', 'fas fa-inbox') +
+    card('처리 중', counts.in_progress, '#2563eb', 'fas fa-spinner') +
+    card('해결', counts.resolved, '#059669', 'fas fa-check-circle') +
+    card('종료', counts.closed, '#64748b', 'fas fa-check') +
+    card('긴급 미해결', counts.urgent, '#dc2626', 'fas fa-fire');
+}
+
+function renderCsInquiries() {
+  var listDiv = document.getElementById('cs-inq-list');
+  if (!listDiv) return;
+  if (_csInqList.length === 0) {
+    listDiv.innerHTML = '<div class="card p-10 text-center"><i class="fas fa-headset text-3xl text-slate-200 mb-3"></i><p class="text-sm text-slate-400">문의가 없습니다</p></div>';
+    return;
+  }
+
+  var html = '<div class="card overflow-hidden">' +
+    '<div class="hidden md:grid gap-2 px-4 py-2.5 text-[10px] font-bold text-slate-400 tracking-wide uppercase bg-slate-50/50 border-b border-slate-100" style="grid-template-columns:70px 1fr 90px 90px 100px 100px 80px 80px">' +
+      '<div>상태</div><div>제목 / 고객</div><div>유형</div><div>채널</div><div>우선순위</div><div>담당자</div><div class="text-center">응답</div><div class="text-right">접수일</div>' +
+    '</div>';
+
+  _csInqList.forEach(function(inq) {
+    var stCol = CS_INQ_STATUS_COLORS[inq.status] || CS_INQ_STATUS_COLORS.open;
+    var prCol = CS_INQ_PRIORITY_COLORS[inq.priority] || CS_INQ_PRIORITY_COLORS.mid;
+    var custName = inq.customer_name || inq.contact_name || '<span class="text-slate-300">비회원</span>';
+    var custPhone = inq.customer_phone || inq.contact_phone || '';
+    var priorityIcon = inq.priority === 'urgent' ? '<i class="fas fa-fire mr-0.5"></i>' : '';
+
+    html += '<div class="md:grid flex flex-col gap-2 px-4 py-3 border-b border-slate-100 last:border-0 hover:bg-slate-50/50 transition cursor-pointer" style="grid-template-columns:70px 1fr 90px 90px 100px 100px 80px 80px" onclick="viewCsInquiry(' + inq.id + ')">' +
+      // 상태
+      '<div class="flex items-center">' +
+        '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border-color:' + stCol.bd + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
+      '</div>' +
+      // 제목 / 고객
+      '<div class="min-w-0">' +
+        '<div class="text-[13px] font-semibold text-slate-800 truncate">' + csEsc(inq.subject) + '</div>' +
+        '<div class="text-[11px] text-slate-400 truncate">' +
+          '<i class="fas fa-user text-[9px] mr-1"></i>' + (inq.customer_id ? csEsc(custName) : custName) +
+          (custPhone ? ' <span class="text-slate-300">·</span> ' + csEsc(custPhone) : '') +
+        '</div>' +
+      '</div>' +
+      // 유형
+      '<div class="text-[11px] text-slate-500 flex items-center">' + (CS_INQ_CATEGORY_LABELS[inq.category] || inq.category || '-') + '</div>' +
+      // 채널
+      '<div class="text-[11px] text-slate-500 flex items-center">' + (CS_INQ_CHANNEL_LABELS[inq.channel] || inq.channel || '-') + '</div>' +
+      // 우선순위
+      '<div class="flex items-center">' +
+        '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + priorityIcon + (CS_INQ_PRIORITY_LABELS[inq.priority] || inq.priority) + '</span>' +
+      '</div>' +
+      // 담당자
+      '<div class="text-[11px] text-slate-500 truncate flex items-center">' + (inq.assignee_name ? csEsc(inq.assignee_name) : '<span class="text-slate-300">미지정</span>') + '</div>' +
+      // 응답 수
+      '<div class="text-center flex items-center justify-center">' +
+        (inq.response_count > 0
+          ? '<span class="text-[11px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">' + inq.response_count + '</span>'
+          : '<span class="text-[11px] text-slate-300">0</span>') +
+      '</div>' +
+      // 접수일
+      '<div class="text-[11px] text-slate-500 text-right flex items-center justify-end">' + csFmtDate(inq.created_at) + '</div>' +
+    '</div>';
+  });
+  html += '</div>';
+  listDiv.innerHTML = html;
+}
+
+function filterCsInq() {
+  _csInqFilter.search = (document.getElementById('cs-inq-search') || {}).value || '';
+  _csInqFilter.status = (document.getElementById('cs-inq-status') || {}).value || '';
+  _csInqFilter.category = (document.getElementById('cs-inq-category') || {}).value || '';
+  _csInqFilter.priority = (document.getElementById('cs-inq-priority') || {}).value || '';
+  _csInqFilter.assignee_id = (document.getElementById('cs-inq-assignee') || {}).value || '';
+  clearTimeout(window._csInqFilterTimer);
+  window._csInqFilterTimer = setTimeout(fetchCsInquiries, 250);
+}
+
+async function openCsInquiryModal(id, prefillCustomerId) {
+  var inq = { subject: '', category: 'general', channel: 'phone', priority: 'mid', status: 'open', customer_id: prefillCustomerId || '', contact_name: '', contact_phone: '', contact_email: '', first_message: '', assignee_id: '', hospital_id: '' };
+  if (id) {
+    try { var r = await API.get('/cs/inquiries/' + id); inq = Object.assign(inq, r.data.data || {}); } catch(e) { toast('문의를 불러올 수 없습니다', 'err'); return; }
+  }
+  if (!_csInqUsers.length) await _csInqLoadUsers();
+
+  // 고객 선택용 옵션: 프리필된 고객이 있으면 함께 로드
+  var custName = '';
+  if (inq.customer_id) {
+    try {
+      var cr = await API.get('/customers/' + inq.customer_id);
+      custName = (cr.data.data || {}).name || '';
+    } catch(e) {}
+  }
+
+  var userOpts = '<option value="">미지정</option>' + _csInqUsers.map(function(u) {
+    var sel = (String(inq.assignee_id || '') === String(u.id)) ? ' selected' : '';
+    return '<option value="' + u.id + '"' + sel + '>' + csEsc(u.name) + '</option>';
+  }).join('');
+
+  var catOpts = Object.keys(CS_INQ_CATEGORY_LABELS).map(function(k) {
+    return '<option value="' + k + '"' + (inq.category === k ? ' selected' : '') + '>' + CS_INQ_CATEGORY_LABELS[k] + '</option>';
+  }).join('');
+  var chOpts = Object.keys(CS_INQ_CHANNEL_LABELS).map(function(k) {
+    return '<option value="' + k + '"' + (inq.channel === k ? ' selected' : '') + '>' + CS_INQ_CHANNEL_LABELS[k] + '</option>';
+  }).join('');
+  var prOpts = ['urgent','high','mid','low'].map(function(k) {
+    return '<option value="' + k + '"' + (inq.priority === k ? ' selected' : '') + '>' + CS_INQ_PRIORITY_LABELS[k] + '</option>';
+  }).join('');
+  var stOpts = ['open','in_progress','resolved','closed','canceled'].map(function(k) {
+    return '<option value="' + k + '"' + (inq.status === k ? ' selected' : '') + '>' + CS_INQ_STATUS_LABELS[k] + '</option>';
+  }).join('');
+
+  openModal(id ? '문의 편집' : '문의 접수',
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+      '<div class="col-span-full"><label class="input-label">제목 *</label><input name="subject" type="text" value="' + csEsc(inq.subject) + '" class="input" required placeholder="문의 요약"></div>' +
+      '<div><label class="input-label">유형</label><select name="category" class="input">' + catOpts + '</select></div>' +
+      '<div><label class="input-label">채널</label><select name="channel" class="input">' + chOpts + '</select></div>' +
+      '<div><label class="input-label">우선순위</label><select name="priority" class="input">' + prOpts + '</select></div>' +
+      '<div><label class="input-label">상태</label><select name="status" class="input">' + stOpts + '</select></div>' +
+      '<div><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
+      '<div>' +
+        '<label class="input-label">고객' + (inq.customer_id ? ' <span class="text-[10px] text-blue-500">(연결됨)</span>' : '') + '</label>' +
+        '<div class="flex gap-1">' +
+          '<input name="customer_id" type="hidden" value="' + csEsc(inq.customer_id) + '">' +
+          '<input id="cs-inq-cust-name" type="text" value="' + csEsc(custName) + '" class="input flex-1" placeholder="고객 검색 (선택)" autocomplete="off">' +
+          (inq.customer_id ? '<button type="button" onclick="_csInqClearCustomer()" class="text-[10px] px-2 rounded bg-slate-100 hover:bg-slate-200" title="연결 해제"><i class="fas fa-times"></i></button>' : '') +
+        '</div>' +
+        '<div id="cs-inq-cust-dd" class="hidden mt-1 border border-gray-200 rounded-xl bg-white shadow-lg max-h-[180px] overflow-y-auto absolute z-30" style="width:calc(50% - 2rem)"></div>' +
+      '</div>' +
+      '<div class="col-span-full grid grid-cols-1 sm:grid-cols-3 gap-3">' +
+        '<div><label class="input-label">연락처 이름 <span class="text-[10px] text-slate-400">(고객 미연결 시)</span></label><input name="contact_name" type="text" value="' + csEsc(inq.contact_name) + '" class="input"></div>' +
+        '<div><label class="input-label">전화번호</label><input name="contact_phone" type="tel" value="' + csEsc(inq.contact_phone) + '" class="input"></div>' +
+        '<div><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(inq.contact_email) + '" class="input"></div>' +
+      '</div>' +
+      '<div class="col-span-full"><label class="input-label">문의 내용</label><textarea name="first_message" rows="4" class="input" placeholder="최초 문의 내용">' + csEsc(inq.first_message) + '</textarea></div>' +
+      '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2">' +
+        '<button type="button" onclick="closeModal()" class="btn btn-outline">취소</button>' +
+        '<button type="submit" class="btn btn-primary">' + (id ? '저장' : '접수') + '</button>' +
+      '</div>' +
+    '</form>');
+
+  // 고객 자동완성
+  var nameInput = document.getElementById('cs-inq-cust-name');
+  var dd = document.getElementById('cs-inq-cust-dd');
+  if (nameInput) {
+    nameInput.addEventListener('input', function() {
+      clearTimeout(window._csInqCustTimer);
+      var q = this.value.trim();
+      if (q.length < 1) { dd.classList.add('hidden'); return; }
+      window._csInqCustTimer = setTimeout(async function() {
+        try {
+          var res = await API.get('/customers?search=' + encodeURIComponent(q) + '&limit=8');
+          var list = res.data.data || [];
+          if (list.length === 0) { dd.classList.add('hidden'); return; }
+          dd.innerHTML = list.map(function(cst) {
+            var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || '';
+            return '<div class="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-50 last:border-0" data-id="' + cst.id + '" data-name="' + csEsc(cst.name) + '" data-phone="' + csEsc(cst.phone || '') + '" data-email="' + csEsc(cst.email || '') + '">' +
+              '<div class="text-[12px] font-medium text-slate-700">' + csEsc(cst.name) + ' <span class="text-[10px] text-slate-400 font-normal">' + typeLabel + '</span></div>' +
+              '<div class="text-[10px] text-slate-400">' + csEsc(cst.phone || '') + (cst.email ? ' · ' + csEsc(cst.email) : '') + '</div>' +
+            '</div>';
+          }).join('');
+          dd.classList.remove('hidden');
+          dd.querySelectorAll('[data-id]').forEach(function(el) {
+            el.onclick = function() {
+              var fm = document.getElementById('fm');
+              fm.customer_id.value = this.dataset.id;
+              nameInput.value = this.dataset.name;
+              fm.contact_name.value = '';
+              fm.contact_phone.value = this.dataset.phone || '';
+              fm.contact_email.value = this.dataset.email || '';
+              dd.classList.add('hidden');
+            };
+          });
+        } catch(e) { dd.classList.add('hidden'); }
+      }, 250);
+    });
+    document.addEventListener('click', function(ev) {
+      if (dd && !dd.contains(ev.target) && ev.target !== nameInput) dd.classList.add('hidden');
+    });
+  }
+
+  document.getElementById('fm').onsubmit = async function(e) {
+    e.preventDefault();
+    var f = Object.fromEntries(new FormData(e.target));
+    if (!f.subject || !f.subject.trim()) { toast('제목을 입력하세요', 'warn'); return; }
+    if (f.customer_id === '') delete f.customer_id;
+    if (f.assignee_id === '') delete f.assignee_id;
+    try {
+      if (id) await API.put('/cs/inquiries/' + id, f);
+      else await API.post('/cs/inquiries', f);
+      toast(id ? '문의가 저장되었습니다' : '문의가 접수되었습니다');
+      closeModal();
+      fetchCsInquiries();
+    } catch(err) { toast('저장 실패', 'err'); }
+  };
+}
+
+function _csInqClearCustomer() {
+  var fm = document.getElementById('fm');
+  if (!fm) return;
+  fm.customer_id.value = '';
+  var ni = document.getElementById('cs-inq-cust-name');
+  if (ni) ni.value = '';
+}
+
+async function viewCsInquiry(id) {
+  try {
+    var res = await API.get('/cs/inquiries/' + id);
+    var inq = res.data.data;
+    if (!inq) { toast('문의를 찾을 수 없습니다', 'err'); return; }
+
+    var stCol = CS_INQ_STATUS_COLORS[inq.status] || CS_INQ_STATUS_COLORS.open;
+    var prCol = CS_INQ_PRIORITY_COLORS[inq.priority] || CS_INQ_PRIORITY_COLORS.mid;
+
+    var timeline = (inq.responses || []).map(function(r) {
+      var typeCfg = {
+        reply:           { icon: 'fa-reply',      color: '#2563eb', label: '응답' },
+        note:            { icon: 'fa-sticky-note', color: '#f59e0b', label: '내부 메모' },
+        status_change:   { icon: 'fa-arrows-rotate', color: '#7c3aed', label: '상태 변경' },
+        assignee_change: { icon: 'fa-user-pen',   color: '#0891b2', label: '담당자 변경' }
+      };
+      var cfg = typeCfg[r.response_type] || typeCfg.reply;
+      var chLabel = r.channel ? ' · ' + (CS_INQ_CHANNEL_LABELS[r.channel] || r.channel) : '';
+      return '<div class="flex gap-3 py-3 border-b border-slate-100 last:border-0">' +
+        '<div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style="background:' + cfg.color + '15">' +
+          '<i class="fas ' + cfg.icon + ' text-[11px]" style="color:' + cfg.color + '"></i>' +
+        '</div>' +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="flex items-center gap-2 mb-1">' +
+            '<span class="text-[11px] font-bold" style="color:' + cfg.color + '">' + cfg.label + '</span>' +
+            '<span class="text-[10px] text-slate-400">' + csEsc(r.user_name || '시스템') + chLabel + '</span>' +
+            '<span class="text-[10px] text-slate-300 ml-auto">' + csFmtDateTime(r.created_at) + '</span>' +
+          '</div>' +
+          '<div class="text-[12px] text-slate-700 whitespace-pre-wrap leading-relaxed">' + csEsc(r.content).replace(/\n/g, '<br>') + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('') || '<div class="text-[12px] text-slate-400 py-6 text-center">응답 이력이 없습니다</div>';
+
+    var custName = inq.customer_name || inq.contact_name || '비회원';
+    var custPhone = inq.customer_phone || inq.contact_phone || '';
+
+    openModal('문의 상세 #' + inq.id,
+      '<div class="space-y-4">' +
+        '<div class="pb-3 border-b border-slate-100">' +
+          '<div class="flex items-center gap-2 mb-2 flex-wrap">' +
+            '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border-color:' + stCol.bd + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
+            '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + (inq.priority === 'urgent' ? '<i class="fas fa-fire mr-0.5"></i>' : '') + (CS_INQ_PRIORITY_LABELS[inq.priority] || inq.priority) + '</span>' +
+            '<span class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">' + (CS_INQ_CATEGORY_LABELS[inq.category] || inq.category) + '</span>' +
+            '<span class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">' + (CS_INQ_CHANNEL_LABELS[inq.channel] || inq.channel) + '</span>' +
+          '</div>' +
+          '<h3 class="text-[17px] font-bold text-slate-800 mb-2">' + csEsc(inq.subject) + '</h3>' +
+          '<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[11px]">' +
+            '<div><div class="text-slate-400 font-semibold">고객</div><div class="text-slate-700 truncate">' + csEsc(custName) + (inq.customer_id ? ' <a href="javascript:void(0)" onclick="closeModal();setTimeout(function(){viewCustomer(' + inq.customer_id + ')},100)" class="text-blue-500 text-[10px]">↗</a>' : '') + '</div></div>' +
+            '<div><div class="text-slate-400 font-semibold">연락처</div><div class="text-slate-700 truncate">' + csEsc(custPhone || '-') + '</div></div>' +
+            '<div><div class="text-slate-400 font-semibold">담당자</div><div class="text-slate-700 truncate">' + csEsc(inq.assignee_name || '미지정') + '</div></div>' +
+            '<div><div class="text-slate-400 font-semibold">접수</div><div class="text-slate-700">' + csFmtDate(inq.created_at) + '</div></div>' +
+          '</div>' +
+        '</div>' +
+        (inq.first_message ? '<div class="bg-slate-50 rounded-lg p-3 text-[12px] text-slate-700 whitespace-pre-wrap leading-relaxed"><div class="text-[10px] font-bold text-slate-400 mb-1"><i class="fas fa-quote-left mr-1"></i>최초 문의</div>' + csEsc(inq.first_message).replace(/\n/g, '<br>') + '</div>' : '') +
+        '<div>' +
+          '<div class="text-[11px] font-bold text-slate-500 mb-2 flex items-center gap-2"><i class="fas fa-comments text-blue-500"></i>응답 이력 <span class="text-slate-300">(' + (inq.responses || []).length + ')</span></div>' +
+          '<div class="border border-slate-100 rounded-lg px-3 max-h-[360px] overflow-y-auto">' + timeline + '</div>' +
+        '</div>' +
+        // 응답 추가 폼
+        '<div class="border-t border-slate-100 pt-3">' +
+          '<div class="text-[11px] font-bold text-slate-500 mb-2"><i class="fas fa-plus text-blue-500 mr-1"></i>응답/메모 추가</div>' +
+          '<div class="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">' +
+            '<select id="cs-resp-type" class="input text-[12px]">' +
+              '<option value="reply">응답</option>' +
+              '<option value="note">내부 메모</option>' +
+            '</select>' +
+            '<select id="cs-resp-channel" class="input text-[12px]">' +
+              '<option value="">채널 선택 안 함</option>' +
+              Object.keys(CS_INQ_CHANNEL_LABELS).map(function(k) { return '<option value="' + k + '">' + CS_INQ_CHANNEL_LABELS[k] + '</option>'; }).join('') +
+            '</select>' +
+          '</div>' +
+          '<textarea id="cs-resp-content" rows="3" class="input mb-2" placeholder="내용 입력..."></textarea>' +
+          '<div class="flex justify-end gap-2">' +
+            '<button onclick="closeModal();setTimeout(function(){openCsInquiryModal(' + inq.id + ')},100)" class="btn btn-outline btn-sm text-[11px]"><i class="fas fa-pen mr-1"></i>문의 편집</button>' +
+            '<button onclick="_csInqAddResponse(' + inq.id + ')" class="btn btn-primary btn-sm text-[11px]"><i class="fas fa-paper-plane mr-1"></i>추가</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>');
+  } catch(e) { toast('문의 정보를 불러올 수 없습니다', 'err'); }
+}
+
+async function _csInqAddResponse(inqId) {
+  var content = (document.getElementById('cs-resp-content') || {}).value || '';
+  var type = (document.getElementById('cs-resp-type') || {}).value || 'reply';
+  var channel = (document.getElementById('cs-resp-channel') || {}).value || '';
+  if (!content.trim()) { toast('내용을 입력하세요', 'warn'); return; }
+  try {
+    await API.post('/cs/inquiries/' + inqId + '/responses', { content: content.trim(), response_type: type, channel: channel });
+    toast('응답이 추가되었습니다');
+    closeModal();
+    setTimeout(function() { viewCsInquiry(inqId); }, 100);
+  } catch(e) { toast('응답 추가 실패', 'err'); }
+}
+
+// ============================================================
+// ===== CS Main — Phase 2/3 플레이스홀더 =====
+// ============================================================
+function _csPending(title, subtitle, icon, msg) {
+  var c = document.getElementById('content');
+  document.getElementById('page-title').textContent = title;
+  document.getElementById('page-subtitle').textContent = subtitle;
+  document.getElementById('header-actions').innerHTML = '';
   c.innerHTML = '<div class="p-4 lg:p-8 max-w-3xl mx-auto">' +
     '<div class="card p-8 lg:p-10 text-center">' +
       '<div class="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-5" style="background:linear-gradient(135deg,#eff6ff,#dbeafe)">' +
-        '<i class="fas fa-headset text-blue-500 text-2xl"></i>' +
+        '<i class="' + icon + ' text-blue-500 text-2xl"></i>' +
       '</div>' +
-      '<h3 class="text-[18px] font-bold text-slate-800 mb-2">CS 모듈 준비 중</h3>' +
-      '<p class="text-sm text-slate-500 leading-relaxed max-w-md mx-auto">' +
-        '고객 문의 접수·처리 이력 관리 기능을 준비하고 있습니다.<br>' +
-        '필요한 항목이나 우선순위가 정해지면 순차적으로 오픈될 예정입니다.' +
-      '</p>' +
+      '<h3 class="text-[18px] font-bold text-slate-800 mb-2">' + csEsc(title) + ' 준비 중</h3>' +
+      '<p class="text-sm text-slate-500 leading-relaxed max-w-md mx-auto">' + msg + '</p>' +
       '<div class="mt-6 inline-flex items-center gap-2 text-[11px] text-slate-400 bg-slate-50 border border-slate-100 rounded-full px-3 py-1.5">' +
         '<i class="fas fa-circle-info text-slate-300"></i>' +
-        '<span>필요한 기능이 있으시면 담당자에게 요청해 주세요</span>' +
+        '<span>Phase 1(고객관리·고객 문의) 안정화 후 순차 오픈 예정</span>' +
       '</div>' +
     '</div>' +
   '</div>';
+}
+function loadCsRepairPending() {
+  _csPending('AS/수리 요청', 'CS · 준비 중', 'fas fa-screwdriver-wrench',
+    '고객이 접수한 AS/수리 요청을 시리얼·모델·진행 단계별로 관리하는 기능을 준비하고 있습니다.');
+}
+function loadCsContactLogPending() {
+  _csPending('응대 로그', 'CS · 준비 중', 'fas fa-phone-volume',
+    '전화·이메일·방문 등 고객과의 모든 응대 이력을 통합 기록·조회하는 기능을 준비하고 있습니다.');
+}
+function loadCsFaqPending() {
+  _csPending('FAQ / 지식베이스', 'CS · 준비 중', 'fas fa-book-open',
+    '자주 묻는 질문과 CS 팀 내부 지식베이스를 관리하는 기능을 준비하고 있습니다.');
 }
 
 // ===== Mobile More Menu =====
