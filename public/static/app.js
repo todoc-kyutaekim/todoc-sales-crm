@@ -444,6 +444,7 @@ function nav(p) {
     schedule: loadSchedule,
     products: loadProducts,
     customers: loadCustomers,
+    cs_dashboard: loadCsDash,
     cs_inquiry: loadCsInquiry,
     cs_repair: loadCsRepair,
     cs_faq: loadCsKb,
@@ -12995,4 +12996,339 @@ async function loadMeetProductPicker(existingMeetingId) {
   } catch (e) {
     listEl.innerHTML = '<div class="text-xs text-red-400 text-center py-2">제품 목록 로딩 실패</div>';
   }
+}
+
+// ============================================================
+// ===== CS 대시보드 =====
+// ============================================================
+var _csDashCharts = [];
+var _csDashState = { period: 'month', mine: false };
+
+async function loadCsDash() {
+  document.getElementById('page-title').textContent = 'CS 대시보드';
+  var sub = document.getElementById('page-subtitle'); if (sub) sub.textContent = '고객 문의 · AS/수리 · 지식베이스 현황';
+  var act = document.getElementById('header-actions'); if (act) act.innerHTML = '';
+  var c = document.getElementById('content'); if (!c) return;
+  c.innerHTML = '<div class="text-center py-16 text-slate-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>대시보드 불러오는 중...</div>';
+  await _csDashFetchAndRender();
+}
+
+async function _csDashFetchAndRender() {
+  var c = document.getElementById('content'); if (!c) return;
+  // 차트 인스턴스 파괴
+  try { _csDashCharts.forEach(function(ch){ try { ch.destroy(); } catch(_){} }); } catch(_){}
+  _csDashCharts = [];
+
+  try {
+    var qs = '?period=' + encodeURIComponent(_csDashState.period) + (_csDashState.mine ? '&mine=1' : '');
+    var r = await API.get('/cs/dashboard' + qs);
+    var d = r.data;
+    _csDashRender(d);
+  } catch (e) {
+    c.innerHTML = '<div class="text-center py-16 text-red-400 text-sm">데이터 로딩 실패: ' + (e.message || e) + '</div>';
+  }
+}
+
+function _csDashRender(d) {
+  var c = document.getElementById('content'); if (!c) return;
+  var st = _csDashState;
+
+  // 상태 라벨
+  var STATUS_LABEL = { open: '접수', in_progress: '처리 중', resolved: '해결', closed: '종료', canceled: '취소' };
+  var STATUS_COLOR = { open: '#3b82f6', in_progress: '#f59e0b', resolved: '#10b981', closed: '#6b7280', canceled: '#94a3b8' };
+  var PRIORITY_LABEL = { urgent: '긴급', high: '높음', mid: '보통', low: '낮음' };
+  var PRIORITY_COLOR = { urgent: '#ef4444', high: '#f59e0b', mid: '#3b82f6', low: '#94a3b8' };
+  var REPAIR_LABEL = {
+    received: '접수', diagnosing: '진단', waiting_parts: '부품대기', repairing: '수리 중',
+    completed: '완료', shipped: '배송됨', closed: '종료', rejected: '반려'
+  };
+  var REPAIR_COLOR = {
+    received: '#3b82f6', diagnosing: '#8b5cf6', waiting_parts: '#f59e0b', repairing: '#ec4899',
+    completed: '#10b981', shipped: '#22c55e', closed: '#6b7280', rejected: '#ef4444'
+  };
+  var CAT_LABEL = { product: '제품', procedure: '수술', warranty: '보증', billing: '비용', other: '기타' };
+
+  // 기간 라벨
+  var PERIOD_LABEL = { today: '오늘', week: '이번 주', month: '이번 달', '90d': '최근 90일' };
+
+  // === HTML 조립 ===
+  var html = '';
+
+  // 필터 바 (기간 + 내 담당만)
+  html += '<div class="mb-4 flex items-center gap-2 flex-wrap">';
+  ['today','week','month','90d'].forEach(function(p){
+    var active = (st.period === p) ? 'bg-brand-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50';
+    html += '<button onclick="_csDashSetPeriod(\'' + p + '\')" class="px-3 py-1.5 rounded-lg text-xs font-medium ' + active + '">' + PERIOD_LABEL[p] + '</button>';
+  });
+  html += '<div class="flex-1"></div>';
+  var mineActive = st.mine ? 'bg-emerald-500 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50';
+  html += '<button onclick="_csDashToggleMine()" class="px-3 py-1.5 rounded-lg text-xs font-medium ' + mineActive + '">'
+        + '<i class="fas fa-user mr-1"></i>' + (st.mine ? '내 담당만' : '전체 보기') + '</button>';
+  html += '<button onclick="_csDashFetchAndRender()" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-600 border border-slate-200 hover:bg-slate-50" title="새로고침"><i class="fas fa-rotate"></i></button>';
+  html += '</div>';
+
+  // KPI 카드 4장
+  var kpi = d.kpi || {};
+  var avgH = d.avg_resolution_hours;
+  var avgText = avgH != null ? (avgH >= 24 ? (Math.round(avgH/24*10)/10 + '일') : (avgH + '시간')) : '-';
+
+  html += '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">';
+  html += _csKpiCard('fa-inbox', 'bg-blue-500', '신규 문의', kpi.new_inquiries || 0, PERIOD_LABEL[st.period] + ' 접수');
+  html += _csKpiCard('fa-exclamation-circle', 'bg-amber-500', '미처리 문의', kpi.open_inquiries || 0, '현재 open + 처리 중');
+  html += _csKpiCard('fa-screwdriver-wrench', 'bg-purple-500', '진행 중 수리', kpi.active_repairs || 0, 'AS 진행 중');
+  html += _csKpiCard('fa-circle-check', 'bg-emerald-500', '오늘 해결', kpi.resolved_today || 0, '평균 해결시간 ' + avgText);
+  html += '</div>';
+
+  // 차트 2 x 2 그리드
+  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">';
+
+  // 차트 1: 문의 상태별 도넛
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-chart-pie text-blue-500 mr-1.5"></i>문의 상태 분포</h3><span class="text-[10px] text-slate-400">' + PERIOD_LABEL[st.period] + '</span></div>';
+  html += '<div style="position:relative;height:220px"><canvas id="cs-dash-chart-status"></canvas></div>';
+  html += '</div>';
+
+  // 차트 2: 우선순위 막대
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-triangle-exclamation text-orange-500 mr-1.5"></i>우선순위 분포 (미처리)</h3><span class="text-[10px] text-slate-400">현재</span></div>';
+  html += '<div style="position:relative;height:220px"><canvas id="cs-dash-chart-priority"></canvas></div>';
+  html += '</div>';
+
+  // 차트 3: 최근 14일 추이 라인
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-chart-line text-indigo-500 mr-1.5"></i>최근 14일 추이</h3><span class="text-[10px] text-slate-400">신규 vs 해결</span></div>';
+  html += '<div style="position:relative;height:220px"><canvas id="cs-dash-chart-trend"></canvas></div>';
+  html += '</div>';
+
+  // 차트 4: AS/수리 상태
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-screwdriver-wrench text-purple-500 mr-1.5"></i>AS/수리 진행 상황</h3><span class="text-[10px] text-slate-400">전체</span></div>';
+  html += '<div style="position:relative;height:220px"><canvas id="cs-dash-chart-repair"></canvas></div>';
+  html += '</div>';
+
+  html += '</div>';
+
+  // 리스트 2단: 긴급 미처리 + 담당자별
+  html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">';
+
+  // 긴급 미처리 문의 TOP 10
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-fire text-red-500 mr-1.5"></i>긴급/장기 미처리 TOP 10</h3><button onclick="nav(\'cs_inquiry\')" class="text-[10px] text-blue-500 hover:underline">전체 보기 →</button></div>';
+  var uInq = d.urgent_inquiries || [];
+  if (uInq.length === 0) {
+    html += '<div class="text-center text-slate-400 text-xs py-8">미처리 문의가 없습니다</div>';
+  } else {
+    html += '<div class="space-y-1">';
+    uInq.forEach(function(i){
+      var days = i.days_open || 0;
+      var dayCls = days >= 7 ? 'bg-red-100 text-red-700' : days >= 3 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600';
+      var prColor = PRIORITY_COLOR[i.priority] || '#94a3b8';
+      var prLabel = PRIORITY_LABEL[i.priority] || i.priority;
+      var custName = i.customer_name || i.contact_name || '(익명)';
+      html += '<div class="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-slate-50 cursor-pointer" onclick="nav(\'cs_inquiry\')">'
+        + '<span class="inline-block px-1.5 py-0.5 rounded text-[9px] font-bold text-white" style="background:' + prColor + '">' + prLabel + '</span>'
+        + '<div class="flex-1 min-w-0"><div class="text-xs font-medium text-slate-800 truncate">' + _csEsc(i.subject) + '</div>'
+        + '<div class="text-[10px] text-slate-400 truncate">' + _csEsc(custName) + (i.assignee_name ? ' · 담당 ' + _csEsc(i.assignee_name) : ' · 미배정') + '</div></div>'
+        + '<span class="px-1.5 py-0.5 rounded text-[9px] font-bold ' + dayCls + '">' + days + '일</span>'
+        + '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // 담당자별 처리 현황
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-users-gear text-teal-500 mr-1.5"></i>담당자별 처리 현황</h3><span class="text-[10px] text-slate-400">' + PERIOD_LABEL[st.period] + '</span></div>';
+  var ass = d.assignees || [];
+  if (ass.length === 0) {
+    html += '<div class="text-center text-slate-400 text-xs py-8">담당자별 데이터가 없습니다</div>';
+  } else {
+    html += '<div class="space-y-1">';
+    ass.forEach(function(a){
+      var total = (a.open_n||0) + (a.progress_n||0) + (a.resolved_n||0);
+      var openPct = total ? (a.open_n||0)/total*100 : 0;
+      var progPct = total ? (a.progress_n||0)/total*100 : 0;
+      var resPct = total ? (a.resolved_n||0)/total*100 : 0;
+      html += '<div class="px-2 py-2 rounded-lg hover:bg-slate-50">'
+        + '<div class="flex items-center justify-between mb-1">'
+        + '<div class="text-xs font-medium text-slate-800">' + _csEsc(a.name || '(이름 없음)') + '</div>'
+        + '<div class="text-[10px] text-slate-500">'
+        + '<span class="text-blue-600 font-semibold">' + (a.open_n||0) + '</span> 접수 · '
+        + '<span class="text-amber-600 font-semibold">' + (a.progress_n||0) + '</span> 처리 · '
+        + '<span class="text-emerald-600 font-semibold">' + (a.resolved_n||0) + '</span> 해결'
+        + '</div></div>'
+        + '<div class="flex h-1.5 rounded-full overflow-hidden bg-slate-100">'
+        + '<div style="width:' + openPct + '%;background:#3b82f6"></div>'
+        + '<div style="width:' + progPct + '%;background:#f59e0b"></div>'
+        + '<div style="width:' + resPct + '%;background:#10b981"></div>'
+        + '</div></div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  html += '</div>';
+
+  // FAQ / 지식베이스 요약
+  html += '<div class="grid grid-cols-1 lg:grid-cols-3 gap-3 mb-4">';
+  // 카테고리별
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-book text-sky-500 mr-1.5"></i>지식베이스 카테고리</h3><button onclick="nav(\'cs_faq\')" class="text-[10px] text-blue-500 hover:underline">전체 →</button></div>';
+  var cats = (d.kb && d.kb.categories) || [];
+  if (cats.length === 0) {
+    html += '<div class="text-center text-slate-400 text-xs py-6">아티클이 없습니다</div>';
+  } else {
+    var maxN = Math.max.apply(null, cats.map(function(x){return x.n;}));
+    html += '<div class="space-y-2">';
+    cats.forEach(function(cat){
+      var label = CAT_LABEL[cat.category] || cat.category;
+      var pct = maxN ? (cat.n/maxN*100) : 0;
+      html += '<div><div class="flex items-center justify-between text-[11px] mb-0.5"><span class="text-slate-700">' + _csEsc(label) + '</span><span class="text-slate-500 font-medium">' + cat.n + '</span></div>'
+        + '<div class="h-1.5 bg-slate-100 rounded-full overflow-hidden"><div style="width:' + pct + '%;background:linear-gradient(90deg,#0ea5e9,#3b82f6)" class="h-full"></div></div></div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // 최근 아티클 5건
+  html += '<div class="bg-white rounded-xl border border-slate-200 p-4 lg:col-span-2">';
+  html += '<div class="flex items-center justify-between mb-3"><h3 class="text-sm font-bold text-slate-800"><i class="fas fa-clock text-emerald-500 mr-1.5"></i>최근 등록 아티클</h3><button onclick="nav(\'cs_faq\')" class="text-[10px] text-blue-500 hover:underline">지식베이스 →</button></div>';
+  var recent = (d.kb && d.kb.recent) || [];
+  if (recent.length === 0) {
+    html += '<div class="text-center text-slate-400 text-xs py-6">아티클이 없습니다</div>';
+  } else {
+    html += '<div class="space-y-1">';
+    recent.forEach(function(a){
+      var label = CAT_LABEL[a.category] || a.category;
+      html += '<div class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 cursor-pointer" onclick="nav(\'cs_faq\')">'
+        + '<span class="inline-block px-1.5 py-0.5 rounded text-[9px] bg-sky-100 text-sky-700 font-medium">' + _csEsc(label) + '</span>'
+        + '<div class="flex-1 min-w-0"><div class="text-xs text-slate-800 truncate">' + _csEsc(a.title) + '</div></div>'
+        + '<span class="text-[10px] text-slate-400"><i class="fas fa-eye mr-0.5"></i>' + (a.view_count || 0) + '</span>'
+        + '</div>';
+    });
+    html += '</div>';
+  }
+  html += '</div>';
+  html += '</div>';
+
+  c.innerHTML = html;
+
+  // === 차트 렌더링 ===
+  var chartDefs = { responsive: true, maintainAspectRatio: false, animation: { duration: 400 } };
+
+  // 차트 1: 상태 도넛
+  var statusOrder = ['open','in_progress','resolved','closed','canceled'];
+  var sEl = document.getElementById('cs-dash-chart-status');
+  if (sEl && window.Chart) {
+    _csDashCharts.push(new Chart(sEl, {
+      type: 'doughnut',
+      data: {
+        labels: statusOrder.map(function(s){ return STATUS_LABEL[s]; }),
+        datasets: [{
+          data: statusOrder.map(function(s){ return (d.inquiry_status||{})[s] || 0; }),
+          backgroundColor: statusOrder.map(function(s){ return STATUS_COLOR[s]; }),
+          borderWidth: 2, borderColor: '#fff'
+        }]
+      },
+      options: Object.assign({}, chartDefs, {
+        cutout: '55%',
+        plugins: { legend: { position: 'right', labels: { boxWidth: 10, padding: 8, font: { size: 11 } } } }
+      })
+    }));
+  }
+
+  // 차트 2: 우선순위 막대
+  var pOrder = ['urgent','high','mid','low'];
+  var pEl = document.getElementById('cs-dash-chart-priority');
+  if (pEl && window.Chart) {
+    _csDashCharts.push(new Chart(pEl, {
+      type: 'bar',
+      data: {
+        labels: pOrder.map(function(x){ return PRIORITY_LABEL[x]; }),
+        datasets: [{
+          data: pOrder.map(function(x){ return (d.priority||{})[x] || 0; }),
+          backgroundColor: pOrder.map(function(x){ return PRIORITY_COLOR[x]; }),
+          borderRadius: 6, barPercentage: 0.6
+        }]
+      },
+      options: Object.assign({}, chartDefs, {
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: 'rgba(0,0,0,0.04)' } }, x: { grid: { display: false } } }
+      })
+    }));
+  }
+
+  // 차트 3: 14일 추이 라인
+  var tEl = document.getElementById('cs-dash-chart-trend');
+  if (tEl && window.Chart && d.trend) {
+    var labels14 = d.trend.labels.map(function(x){ var p = x.split('-'); return p[1] + '/' + p[2]; });
+    _csDashCharts.push(new Chart(tEl, {
+      type: 'line',
+      data: {
+        labels: labels14,
+        datasets: [
+          { label: '신규', data: d.trend.new, borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 2, fill: true, tension: 0.4, pointRadius: 3, pointBackgroundColor: '#3b82f6' },
+          { label: '해결', data: d.trend.resolved, borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', borderWidth: 2, fill: true, tension: 0.4, pointRadius: 3, pointBackgroundColor: '#10b981' }
+        ]
+      },
+      options: Object.assign({}, chartDefs, {
+        plugins: { legend: { position: 'top', labels: { boxWidth: 10, padding: 8, font: { size: 11 } } } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: 'rgba(0,0,0,0.04)' } }, x: { grid: { display: false }, ticks: { font: { size: 9 } } } }
+      })
+    }));
+  }
+
+  // 차트 4: AS/수리 스택 막대
+  var rEl = document.getElementById('cs-dash-chart-repair');
+  if (rEl && window.Chart) {
+    var rOrder = ['received','diagnosing','waiting_parts','repairing','completed','shipped','closed','rejected'];
+    _csDashCharts.push(new Chart(rEl, {
+      type: 'bar',
+      data: {
+        labels: rOrder.map(function(x){ return REPAIR_LABEL[x]; }),
+        datasets: [{
+          data: rOrder.map(function(x){ return (d.repair_status||{})[x] || 0; }),
+          backgroundColor: rOrder.map(function(x){ return REPAIR_COLOR[x]; }),
+          borderRadius: 4, barPercentage: 0.7
+        }]
+      },
+      options: Object.assign({}, chartDefs, {
+        indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: 'rgba(0,0,0,0.04)' } },
+          y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+        }
+      })
+    }));
+  }
+}
+
+// KPI 카드 헬퍼
+function _csKpiCard(icon, iconBg, title, value, sub) {
+  return '<div class="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">'
+    + '<div class="w-10 h-10 rounded-lg flex items-center justify-center ' + iconBg + ' text-white"><i class="fas ' + icon + ' text-lg"></i></div>'
+    + '<div class="flex-1 min-w-0">'
+    + '<div class="text-[10px] text-slate-500 font-medium truncate">' + title + '</div>'
+    + '<div class="text-2xl font-bold text-slate-800 leading-tight">' + value + '</div>'
+    + '<div class="text-[10px] text-slate-400 truncate">' + sub + '</div>'
+    + '</div></div>';
+}
+
+// XSS-safe 이스케이프
+function _csEsc(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, function(ch){ return ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[ch]; });
+}
+
+// 기간 전환
+function _csDashSetPeriod(p) {
+  _csDashState.period = p;
+  _csDashFetchAndRender();
+}
+
+// 내 담당만 토글
+function _csDashToggleMine() {
+  _csDashState.mine = !_csDashState.mine;
+  _csDashFetchAndRender();
 }
