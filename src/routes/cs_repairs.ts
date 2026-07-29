@@ -1,9 +1,37 @@
 import { Hono } from 'hono'
 import { logActivity, safeLike, safeInt, safeLimit, apiError, ErrorCodes } from '../helpers'
+import { notifyRepair } from '../lib/slack'
 
-type Bindings = { DB: D1Database }
-type Variables = { userId: number }
+type Bindings = { DB: D1Database; SLACK_WEBHOOK_URL?: string; PUBLIC_BASE_URL?: string }
+type Variables = { userId: number; user?: { id: number; name: string; email: string } }
 const rep = new Hono<{ Bindings: Bindings, Variables: Variables }>()
+
+// 알림용 detail 조회 헬퍼 (Slack 메시지 빌드에 필요한 조인 데이터 포함)
+async function getRepairForNotify(db: D1Database, id: number): Promise<any> {
+  return await db.prepare(`
+    SELECT r.*,
+      cust.name AS customer_name,
+      cust.phone AS customer_phone,
+      h.name AS hospital_name,
+      u.name AS assignee_name,
+      pu.serial_no AS product_serial_no,
+      pu.asset_code AS product_asset_code,
+      p.name AS product_master_name
+    FROM cs_repairs r
+    LEFT JOIN customers cust ON cust.id = r.customer_id
+    LEFT JOIN hospitals h ON h.id = r.hospital_id
+    LEFT JOIN users u ON u.id = r.assignee_id
+    LEFT JOIN product_units pu ON pu.id = r.product_unit_id
+    LEFT JOIN products p ON p.id = pu.product_id
+    WHERE r.id = ?
+  `).bind(id).first() as any
+}
+
+async function getUserName(db: D1Database, uid: number | null): Promise<string | undefined> {
+  if (!uid) return undefined
+  const u = await db.prepare('SELECT name FROM users WHERE id=?').bind(uid).first() as any
+  return u?.name
+}
 
 // -------------------- LIST --------------------
 // GET /api/cs/repairs?search=&status=&priority=&assignee_id=&customer_id=&hospital_id=&warranty_status=&limit=
@@ -210,6 +238,14 @@ rep.post('/', async (c) => {
   `).bind(newId, userId || null, b.status || 'received', '접수', now).run()
 
   await logActivity(c.env.DB, 'create', 'cs_repair', newId as number, symptom.slice(0, 50), null)
+
+  // Slack 알림: 신규 접수 (실패해도 응답 지연 없이 진행)
+  try {
+    const detail = await getRepairForNotify(c.env.DB, newId as number)
+    const userName = c.get('user')?.name || (await getUserName(c.env.DB, userId as number))
+    if (detail) await notifyRepair(c.env, { kind: 'created', repair: detail, user_name: userName })
+  } catch (e) { console.error('[slack] created notify wrap error', e) }
+
   return c.json({ data: { id: newId } }, 201)
 })
 
@@ -315,6 +351,39 @@ rep.put('/:id', async (c) => {
   }
 
   await logActivity(c.env.DB, 'update', 'cs_repair', id, (b.symptom ?? prev.symptom).slice(0, 50), null)
+
+  // Slack 알림: 상태 변경 / 담당자 배정
+  const statusChanged = b.status !== undefined && b.status !== prev.status
+  const assigneeChanged = b.assignee_id !== undefined && (b.assignee_id ?? null) !== (prev.assignee_id ?? null)
+  if (statusChanged || assigneeChanged) {
+    try {
+      const detail = await getRepairForNotify(c.env.DB, id)
+      const userName = c.get('user')?.name || (await getUserName(c.env.DB, userId as number))
+      if (detail) {
+        if (statusChanged) {
+          await notifyRepair(c.env, {
+            kind: 'status_changed',
+            repair: detail,
+            from_status: prev.status,
+            to_status: b.status,
+            user_name: userName,
+          })
+        }
+        if (assigneeChanged) {
+          const fromName = prev.assignee_id ? (await getUserName(c.env.DB, prev.assignee_id)) : undefined
+          const toName = b.assignee_id ? (await getUserName(c.env.DB, b.assignee_id)) : undefined
+          await notifyRepair(c.env, {
+            kind: 'assigned',
+            repair: detail,
+            from_assignee: fromName,
+            to_assignee: toName,
+            user_name: userName,
+          })
+        }
+      }
+    } catch (e) { console.error('[slack] update notify wrap error', e) }
+  }
+
   return c.json({ data: { id } })
 })
 
