@@ -19,6 +19,8 @@ import products from './routes/products'
 import customers from './routes/customers'
 import csInquiries from './routes/cs_inquiries'
 import csRepairs from './routes/cs_repairs'
+import csContactLog from './routes/cs_contact_log'
+import csKb from './routes/cs_kb'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number; user?: { id: number, name: string, email: string } }
@@ -79,6 +81,8 @@ app.route('/api/products', products)
 app.route('/api/customers', customers)
 app.route('/api/cs/inquiries', csInquiries)
 app.route('/api/cs/repairs', csRepairs)
+app.route('/api/cs/contact-logs', csContactLog)
+app.route('/api/cs/kb', csKb)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
@@ -160,6 +164,8 @@ const HTML = `<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/axios@1.7.0/dist/axios.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>tailwind.config={theme:{extend:{fontFamily:{sans:['Pretendard','Inter','-apple-system','sans-serif']},colors:{brand:{50:'#eef4ff',100:'#d9e6ff',200:'#bcd2ff',300:'#8eb5ff',400:'#598eff',500:'#2563eb',600:'#1d4ed8',700:'#1e40af',800:'#1e3a8a',900:'#102d92'}}}}}</script>

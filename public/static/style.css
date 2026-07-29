@@ -1593,3 +1593,34 @@ html[data-theme="dark"] .side-panel-footer { background: #151a26; }
   .side-panel-body { padding: 16px; }
   .side-panel-footer { padding: 10px 16px; }
 }
+
+/* ============================================================
+   CS KB · Markdown Content (marked + DOMPurify 렌더 결과)
+   ============================================================ */
+.cskb-content { color: #334155; line-height: 1.7; font-size: 13px; }
+.cskb-content h1 { font-size: 20px; font-weight: 700; margin: 20px 0 10px; color: #0f172a; }
+.cskb-content h2 { font-size: 17px; font-weight: 700; margin: 18px 0 8px; color: #0f172a; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; }
+.cskb-content h3 { font-size: 15px; font-weight: 700; margin: 14px 0 6px; color: #1e293b; }
+.cskb-content h4 { font-size: 13px; font-weight: 700; margin: 12px 0 4px; color: #1e293b; }
+.cskb-content p { margin: 8px 0; }
+.cskb-content ul, .cskb-content ol { margin: 8px 0; padding-left: 22px; }
+.cskb-content ul { list-style: disc; }
+.cskb-content ol { list-style: decimal; }
+.cskb-content li { margin: 3px 0; }
+.cskb-content strong { font-weight: 700; color: #1e293b; }
+.cskb-content em { font-style: italic; }
+.cskb-content a { color: #2563eb; text-decoration: underline; }
+.cskb-content a:hover { color: #1d4ed8; }
+.cskb-content code { background: #f1f5f9; color: #b91c1c; padding: 1px 5px; border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.cskb-content pre { background: #0f172a; color: #f8fafc; padding: 12px 14px; border-radius: 8px; overflow-x: auto; margin: 10px 0; font-size: 12px; line-height: 1.5; }
+.cskb-content pre code { background: transparent; color: inherit; padding: 0; }
+.cskb-content blockquote { border-left: 3px solid #cbd5e1; padding: 4px 0 4px 12px; margin: 10px 0; color: #64748b; background: #f8fafc; }
+.cskb-content hr { border: none; border-top: 1px solid #e2e8f0; margin: 16px 0; }
+.cskb-content table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+.cskb-content table th, .cskb-content table td { border: 1px solid #e2e8f0; padding: 6px 10px; text-align: left; }
+.cskb-content table th { background: #f8fafc; font-weight: 700; }
+.cskb-content img { max-width: 100%; border-radius: 6px; margin: 8px 0; }
+
+/* line-clamp 유틸 (tailwind CDN에 없을 수 있음) */
+.line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.line-clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
