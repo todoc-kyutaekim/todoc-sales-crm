@@ -204,6 +204,9 @@ const HTML = `<!DOCTYPE html>
     <!-- 제품 관리 메뉴 — 임시 숨김 (코드/API/DB는 보존, 되살릴 때 hidden 만 제거) -->
     <div onclick="nav('products')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('products')}" id="n-products" class="nav-item hidden" role="link" tabindex="0" aria-label="제품 관리" aria-hidden="true"><span class="nav-icon" aria-hidden="true"><i class="fas fa-box-archive"></i></span>제품 관리</div>
     <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
+    <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">CS Main</span></div>
+    <div onclick="nav('cs_inquiry')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cs_inquiry')}" id="n-cs_inquiry" class="nav-item" role="link" tabindex="0" aria-label="고객 문의"><span class="nav-icon" aria-hidden="true"><i class="fas fa-headset"></i></span>고객 문의</div>
+    <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
     <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Analytics</span></div>
     <div onclick="nav('cistats')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cistats')}" id="n-cistats" class="nav-item" role="link" tabindex="0" aria-label="인공와우 통계"><span class="nav-icon" aria-hidden="true"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
     <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>

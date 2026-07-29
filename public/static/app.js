@@ -383,7 +383,30 @@ function nav(p) {
     const sb = document.getElementById('sidebar');
     if (sb && !sb.classList.contains('-translate-x-full')) toggleSidebar();
   }
-  ({ dashboard: loadDash, hospitals: loadHosp, doctors: loadDoc, meetings: loadMeet, cistats: loadCIStats, activity: loadActivity, schedule: loadSchedule, products: loadProducts })[p]?.();
+  ({ dashboard: loadDash, hospitals: loadHosp, doctors: loadDoc, meetings: loadMeet, cistats: loadCIStats, activity: loadActivity, schedule: loadSchedule, products: loadProducts, cs_inquiry: loadCsInquiry })[p]?.();
+}
+
+// ===== CS Main — 고객 문의 (준비 중 플레이스홀더) =====
+function loadCsInquiry() {
+  var c = document.getElementById('content');
+  document.getElementById('page-title').textContent = '고객 문의';
+  document.getElementById('page-subtitle').textContent = 'CS · 준비 중';
+  c.innerHTML = '<div class="p-4 lg:p-8 max-w-3xl mx-auto">' +
+    '<div class="card p-8 lg:p-10 text-center">' +
+      '<div class="w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-5" style="background:linear-gradient(135deg,#eff6ff,#dbeafe)">' +
+        '<i class="fas fa-headset text-blue-500 text-2xl"></i>' +
+      '</div>' +
+      '<h3 class="text-[18px] font-bold text-slate-800 mb-2">CS 모듈 준비 중</h3>' +
+      '<p class="text-sm text-slate-500 leading-relaxed max-w-md mx-auto">' +
+        '고객 문의 접수·처리 이력 관리 기능을 준비하고 있습니다.<br>' +
+        '필요한 항목이나 우선순위가 정해지면 순차적으로 오픈될 예정입니다.' +
+      '</p>' +
+      '<div class="mt-6 inline-flex items-center gap-2 text-[11px] text-slate-400 bg-slate-50 border border-slate-100 rounded-full px-3 py-1.5">' +
+        '<i class="fas fa-circle-info text-slate-300"></i>' +
+        '<span>필요한 기능이 있으시면 담당자에게 요청해 주세요</span>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
 }
 
 // ===== Mobile More Menu =====
