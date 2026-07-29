@@ -163,17 +163,35 @@ const HTML = `<!DOCTYPE html>
 <link rel="icon" type="image/x-icon" href="/static/icons/favicon.ico">
 <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
 <title>TODOC CRM</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/axios@1.7.0/dist/axios.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script>tailwind.config={theme:{extend:{fontFamily:{sans:['Pretendard','Inter','-apple-system','sans-serif']},colors:{brand:{50:'#eef4ff',100:'#d9e6ff',200:'#bcd2ff',300:'#8eb5ff',400:'#598eff',500:'#2563eb',600:'#1d4ed8',700:'#1e40af',800:'#1e3a8a',900:'#102d92'}}}}}</script>
+<!-- 렌더 차단 최소화: 외부 도메인 조기 연결 -->
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+
+<!-- Tailwind: 빌드 타임 생성 CSS (구 cdn.tailwindcss.com 런타임 컴파일 대체)
+     클래스 추가/변경 후에는 반드시 npm run build:css 를 실행해야 반영됩니다. -->
+<link rel="stylesheet" href="/static/tailwind.css">
+<!-- 프로젝트 자체 스타일: Tailwind 뒤에 와야 오버라이드가 유지됩니다 -->
 <link rel="stylesheet" href="/static/style.css">
+
+<!-- Pretendard: Google Fonts에 없는 폰트여서 기존 요청은 HTTP 400으로 실패했습니다.
+     공식 배포처(jsDelivr) dynamic-subset으로 교체 — 한글 자모 단위 subset이라 훨씬 가볍습니다. -->
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+
+<!-- Font Awesome: 차단 로드를 유지합니다.
+     media="print" 비차단 트릭을 쓰면 CSS가 늦게 적용되어 UI 전반의 아이콘이
+     한 박자 늦게 나타나는 깜빡임이 발생합니다(아이콘 의존도가 높은 화면 구성).
+     대신 위 preconnect로 연결 지연을 줄였고, 실측상 이 파일은 ~44ms에 그칩니다. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.0/css/all.min.css">
+
+<!-- ⚠️ 아래 스크립트 순서/defer 규칙
+     app.js는 최상단에서 axios.create()를 즉시 실행하므로 axios보다 먼저 실행되면 안 됩니다.
+     defer는 문서 순서대로 실행을 보장하므로, axios~app.js 전부 defer를 유지해야 합니다.
+     하나라도 defer를 빼면 실행 순서가 깨져 앱이 부팅되지 않습니다. -->
+<script defer src="https://cdn.jsdelivr.net/npm/axios@1.7.0/dist/axios.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 </head>
 <body class="h-screen overflow-hidden overflow-x-hidden" style="height:100vh;height:100dvh">
 <div id="toast-wrap"></div>
@@ -374,7 +392,9 @@ const HTML = `<!DOCTYPE html>
   </div>
 </div>
 
-<script src="/static/app.js"></script>
+<!-- defer 필수: head의 axios(defer)보다 반드시 뒤에 실행되어야 합니다.
+     (app.js 2번째 줄에서 axios.create()를 즉시 호출) -->
+<script defer src="/static/app.js"></script>
 <script>
 // Register Service Worker for PWA
 if ('serviceWorker' in navigator) {

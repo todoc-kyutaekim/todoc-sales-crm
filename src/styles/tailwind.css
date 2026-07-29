@@ -1,0 +1,7 @@
+/* Tailwind 빌드 입력 파일.
+   기존 cdn.tailwindcss.com은 preflight(base)를 포함했으므로 동일하게 유지합니다.
+   출력: public/static/tailwind.css
+   로드 순서는 반드시 tailwind.css → style.css (style.css가 오버라이드) */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
