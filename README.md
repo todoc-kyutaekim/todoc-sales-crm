@@ -4,7 +4,7 @@
 - **Name**: TODOC CRM
 - **Company**: 토닥(TODOC) - 인공와우 전문기업
 - **Goal**: 병원 영업팀이 영업 대상 병원, 교수, 미팅 기록을 체계적으로 관리하는 CRM 시스템
-- **Tech Stack**: Hono + TypeScript + Cloudflare Pages + D1 Database + TailwindCSS + Chart.js
+- **Tech Stack**: Hono + TypeScript + Cloudflare Pages + D1 Database + TailwindCSS(빌드타임) + Chart.js
 
 ## URLs
 - **Production**: https://todoc-crm.pages.dev
@@ -191,7 +191,43 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-05-12
+- **Last Updated**: 2026-07-29
+
+## 프론트엔드 빌드 (⚠️ 필수 확인)
+
+Tailwind는 **빌드 타임에 CSS를 생성**합니다 (구 `cdn.tailwindcss.com` 런타임 방식 제거).
+
+```bash
+npm run build        # build:css(Tailwind) → vite build 순서로 실행
+npm run build:css    # Tailwind CSS만 재생성
+npm run verify:css   # 클래스 누락 검증
+```
+
+**주의사항**
+1. **클래스를 추가/변경하면 반드시 `npm run build`(또는 `build:css`)를 실행**해야 반영됩니다.
+   CDN 시절처럼 "쓰면 바로 적용"되지 않습니다.
+2. `app.js`에서 **문자열 결합으로 클래스를 만드는 경우**(`'bg-' + color + '-500'`)는
+   정적 스캐너가 감지하지 못합니다. `tailwind.config.js`의 `safelist`에 추가하세요.
+3. CSS 로드 순서는 `tailwind.css` → `style.css`를 유지해야 합니다(오버라이드 보존).
+4. `<head>`의 axios/chart.js/marked/dompurify/leaflet과 `app.js`는 **모두 `defer`여야** 합니다.
+   `app.js`가 최상단에서 `axios.create()`를 즉시 호출하므로, 하나라도 빠지면 실행 순서가 깨집니다.
+5. `sw.js`의 자산 목록을 바꾸면 `CACHE_NAME` 버전을 올리세요.
+
+### 성능 최적화 이력 (2026-07-29)
+| 항목 | 개선 전 | 개선 후 |
+|---|---|---|
+| domContentLoaded | 1680ms | **990ms** (-41%) |
+| loadEvent | 1782ms | **1089ms** (-39%) |
+
+- Tailwind CDN 런타임 JIT 컴파일(126KB JS) → 빌드 타임 CSS(87KB, gzip 13KB)
+- Pretendard: Google Fonts에 없어 **HTTP 400 실패**하던 요청을 jsDelivr dynamic-subset으로 교체
+- 외부 스크립트 `defer` 적용 + jsDelivr `preconnect`
+
+### 남은 개선 여지 (미적용)
+- `app.js` 877KB 단일 파일(13,334줄) → 미니파이 + 페이지별 코드 스플리팅
+- 정적 자산 `Cache-Control: max-age=0` → 파일명 해시 + 장기 캐시
+- chart.js/leaflet(113KB)을 사용 페이지에서만 동적 로드
+- `loadMyKpi`의 `/dashboard/me` → `/dashboard/kpi-target` 순차 호출을 `Promise.all`로 병렬화
 
 ### Migration 이력
 | 번호 | 파일명 | 내용 |
