@@ -324,13 +324,21 @@ function showConfirm(title, msg, cb, opts) {
     delete: { icon: 'fas fa-trash', bg: 'bg-red-50', color: 'text-red-400', btn: 'btn btn-danger-fill', label: '삭제' },
     create: { icon: 'fas fa-calendar-plus', bg: 'bg-blue-50', color: 'text-blue-500', btn: 'btn btn-primary', label: '생성' },
     confirm: { icon: 'fas fa-check-circle', bg: 'bg-green-50', color: 'text-green-500', btn: 'btn btn-success', label: '확인' },
-    warning: { icon: 'fas fa-exclamation-triangle', bg: 'bg-amber-50', color: 'text-amber-500', btn: 'btn bg-amber-500 text-white hover:bg-amber-600', label: '확인' }
+    warning: { icon: 'fas fa-exclamation-triangle', bg: 'bg-amber-50', color: 'text-amber-500', btn: 'btn bg-amber-500 text-white hover:bg-amber-600', label: '확인' },
+    default: { icon: 'fas fa-pen-to-square', bg: 'bg-blue-50', color: 'text-blue-500', btn: 'btn btn-primary', label: '저장' }
   };
   var t = themes[type] || themes.confirm;
   document.getElementById('confirm-icon').className = 'w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ' + t.bg;
   document.getElementById('confirm-icon').innerHTML = '<i class="' + t.icon + ' ' + t.color + ' text-xl"></i>';
   document.getElementById('confirm-title').textContent = title;
-  document.getElementById('confirm-msg').innerHTML = msg;
+  var msgEl = document.getElementById('confirm-msg');
+  msgEl.innerHTML = msg;
+  // wide 옵션이면 왼쪽 정렬(폼 표시), 아니면 중앙(기존 동작 유지)
+  msgEl.style.textAlign = opts.wide ? 'left' : 'center';
+  // 다이얼로그 폭 조정
+  var box = document.getElementById('confirm-box');
+  if (box) box.className = 'bg-white w-full p-6' + (opts.wide ? ' max-w-lg' : ' max-w-sm text-center');
+  if (box) box.style.cssText = 'border-radius:20px;box-shadow:0 24px 48px -12px rgba(16,24,40,.18);animation:scaleIn .2s ease';
   var yesBtn = document.getElementById('confirm-yes');
   yesBtn.className = t.btn + ' flex-1';
   yesBtn.textContent = opts.yesLabel || t.label;
@@ -340,8 +348,33 @@ function showConfirm(title, msg, cb, opts) {
   confirmCb = cb;
   document.getElementById('confirm-dialog').classList.remove('hidden');
 }
-function confirmNo() { document.getElementById('confirm-dialog').classList.add('hidden'); confirmCb = null }
-function confirmYes() { document.getElementById('confirm-dialog').classList.add('hidden'); if (confirmCb) confirmCb(); confirmCb = null }
+function confirmNo() {
+  document.getElementById('confirm-dialog').classList.add('hidden');
+  confirmCb = null;
+  // 폭 원복
+  var box = document.getElementById('confirm-box');
+  if (box) box.className = 'bg-white w-full max-w-sm p-6 text-center';
+}
+async function confirmYes() {
+  var cb = confirmCb;
+  var yesBtn = document.getElementById('confirm-yes');
+  if (!cb) { document.getElementById('confirm-dialog').classList.add('hidden'); return; }
+  // async 콜백 지원: 성공 시에만 닫힘. 실패(throw) 시 다이얼로그 유지
+  try {
+    yesBtn.disabled = true;
+    var ret = cb();
+    if (ret && typeof ret.then === 'function') { await ret; }
+    // 성공: 닫기
+    document.getElementById('confirm-dialog').classList.add('hidden');
+    confirmCb = null;
+    var box = document.getElementById('confirm-box');
+    if (box) box.className = 'bg-white w-full max-w-sm p-6 text-center';
+  } catch (e) {
+    // 실패: 유지 (콜백 내부에서 toast 표시했을 것)
+  } finally {
+    yesBtn.disabled = false;
+  }
+}
 document.getElementById('confirm-yes').onclick = confirmYes;
 
 // ===== Sidebar Toggle (Mobile) =====
@@ -653,14 +686,42 @@ function _custMfrOptions(selected) {
     return '<option value="' + m.v + '"' + (selected === m.v ? ' selected' : '') + '>' + m.label + '</option>';
   }).join('');
 }
+function _custMfrLabel(v) {
+  if (!v) return '';
+  for (var i = 0; i < CUST_MFR_OPTIONS.length; i++) if (CUST_MFR_OPTIONS[i].v === v) return CUST_MFR_OPTIONS[i].label;
+  return v;
+}
+
+// 시술 부위(수술측) 옵션
+var SURGERY_SIDE_OPTIONS = [
+  { v: '',      label: '선택 안 함' },
+  { v: 'left',  label: '편측 - 좌측 (Left)' },
+  { v: 'right', label: '편측 - 우측 (Right)' },
+  { v: 'both',  label: '양측 (Both)' }
+];
+var SIDE_LABEL_SHORT = { left: '좌', right: '우' };
+var SIDE_LABEL_LONG  = { left: '좌측', right: '우측' };
+
+// 편집 중인 고객의 devices 상태 (in-memory)
+var _custDevicesState = { customerId: null, internal: [], external: [] };
+// 새로 등록 시 임시 devices (customerId가 없을 때 저장 후 일괄 등록)
+// 편집 모드에서만 CRUD 즉시 반영. 신규 등록에서는 저장 이후 devices 편집 유도.
 
 async function openCustomerModal(id) {
   var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'prospect', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '',
+    surgery_side: '',
     internal_manufacturer: '', internal_model: '', internal_serial: '', internal_implant_date: '', internal_side: '',
-    external_manufacturer: '', external_model: '', external_serial: '', external_supply_date: '', external_version: '' };
+    external_manufacturer: '', external_model: '', external_serial: '', external_supply_date: '', external_version: '',
+    internal_devices: [], external_devices: [] };
   if (id) {
     try { var r = await API.get('/customers/' + id); cst = Object.assign(cst, r.data.data || {}); } catch(e) { toast('고객 정보를 불러올 수 없습니다', 'err'); return; }
   }
+  // in-memory 상태 초기화 (편집 모드 device CRUD용)
+  _custDevicesState = {
+    customerId: id || null,
+    internal: (cst.internal_devices || []).slice(),
+    external: (cst.external_devices || []).slice()
+  };
   if (!_custHospitals.length) await _custLoadHospitals();
 
   var hospOpts = '<option value="">선택 안 함</option>' + _custHospitals.map(function(h) {
@@ -706,60 +767,63 @@ async function openCustomerModal(id) {
         ['active','inactive','dormant'].map(function(s) { return '<option value="' + s + '"' + (cst.status === s ? ' selected' : '') + '>' + CUST_STATUS_LABELS[s] + '</option>'; }).join('') +
       '</select></div>' +
 
-      // ===== 내부기 (Implant) 카드 =====
-      '<div class="col-span-full mt-3 p-3 rounded-lg border" style="background:#eff6ff;border-color:#bfdbfe">' +
+      // ===== 시술 부위 (수술측) =====
+      '<div class="col-span-full mt-2 p-3 rounded-lg border" style="background:#fefce8;border-color:#fde68a">' +
+        '<label class="input-label flex items-center gap-2 mb-2" style="color:#92400e">' +
+          '<i class="fas fa-user-doctor text-[12px]"></i>' +
+          '<span>시술 부위 (수술측)</span>' +
+        '</label>' +
+        '<select id="cst-surgery-side" name="surgery_side" class="input" onchange="_custOnSurgerySideChange()">' +
+          SURGERY_SIDE_OPTIONS.map(function(o) { return '<option value="' + o.v + '"' + ((cst.surgery_side || '') === o.v ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
+        '</select>' +
+        '<div class="text-[10px] text-slate-500 mt-1"><i class="fas fa-info-circle mr-1"></i>편측이면 내부기 1개 · 양측이면 좌/우 각 1개씩 등록 가능</div>' +
+      '</div>' +
+
+      // ===== 내부기 (Implant) 카드 - 좌/우 슬롯 =====
+      '<div class="col-span-full p-3 rounded-lg border" style="background:#eff6ff;border-color:#bfdbfe">' +
         '<div class="flex items-center gap-2 mb-3">' +
           '<div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:#dbeafe">' +
             '<i class="fas fa-microchip text-[13px]" style="color:#1d4ed8"></i>' +
           '</div>' +
-          '<div>' +
+          '<div class="flex-1">' +
             '<div class="text-[12px] font-bold" style="color:#1d4ed8">내부기 (Implant)</div>' +
-            '<div class="text-[10px] text-slate-500">수술로 삽입되는 임플란트</div>' +
+            '<div class="text-[10px] text-slate-500">수술로 삽입되는 임플란트 · 좌/우 각 1개</div>' +
           '</div>' +
         '</div>' +
-        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-          '<div><label class="input-label">제조사</label><select name="internal_manufacturer" class="input">' + _custMfrOptions(cst.internal_manufacturer) + '</select></div>' +
-          '<div><label class="input-label">모델명</label><input name="internal_model" type="text" value="' + csEsc(cst.internal_model || '') + '" class="input" placeholder="예: Nucleus Profile Plus"></div>' +
-          '<div><label class="input-label">시리얼 번호</label><input name="internal_serial" type="text" value="' + csEsc(cst.internal_serial || '') + '" class="input"></div>' +
-          '<div><label class="input-label">이식일</label><input name="internal_implant_date" type="date" value="' + csEsc(cst.internal_implant_date || '') + '" class="input"></div>' +
-          '<div class="sm:col-span-2"><label class="input-label">이식 위치</label><select name="internal_side" class="input">' +
-            ['','L','R','BOTH'].map(function(s) { var l = s === 'L' ? '좌측' : s === 'R' ? '우측' : s === 'BOTH' ? '양측' : '선택 안 함'; return '<option value="' + s + '"' + (cst.internal_side === s ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
-          '</select></div>' +
-        '</div>' +
+        '<div id="cst-internal-slots">' + _custRenderInternalSlots(id, cst.surgery_side || '') + '</div>' +
       '</div>' +
 
-      // ===== 외부기 (Sound Processor) 카드 =====
+      // ===== 외부기 (Sound Processor) 카드 - 다중 =====
       '<div class="col-span-full p-3 rounded-lg border" style="background:#f0fdf4;border-color:#bbf7d0">' +
         '<div class="flex items-center gap-2 mb-3">' +
           '<div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:#dcfce7">' +
             '<i class="fas fa-headphones text-[13px]" style="color:#15803d"></i>' +
           '</div>' +
-          '<div>' +
+          '<div class="flex-1">' +
             '<div class="text-[12px] font-bold" style="color:#15803d">외부기 (Sound Processor)</div>' +
-            '<div class="text-[10px] text-slate-500">착용형 어음처리기 · 교체 가능</div>' +
+            '<div class="text-[10px] text-slate-500">착용형 어음처리기 · 교체 이력 관리</div>' +
           '</div>' +
+          (id ? '<button type="button" onclick="_custAddExternal()" class="btn btn-outline btn-sm text-[11px]" style="color:#15803d;border-color:#bbf7d0"><i class="fas fa-plus mr-1"></i>추가</button>' : '') +
         '</div>' +
-        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-          '<div><label class="input-label">제조사</label><select name="external_manufacturer" class="input">' + _custMfrOptions(cst.external_manufacturer) + '</select></div>' +
-          '<div><label class="input-label">모델명</label><input name="external_model" type="text" value="' + csEsc(cst.external_model || '') + '" class="input" placeholder="예: Nucleus 8"></div>' +
-          '<div><label class="input-label">시리얼 번호</label><input name="external_serial" type="text" value="' + csEsc(cst.external_serial || '') + '" class="input"></div>' +
-          '<div><label class="input-label">지급/교체일</label><input name="external_supply_date" type="date" value="' + csEsc(cst.external_supply_date || '') + '" class="input"></div>' +
-          '<div class="sm:col-span-2"><label class="input-label">버전 / 펌웨어</label><input name="external_version" type="text" value="' + csEsc(cst.external_version || '') + '" class="input" placeholder="예: 1.5"></div>' +
-        '</div>' +
+        '<div id="cst-external-list">' + _custRenderExternalList(id) + '</div>' +
       '</div>' +
 
       // 기존 필드 (호환용) — 접이식 details
       '<details class="col-span-full">' +
-        '<summary class="text-[11px] text-slate-400 cursor-pointer hover:text-slate-600 py-1"><i class="fas fa-history text-[10px] mr-1"></i>이전 필드 (호환용) — 시술일 · 시술 부위 · 기기 모델 · 시리얼</summary>' +
+        '<summary class="text-[11px] text-slate-400 cursor-pointer hover:text-slate-600 py-1"><i class="fas fa-history text-[10px] mr-1"></i>이전 flat 필드 (호환용) — 시술일 · 이전 시술 부위 · 기기 모델 · 시리얼</summary>' +
         '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2 p-3 rounded-lg bg-slate-50">' +
-          '<div><label class="input-label">시술일</label><input name="implant_date" type="date" value="' + csEsc(cst.implant_date) + '" class="input"></div>' +
-          '<div><label class="input-label">시술 부위</label><select name="implant_side" class="input">' +
+          '<div><label class="input-label">시술일 (legacy)</label><input name="implant_date" type="date" value="' + csEsc(cst.implant_date) + '" class="input"></div>' +
+          '<div><label class="input-label">이전 시술 부위 (legacy)</label><select name="implant_side" class="input">' +
             ['','L','R','BOTH'].map(function(s) { var l = s === 'L' ? '좌측' : s === 'R' ? '우측' : s === 'BOTH' ? '양측' : '선택 안 함'; return '<option value="' + s + '"' + (cst.implant_side === s ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
           '</select></div>' +
-          '<div><label class="input-label">기기 모델</label><input name="device_model" type="text" value="' + csEsc(cst.device_model) + '" class="input"></div>' +
-          '<div><label class="input-label">기기 시리얼</label><input name="device_serial" type="text" value="' + csEsc(cst.device_serial) + '" class="input"></div>' +
+          '<div><label class="input-label">기기 모델 (legacy)</label><input name="device_model" type="text" value="' + csEsc(cst.device_model) + '" class="input"></div>' +
+          '<div><label class="input-label">기기 시리얼 (legacy)</label><input name="device_serial" type="text" value="' + csEsc(cst.device_serial) + '" class="input"></div>' +
+          '<div class="col-span-full text-[10px] text-slate-400 pt-1"><i class="fas fa-info-circle mr-1"></i>내부기/외부기 신 필드 통합 이전 데이터. 새 등록에서는 위 카드를 사용하세요.</div>' +
         '</div>' +
       '</details>' +
+
+      // 신규 등록 안내
+      (!id ? '<div class="col-span-full text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2"><i class="fas fa-info-circle mr-1"></i>고객을 먼저 저장한 뒤, 편집 화면에서 내부기/외부기를 등록·수정할 수 있습니다.</div>' : '') +
 
       '<div class="col-span-full"><label class="input-label">메모</label><textarea name="notes" rows="3" class="input">' + csEsc(cst.notes) + '</textarea></div>' +
     '</form>' +
@@ -821,6 +885,311 @@ function _custDeleteFromPanel(id, name) {
         toast('삭제되었습니다');
         closeSidePanel(true);
         fetchCustomers();
+      } catch(e) { toast('삭제 실패', 'err'); }
+    },
+    { type: 'delete', yesLabel: '삭제' });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 고객 디바이스 UI (내부기 좌/우 슬롯 + 외부기 다중 리스트)
+// ═══════════════════════════════════════════════════════════════
+
+// 시술 부위 변경 시 내부기 슬롯 재렌더
+function _custOnSurgerySideChange() {
+  var sel = document.getElementById('cst-surgery-side');
+  var slotBox = document.getElementById('cst-internal-slots');
+  if (!sel || !slotBox) return;
+  var custId = _custDevicesState.customerId;
+  slotBox.innerHTML = _custRenderInternalSlots(custId, sel.value);
+}
+
+// 내부기 좌/우 슬롯 렌더
+// surgery_side: '' | 'left' | 'right' | 'both'
+function _custRenderInternalSlots(custId, surgerySide) {
+  if (!custId) {
+    // 신규 등록: 저장 후 편집 유도
+    return '<div class="text-[11px] text-slate-500 bg-white/60 rounded-md p-2 text-center"><i class="fas fa-lock mr-1"></i>고객 저장 후 등록 가능합니다</div>';
+  }
+  if (!surgerySide) {
+    return '<div class="text-[11px] text-slate-500 bg-white/60 rounded-md p-2 text-center"><i class="fas fa-arrow-up mr-1"></i>위에서 시술 부위를 먼저 선택하세요</div>';
+  }
+
+  var sides = surgerySide === 'both' ? ['left', 'right'] : [surgerySide];
+  var internal = _custDevicesState.internal || [];
+
+  return sides.map(function(side) {
+    var dev = null;
+    for (var i = 0; i < internal.length; i++) if (internal[i].side === side) { dev = internal[i]; break; }
+    return _custRenderInternalSlot(custId, side, dev);
+  }).join('');
+}
+
+function _custRenderInternalSlot(custId, side, dev) {
+  var sideLabel = SIDE_LABEL_LONG[side] || side;
+  var sideColor = side === 'left' ? '#2563eb' : '#7c3aed';
+  var sideBg    = side === 'left' ? '#dbeafe' : '#ede9fe';
+  var sideIcon  = side === 'left' ? 'fa-arrow-left' : 'fa-arrow-right';
+
+  if (!dev) {
+    // 빈 슬롯 - 등록 버튼
+    return '<div class="mb-2 last:mb-0 p-3 rounded-md border border-dashed" style="border-color:' + sideBg + ';background:#fff">' +
+      '<div class="flex items-center justify-between">' +
+        '<div class="flex items-center gap-2">' +
+          '<div class="w-6 h-6 rounded-full flex items-center justify-center" style="background:' + sideBg + '">' +
+            '<i class="fas ' + sideIcon + ' text-[10px]" style="color:' + sideColor + '"></i>' +
+          '</div>' +
+          '<span class="text-[12px] font-semibold" style="color:' + sideColor + '">' + sideLabel + ' 내부기</span>' +
+          '<span class="text-[10px] text-slate-400">미등록</span>' +
+        '</div>' +
+        '<button type="button" onclick="_custEditInternal(' + custId + ',\'' + side + '\')" class="btn btn-outline btn-sm text-[11px]" style="color:' + sideColor + ';border-color:' + sideBg + '"><i class="fas fa-plus mr-1"></i>등록</button>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // 등록된 슬롯 - 정보 표시
+  return '<div class="mb-2 last:mb-0 p-3 rounded-md border" style="border-color:' + sideBg + ';background:#fff">' +
+    '<div class="flex items-center justify-between mb-2">' +
+      '<div class="flex items-center gap-2">' +
+        '<div class="w-6 h-6 rounded-full flex items-center justify-center" style="background:' + sideBg + '">' +
+          '<i class="fas ' + sideIcon + ' text-[10px]" style="color:' + sideColor + '"></i>' +
+        '</div>' +
+        '<span class="text-[12px] font-semibold" style="color:' + sideColor + '">' + sideLabel + ' 내부기</span>' +
+      '</div>' +
+      '<div class="flex items-center gap-1">' +
+        '<button type="button" onclick="_custEditInternal(' + custId + ',\'' + side + '\',' + dev.id + ')" class="text-[10px] px-2 py-1 rounded hover:bg-slate-100 text-slate-500" title="편집"><i class="fas fa-pen"></i></button>' +
+        '<button type="button" onclick="_custDeleteInternal(' + custId + ',' + dev.id + ',\'' + side + '\')" class="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-500" title="삭제"><i class="fas fa-trash"></i></button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">' +
+      _custKV('제조사', _custMfrLabel(dev.manufacturer) || '—') +
+      _custKV('모델', dev.model || '—') +
+      _custKV('시리얼', dev.serial || '—') +
+      _custKV('이식일', dev.implant_date || '—') +
+      (dev.notes ? '<div class="col-span-2">' + _custKV('메모', dev.notes) + '</div>' : '') +
+    '</div>' +
+  '</div>';
+}
+
+function _custKV(k, v) {
+  return '<div>' +
+    '<span class="text-slate-400">' + k + ':</span> ' +
+    '<span class="text-slate-700 font-medium">' + csEsc(String(v || '')) + '</span>' +
+  '</div>';
+}
+
+// 외부기 리스트 렌더
+function _custRenderExternalList(custId) {
+  if (!custId) {
+    return '<div class="text-[11px] text-slate-500 bg-white/60 rounded-md p-2 text-center"><i class="fas fa-lock mr-1"></i>고객 저장 후 등록 가능합니다</div>';
+  }
+  var list = _custDevicesState.external || [];
+  if (!list.length) {
+    return '<div class="text-[11px] text-slate-500 bg-white/60 rounded-md p-3 text-center"><i class="fas fa-inbox mr-1"></i>등록된 외부기가 없습니다</div>';
+  }
+  return list.map(function(dev) { return _custRenderExternalItem(custId, dev); }).join('');
+}
+
+function _custRenderExternalItem(custId, dev) {
+  var side = dev.side || 'left';
+  var sideLabel = SIDE_LABEL_LONG[side] || side;
+  var sideColor = side === 'left' ? '#2563eb' : '#7c3aed';
+  var sideBg    = side === 'left' ? '#dbeafe' : '#ede9fe';
+  var active = dev.is_active === 1 || dev.is_active === true;
+  var statusBadge = active
+    ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:#dcfce7;color:#15803d"><i class="fas fa-check mr-1"></i>사용중</span>'
+    : '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:#f1f5f9;color:#64748b"><i class="fas fa-archive mr-1"></i>보관</span>';
+
+  return '<div class="mb-2 last:mb-0 p-3 rounded-md border bg-white" style="border-color:' + (active ? '#bbf7d0' : '#e2e8f0') + '">' +
+    '<div class="flex items-center justify-between mb-2">' +
+      '<div class="flex items-center gap-2 flex-wrap">' +
+        '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + sideBg + ';color:' + sideColor + '">' + sideLabel + '</span>' +
+        statusBadge +
+        '<span class="text-[12px] font-semibold text-slate-700">' + csEsc(_custMfrLabel(dev.manufacturer) || '외부기') + '</span>' +
+        (dev.model ? '<span class="text-[11px] text-slate-500">· ' + csEsc(dev.model) + '</span>' : '') +
+      '</div>' +
+      '<div class="flex items-center gap-1">' +
+        '<button type="button" onclick="_custEditExternal(' + custId + ',' + dev.id + ')" class="text-[10px] px-2 py-1 rounded hover:bg-slate-100 text-slate-500" title="편집"><i class="fas fa-pen"></i></button>' +
+        '<button type="button" onclick="_custDeleteExternal(' + custId + ',' + dev.id + ')" class="text-[10px] px-2 py-1 rounded hover:bg-red-50 text-red-500" title="삭제"><i class="fas fa-trash"></i></button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">' +
+      _custKV('시리얼', dev.serial || '—') +
+      _custKV('버전', dev.version || '—') +
+      _custKV('지급/교체일', dev.supply_date || '—') +
+      _custKV('상태', active ? '사용중' : '보관') +
+      (dev.notes ? '<div class="col-span-2">' + _custKV('메모', dev.notes) + '</div>' : '') +
+    '</div>' +
+  '</div>';
+}
+
+// ───────── 내부기 CRUD (편집 모달) ─────────
+function _custEditInternal(customerId, side, deviceId) {
+  var dev = null;
+  if (deviceId) {
+    for (var i = 0; i < _custDevicesState.internal.length; i++) {
+      if (_custDevicesState.internal[i].id === deviceId) { dev = _custDevicesState.internal[i]; break; }
+    }
+  }
+  var isNew = !dev;
+  var data = dev || { side: side, manufacturer: '', model: '', serial: '', implant_date: '', notes: '' };
+  var sideLabel = SIDE_LABEL_LONG[side] || side;
+
+  var body =
+    '<form id="fm-int-dev" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+      '<div class="col-span-full p-2 rounded-md bg-blue-50 text-[11px] text-blue-700">' +
+        '<i class="fas fa-info-circle mr-1"></i>' + sideLabel + ' 내부기' +
+        '<input type="hidden" name="side" value="' + side + '">' +
+      '</div>' +
+      '<div><label class="input-label">제조사</label><select name="manufacturer" class="input">' + _custMfrOptions(data.manufacturer) + '</select></div>' +
+      '<div><label class="input-label">모델명</label><input name="model" type="text" value="' + csEsc(data.model || '') + '" class="input" placeholder="예: Nucleus Profile Plus"></div>' +
+      '<div><label class="input-label">시리얼 번호</label><input name="serial" type="text" value="' + csEsc(data.serial || '') + '" class="input"></div>' +
+      '<div><label class="input-label">이식일</label><input name="implant_date" type="date" value="' + csEsc(data.implant_date || '') + '" class="input"></div>' +
+      '<div class="col-span-full"><label class="input-label">메모</label><textarea name="notes" rows="2" class="input">' + csEsc(data.notes || '') + '</textarea></div>' +
+    '</form>';
+
+  showConfirm(
+    (isNew ? '내부기 등록 · ' : '내부기 편집 · ') + sideLabel,
+    body,
+    async function() {
+      var fm = document.getElementById('fm-int-dev');
+      if (!fm) return;
+      var f = Object.fromEntries(new FormData(fm));
+      try {
+        if (isNew) {
+          var r = await API.post('/customers/' + customerId + '/internal-devices', f);
+          _custDevicesState.internal.push(r.data.data);
+          toast('내부기가 등록되었습니다');
+        } else {
+          var r2 = await API.put('/customers/' + customerId + '/internal-devices/' + deviceId, f);
+          for (var i = 0; i < _custDevicesState.internal.length; i++) {
+            if (_custDevicesState.internal[i].id === deviceId) {
+              _custDevicesState.internal[i] = Object.assign({}, _custDevicesState.internal[i], r2.data.data);
+              break;
+            }
+          }
+          toast('내부기가 저장되었습니다');
+        }
+        // 재렌더
+        var sel = document.getElementById('cst-surgery-side');
+        var slotBox = document.getElementById('cst-internal-slots');
+        if (slotBox && sel) slotBox.innerHTML = _custRenderInternalSlots(customerId, sel.value);
+      } catch (err) {
+        var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
+        toast(msg, 'err');
+        throw err; // showConfirm이 닫히지 않도록
+      }
+    },
+    { yesLabel: isNew ? '등록' : '저장', type: 'default', wide: true }
+  );
+}
+
+function _custDeleteInternal(customerId, deviceId, side) {
+  var sideLabel = SIDE_LABEL_LONG[side] || side;
+  showConfirm('내부기 삭제',
+    '<strong>' + sideLabel + '</strong> 내부기를 삭제하시겠습니까?',
+    async function() {
+      try {
+        await API.delete('/customers/' + customerId + '/internal-devices/' + deviceId);
+        _custDevicesState.internal = _custDevicesState.internal.filter(function(d) { return d.id !== deviceId; });
+        var sel = document.getElementById('cst-surgery-side');
+        var slotBox = document.getElementById('cst-internal-slots');
+        if (slotBox && sel) slotBox.innerHTML = _custRenderInternalSlots(customerId, sel.value);
+        toast('삭제되었습니다');
+      } catch(e) { toast('삭제 실패', 'err'); }
+    },
+    { type: 'delete', yesLabel: '삭제' });
+}
+
+// ───────── 외부기 CRUD ─────────
+function _custAddExternal() {
+  var custId = _custDevicesState.customerId;
+  if (!custId) return;
+  _custEditExternal(custId, null);
+}
+
+function _custEditExternal(customerId, deviceId) {
+  var dev = null;
+  if (deviceId) {
+    for (var i = 0; i < _custDevicesState.external.length; i++) {
+      if (_custDevicesState.external[i].id === deviceId) { dev = _custDevicesState.external[i]; break; }
+    }
+  }
+  var isNew = !dev;
+  // 신규 등록시 surgery_side 값에 따라 side 기본값 결정
+  var defaultSide = 'left';
+  var sel = document.getElementById('cst-surgery-side');
+  if (sel && sel.value === 'right') defaultSide = 'right';
+  var data = dev || { side: defaultSide, manufacturer: '', model: '', serial: '', supply_date: '', version: '', is_active: 1, notes: '' };
+
+  var body =
+    '<form id="fm-ext-dev" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+      '<div><label class="input-label">방향 *</label><select name="side" class="input" required>' +
+        ['left','right'].map(function(s) { return '<option value="' + s + '"' + (data.side === s ? ' selected' : '') + '>' + SIDE_LABEL_LONG[s] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label class="input-label">상태</label><select name="is_active" class="input">' +
+        '<option value="1"' + (data.is_active ? ' selected' : '') + '>사용중</option>' +
+        '<option value="0"' + (!data.is_active ? ' selected' : '') + '>보관 (교체됨)</option>' +
+      '</select></div>' +
+      '<div><label class="input-label">제조사</label><select name="manufacturer" class="input">' + _custMfrOptions(data.manufacturer) + '</select></div>' +
+      '<div><label class="input-label">모델명</label><input name="model" type="text" value="' + csEsc(data.model || '') + '" class="input" placeholder="예: Nucleus 8"></div>' +
+      '<div><label class="input-label">시리얼 번호</label><input name="serial" type="text" value="' + csEsc(data.serial || '') + '" class="input"></div>' +
+      '<div><label class="input-label">지급/교체일</label><input name="supply_date" type="date" value="' + csEsc(data.supply_date || '') + '" class="input"></div>' +
+      '<div class="col-span-full"><label class="input-label">버전 / 펌웨어</label><input name="version" type="text" value="' + csEsc(data.version || '') + '" class="input" placeholder="예: 1.5"></div>' +
+      '<div class="col-span-full"><label class="input-label">메모 (교체 사유 등)</label><textarea name="notes" rows="2" class="input">' + csEsc(data.notes || '') + '</textarea></div>' +
+    '</form>';
+
+  showConfirm(
+    isNew ? '외부기 등록' : '외부기 편집',
+    body,
+    async function() {
+      var fm = document.getElementById('fm-ext-dev');
+      if (!fm) return;
+      var f = Object.fromEntries(new FormData(fm));
+      // is_active를 숫자로
+      f.is_active = f.is_active === '1' ? 1 : 0;
+      try {
+        if (isNew) {
+          var r = await API.post('/customers/' + customerId + '/external-devices', f);
+          _custDevicesState.external.unshift(r.data.data);
+          toast('외부기가 등록되었습니다');
+        } else {
+          var r2 = await API.put('/customers/' + customerId + '/external-devices/' + deviceId, f);
+          for (var i = 0; i < _custDevicesState.external.length; i++) {
+            if (_custDevicesState.external[i].id === deviceId) {
+              _custDevicesState.external[i] = Object.assign({}, _custDevicesState.external[i], r2.data.data);
+              break;
+            }
+          }
+          toast('외부기가 저장되었습니다');
+        }
+        // 정렬: 사용중 우선, supply_date desc, id desc
+        _custDevicesState.external.sort(function(a, b) {
+          if ((b.is_active ? 1 : 0) !== (a.is_active ? 1 : 0)) return (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0);
+          if ((b.supply_date || '') !== (a.supply_date || '')) return (b.supply_date || '') > (a.supply_date || '') ? 1 : -1;
+          return b.id - a.id;
+        });
+        var box = document.getElementById('cst-external-list');
+        if (box) box.innerHTML = _custRenderExternalList(customerId);
+      } catch (err) {
+        var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
+        toast(msg, 'err');
+        throw err;
+      }
+    },
+    { yesLabel: isNew ? '등록' : '저장', type: 'default', wide: true }
+  );
+}
+
+function _custDeleteExternal(customerId, deviceId) {
+  showConfirm('외부기 삭제',
+    '이 외부기를 삭제하시겠습니까?<br><span class="text-[11px] text-slate-500">교체 이력 목적이면 <strong>보관</strong> 상태로 두는 것을 권장합니다.</span>',
+    async function() {
+      try {
+        await API.delete('/customers/' + customerId + '/external-devices/' + deviceId);
+        _custDevicesState.external = _custDevicesState.external.filter(function(d) { return d.id !== deviceId; });
+        var box = document.getElementById('cst-external-list');
+        if (box) box.innerHTML = _custRenderExternalList(customerId);
+        toast('삭제되었습니다');
       } catch(e) { toast('삭제 실패', 'err'); }
     },
     { type: 'delete', yesLabel: '삭제' });
