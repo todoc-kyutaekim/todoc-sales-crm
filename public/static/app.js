@@ -394,7 +394,7 @@ function nav(p) {
     products: loadProducts,
     customers: loadCustomers,
     cs_inquiry: loadCsInquiry,
-    cs_repair: loadCsRepairPending,
+    cs_repair: loadCsRepair,
     cs_contact_log: loadCsContactLogPending,
     cs_faq: loadCsFaqPending,
   })[p]?.();
@@ -1197,10 +1197,565 @@ function _csPending(title, subtitle, icon, msg) {
     '</div>' +
   '</div>';
 }
-function loadCsRepairPending() {
-  _csPending('AS/수리 요청', 'CS · 준비 중', 'fas fa-screwdriver-wrench',
-    '고객이 접수한 AS/수리 요청을 시리얼·모델·진행 단계별로 관리하는 기능을 준비하고 있습니다.');
+// ============================================================
+// CS Main — Phase 2: AS/수리 요청 관리
+// ============================================================
+
+var CS_REP_STATUS_LABELS = {
+  received: '접수', diagnosing: '진단중', waiting_parts: '부품대기',
+  repairing: '수리중', completed: '수리완료', shipped: '발송',
+  closed: '종료', rejected: '반려'
+};
+var CS_REP_STATUS_COLORS = {
+  received:      { bg: '#dbeafe', fg: '#1d4ed8', bd: '#bfdbfe' },
+  diagnosing:    { bg: '#e0e7ff', fg: '#4338ca', bd: '#c7d2fe' },
+  waiting_parts: { bg: '#fef3c7', fg: '#92400e', bd: '#fde68a' },
+  repairing:     { bg: '#f5f3ff', fg: '#6d28d9', bd: '#ddd6fe' },
+  completed:     { bg: '#dcfce7', fg: '#166534', bd: '#bbf7d0' },
+  shipped:       { bg: '#ccfbf1', fg: '#0f766e', bd: '#99f6e4' },
+  closed:        { bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0' },
+  rejected:      { bg: '#fee2e2', fg: '#b91c1c', bd: '#fecaca' }
+};
+var CS_REP_WARRANTY_LABELS = {
+  in_warranty: '보증 내', out_of_warranty: '보증 만료', unknown: '확인 중'
+};
+var CS_REP_WARRANTY_COLORS = {
+  in_warranty:     { bg: '#dcfce7', fg: '#047857', bd: '#a7f3d0' },
+  out_of_warranty: { bg: '#fee2e2', fg: '#b91c1c', bd: '#fecaca' },
+  unknown:         { bg: '#f1f5f9', fg: '#475569', bd: '#e2e8f0' }
+};
+var CS_REP_STEP_LABELS = {
+  status_change:   { label: '상태 변경',   icon: 'fa-flag',           fg: '#2563eb', bg: '#dbeafe' },
+  assignee_change: { label: '담당자 변경', icon: 'fa-user-tag',       fg: '#7c3aed', bg: '#ede9fe' },
+  diagnosis:       { label: '진단 기록',   icon: 'fa-stethoscope',    fg: '#4f46e5', bg: '#e0e7ff' },
+  part_order:      { label: '부품 주문',   icon: 'fa-boxes-stacked',  fg: '#d97706', bg: '#fef3c7' },
+  cost_update:     { label: '비용 변경',   icon: 'fa-won-sign',       fg: '#c2410c', bg: '#ffedd5' },
+  resolution:      { label: '처리 내용',   icon: 'fa-wrench',         fg: '#047857', bg: '#dcfce7' },
+  note:            { label: '메모',        icon: 'fa-note-sticky',    fg: '#475569', bg: '#f1f5f9' }
+};
+
+var _csRepList = [];
+var _csRepFilter = { search: '', status: '', priority: '', warranty_status: '', assignee_id: '' };
+var _csRepUsers = [];
+var _csRepCustomers = [];
+
+function csRepFmtCost(n) {
+  if (n == null || n === '') return '-';
+  var num = Number(n);
+  if (isNaN(num)) return '-';
+  return num.toLocaleString('ko-KR') + '원';
 }
+
+// ---------- 목록 페이지 ----------
+async function loadCsRepair() {
+  var c = document.getElementById('content');
+  document.getElementById('page-title').textContent = 'AS/수리 요청';
+  document.getElementById('page-subtitle').textContent = '고객 접수 · 진단 · 수리 · 발송 이력 관리';
+  document.getElementById('header-actions').innerHTML =
+    '<button onclick="openCsRepairModal()" class="btn btn-primary btn-sm"><i class="fas fa-plus mr-1"></i>수리 접수</button>';
+
+  c.innerHTML = '<div class="p-4 lg:p-6 max-w-7xl mx-auto">' +
+    '<div id="csrep-stats" class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5"></div>' +
+    '<div class="card p-4 mb-4">' +
+      '<div class="flex flex-wrap gap-2 items-center">' +
+        '<div class="relative flex-1 min-w-[200px] filter-search">' +
+          '<i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>' +
+          '<input id="csrep-search" oninput="filterCsRep()" placeholder="증상 · 시리얼 · 모델 · 고객 검색" class="input pl-10">' +
+        '</div>' +
+        '<select id="csrep-status" onchange="filterCsRep()" class="input filter-select">' +
+          '<option value="">전체 상태</option>' +
+          Object.keys(CS_REP_STATUS_LABELS).map(function(k) {
+            return '<option value="' + k + '">' + CS_REP_STATUS_LABELS[k] + '</option>';
+          }).join('') +
+        '</select>' +
+        '<select id="csrep-priority" onchange="filterCsRep()" class="input filter-select">' +
+          '<option value="">전체 우선순위</option>' +
+          '<option value="urgent">긴급</option>' +
+          '<option value="high">높음</option>' +
+          '<option value="mid">중간</option>' +
+          '<option value="low">낮음</option>' +
+        '</select>' +
+        '<select id="csrep-warranty" onchange="filterCsRep()" class="input filter-select">' +
+          '<option value="">전체 보증</option>' +
+          '<option value="in_warranty">보증 내</option>' +
+          '<option value="out_of_warranty">보증 만료</option>' +
+          '<option value="unknown">확인 중</option>' +
+        '</select>' +
+        '<select id="csrep-assignee" onchange="filterCsRep()" class="input filter-select">' +
+          '<option value="">전체 담당자</option>' +
+        '</select>' +
+      '</div>' +
+    '</div>' +
+    '<div id="csrep-list" class="space-y-2"></div>' +
+  '</div>';
+
+  await _csRepLoadUsers();
+  var sel = document.getElementById('csrep-assignee');
+  if (sel) {
+    _csRepUsers.forEach(function(u) {
+      var opt = document.createElement('option');
+      opt.value = u.id; opt.textContent = u.name;
+      sel.appendChild(opt);
+    });
+  }
+  fetchCsRepairs();
+}
+
+async function _csRepLoadUsers() {
+  if (_csRepUsers.length) return;
+  try {
+    var r = await API.get('/users');
+    _csRepUsers = r.data.data || r.data || [];
+  } catch(e) { _csRepUsers = []; }
+}
+
+async function _csRepLoadCustomers() {
+  if (_csRepCustomers.length) return;
+  try {
+    var r = await API.get('/customers?limit=500');
+    _csRepCustomers = r.data.data || [];
+  } catch(e) { _csRepCustomers = []; }
+}
+
+async function fetchCsRepairs() {
+  var listDiv = document.getElementById('csrep-list');
+  if (!listDiv) return;
+  listDiv.innerHTML = '<div class="flex items-center justify-center py-10"><div class="w-8 h-8 border-3 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div></div>';
+  try {
+    var params = [];
+    if (_csRepFilter.search) params.push('search=' + encodeURIComponent(_csRepFilter.search));
+    if (_csRepFilter.status) params.push('status=' + _csRepFilter.status);
+    if (_csRepFilter.priority) params.push('priority=' + _csRepFilter.priority);
+    if (_csRepFilter.warranty_status) params.push('warranty_status=' + _csRepFilter.warranty_status);
+    if (_csRepFilter.assignee_id) params.push('assignee_id=' + _csRepFilter.assignee_id);
+    var qs = params.length ? '?' + params.join('&') : '';
+    var res = await API.get('/cs/repairs' + qs);
+    _csRepList = res.data.data || [];
+    renderCsRepairs();
+    renderCsRepStats();
+  } catch(e) {
+    listDiv.innerHTML = '<div class="card p-8 text-center text-red-400"><i class="fas fa-exclamation-triangle mr-2"></i>수리 요청 목록을 불러올 수 없습니다</div>';
+  }
+}
+
+async function renderCsRepStats() {
+  try {
+    var r = await API.get('/cs/repairs/stats');
+    var s = r.data.data || {};
+    var el = document.getElementById('csrep-stats');
+    if (!el) return;
+    var cards = [
+      { l: '전체', v: s.total || 0, i: 'fa-clipboard-list', c: 'text-slate-600', bg: 'bg-slate-50', bd: 'border-slate-200' },
+      { l: '접수', v: s.received || 0, i: 'fa-inbox', c: 'text-blue-600', bg: 'bg-blue-50', bd: 'border-blue-100' },
+      { l: '진행중', v: s.in_progress || 0, i: 'fa-gears', c: 'text-purple-600', bg: 'bg-purple-50', bd: 'border-purple-100' },
+      { l: '완료·발송', v: (s.completed || 0) + (s.shipped || 0), i: 'fa-circle-check', c: 'text-emerald-600', bg: 'bg-emerald-50', bd: 'border-emerald-100' },
+      { l: '긴급 미해결', v: s.urgent_open || 0, i: 'fa-fire', c: 'text-rose-600', bg: 'bg-rose-50', bd: 'border-rose-100' }
+    ];
+    el.innerHTML = cards.map(function(c) {
+      return '<div class="card p-3 border ' + c.bd + '">' +
+        '<div class="flex items-center justify-between mb-1">' +
+          '<span class="text-[11px] ' + c.c + ' font-semibold">' + c.l + '</span>' +
+          '<i class="fas ' + c.i + ' ' + c.c + ' opacity-60 text-sm"></i>' +
+        '</div>' +
+        '<div class="text-2xl font-bold text-slate-800">' + c.v + '</div>' +
+      '</div>';
+    }).join('');
+  } catch(e) {}
+}
+
+function renderCsRepairs() {
+  var el = document.getElementById('csrep-list');
+  if (!el) return;
+  if (!_csRepList.length) {
+    el.innerHTML = '<div class="card p-8 text-center text-slate-400">' +
+      '<i class="fas fa-screwdriver-wrench text-3xl mb-2 opacity-40"></i>' +
+      '<p class="text-sm">등록된 수리 요청이 없습니다</p>' +
+      '<button onclick="openCsRepairModal()" class="btn btn-primary btn-sm mt-3"><i class="fas fa-plus mr-1"></i>첫 수리 요청 접수</button>' +
+    '</div>';
+    return;
+  }
+  el.innerHTML = _csRepList.map(function(r) {
+    var stCol = CS_REP_STATUS_COLORS[r.status] || CS_REP_STATUS_COLORS.received;
+    var prCol = CS_INQ_PRIORITY_COLORS[r.priority] || CS_INQ_PRIORITY_COLORS.mid;
+    var wrCol = CS_REP_WARRANTY_COLORS[r.warranty_status] || CS_REP_WARRANTY_COLORS.unknown;
+    var custName = r.customer_name || r.contact_name || '(연락처 없음)';
+    var custPhone = r.customer_phone || r.contact_phone || '';
+    var productLabel = '';
+    if (r.product_master_name) {
+      productLabel = r.product_master_name + (r.product_serial_no ? ' · ' + r.product_serial_no : '');
+    } else if (r.product_name) {
+      productLabel = r.product_name + (r.serial_no_text ? ' · ' + r.serial_no_text : '');
+    } else if (r.serial_no_text) {
+      productLabel = 'S/N: ' + r.serial_no_text;
+    }
+    return '<div onclick="viewCsRepair(' + r.id + ')" class="card p-4 hover:shadow-md hover:border-blue-200 transition-all cursor-pointer">' +
+      '<div class="flex flex-wrap items-start gap-2 mb-2">' +
+        '<span class="text-[10px] px-2 py-0.5 rounded font-semibold" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border:1px solid ' + stCol.bd + '">' +
+          csEsc(CS_REP_STATUS_LABELS[r.status] || r.status) + '</span>' +
+        '<span class="text-[10px] px-2 py-0.5 rounded font-semibold" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' +
+          csEsc(CS_INQ_PRIORITY_LABELS[r.priority] || r.priority) + '</span>' +
+        '<span class="text-[10px] px-2 py-0.5 rounded" style="background:' + wrCol.bg + ';color:' + wrCol.fg + ';border:1px solid ' + wrCol.bd + '">' +
+          csEsc(CS_REP_WARRANTY_LABELS[r.warranty_status] || r.warranty_status) + '</span>' +
+        (r.step_count > 0 ? '<span class="text-[10px] px-2 py-0.5 rounded bg-slate-50 text-slate-500 border border-slate-200"><i class="fas fa-clock-rotate-left mr-1"></i>' + r.step_count + '</span>' : '') +
+        '<span class="ml-auto text-[11px] text-slate-400">' + csFmtDate(r.received_at) + '</span>' +
+      '</div>' +
+      '<div class="text-[14px] font-semibold text-slate-800 mb-1 line-clamp-2">' + csEsc(r.symptom || '') + '</div>' +
+      (productLabel ? '<div class="text-[11px] text-indigo-600 mb-1"><i class="fas fa-microchip mr-1"></i>' + csEsc(productLabel) + '</div>' : '') +
+      '<div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">' +
+        '<span><i class="fas fa-user mr-1"></i>' + csEsc(custName) + (custPhone ? ' · ' + csEsc(custPhone) : '') + '</span>' +
+        (r.hospital_name ? '<span><i class="fas fa-hospital mr-1"></i>' + csEsc(r.hospital_name) + '</span>' : '') +
+        (r.assignee_name ? '<span><i class="fas fa-user-tie mr-1"></i>' + csEsc(r.assignee_name) + '</span>' : '<span class="text-amber-600"><i class="fas fa-user-slash mr-1"></i>담당자 미지정</span>') +
+        (r.cost ? '<span><i class="fas fa-won-sign mr-1"></i>' + csRepFmtCost(r.cost) + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function filterCsRep() {
+  _csRepFilter.search = (document.getElementById('csrep-search') || {}).value || '';
+  _csRepFilter.status = (document.getElementById('csrep-status') || {}).value || '';
+  _csRepFilter.priority = (document.getElementById('csrep-priority') || {}).value || '';
+  _csRepFilter.warranty_status = (document.getElementById('csrep-warranty') || {}).value || '';
+  _csRepFilter.assignee_id = (document.getElementById('csrep-assignee') || {}).value || '';
+  fetchCsRepairs();
+}
+
+// ---------- 접수/편집 모달 ----------
+async function openCsRepairModal(id, prefillCustomerId) {
+  await _csRepLoadUsers();
+  await _csRepLoadCustomers();
+  var r = {
+    customer_id: prefillCustomerId || '', contact_name: '', contact_phone: '', contact_email: '', hospital_id: '',
+    product_unit_id: '', product_name: '', serial_no_text: '',
+    inquiry_id: '',
+    status: 'received', priority: 'mid', warranty_status: 'unknown',
+    symptom: '', diagnosis: '', resolution: '',
+    assignee_id: '', cost: '',
+    expected_completion_at: '', notes: '',
+    product_master_name: '', product_serial_no: '', product_asset_code: ''
+  };
+  if (id) {
+    try {
+      var resp = await API.get('/cs/repairs/' + id);
+      r = Object.assign(r, resp.data.data || {});
+    } catch(e) { toast('수리 요청을 불러올 수 없습니다', 'err'); return; }
+  }
+
+  var custOpts = '<option value="">— 미등록 (연락처 직접 입력) —</option>' +
+    _csRepCustomers.map(function(c) {
+      var sel = (String(r.customer_id || '') === String(c.id)) ? ' selected' : '';
+      return '<option value="' + c.id + '"' + sel + '>' + csEsc(c.name + (c.phone ? ' · ' + c.phone : '')) + '</option>';
+    }).join('');
+  var userOpts = '<option value="">미지정</option>' +
+    _csRepUsers.map(function(u) {
+      var sel = (String(r.assignee_id || '') === String(u.id)) ? ' selected' : '';
+      return '<option value="' + u.id + '"' + sel + '>' + csEsc(u.name) + '</option>';
+    }).join('');
+
+  var linkedProductHtml = r.product_unit_id ?
+    '<div id="rep-linked-product" class="col-span-full p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-[12px]">' +
+      '<div class="flex items-center justify-between">' +
+        '<div>' +
+          '<div class="font-semibold text-indigo-800"><i class="fas fa-link mr-1"></i>' + csEsc(r.product_master_name || '연결된 제품') + '</div>' +
+          '<div class="text-[11px] text-indigo-600 mt-0.5">S/N: ' + csEsc(r.product_serial_no || '-') + (r.product_asset_code ? ' · 자산: ' + csEsc(r.product_asset_code) : '') + '</div>' +
+        '</div>' +
+        '<button type="button" onclick="_csRepClearProduct()" class="text-indigo-500 hover:text-indigo-700 text-sm"><i class="fas fa-times"></i></button>' +
+      '</div>' +
+      '<input type="hidden" name="product_unit_id" value="' + r.product_unit_id + '">' +
+    '</div>'
+    :
+    '<div id="rep-linked-product" class="col-span-full"><input type="hidden" name="product_unit_id" value=""></div>';
+
+  openModal(id ? '수리 요청 편집' : '수리 접수',
+    '<form id="fm" class="grid grid-cols-1 sm:grid-cols-2 gap-4">' +
+      '<div class="col-span-full"><label class="input-label">증상 <span class="text-rose-500">*</span></label><textarea name="symptom" rows="2" class="input" required placeholder="예: 전원이 켜지지 않음, 특정 주파수 소리 안 남">' + csEsc(r.symptom) + '</textarea></div>' +
+      '<div><label class="input-label">상태</label><select name="status" class="input">' +
+        Object.keys(CS_REP_STATUS_LABELS).map(function(k) { return '<option value="' + k + '"' + (r.status === k ? ' selected' : '') + '>' + CS_REP_STATUS_LABELS[k] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label class="input-label">우선순위</label><select name="priority" class="input">' +
+        Object.keys(CS_INQ_PRIORITY_LABELS).map(function(k) { return '<option value="' + k + '"' + (r.priority === k ? ' selected' : '') + '>' + CS_INQ_PRIORITY_LABELS[k] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label class="input-label">보증 상태</label><select name="warranty_status" class="input">' +
+        Object.keys(CS_REP_WARRANTY_LABELS).map(function(k) { return '<option value="' + k + '"' + (r.warranty_status === k ? ' selected' : '') + '>' + CS_REP_WARRANTY_LABELS[k] + '</option>'; }).join('') +
+      '</select></div>' +
+      '<div><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
+
+      // 제품 섹션
+      '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-microchip mr-1 text-indigo-500"></i>제품 정보</div>' +
+        '<div class="grid grid-cols-1 sm:grid-cols-3 gap-2">' +
+          '<div class="sm:col-span-2 flex gap-2">' +
+            '<input id="rep-serial-lookup" type="text" placeholder="시리얼/자산번호 조회" class="input flex-1">' +
+            '<button type="button" onclick="_csRepLookupSerial()" class="btn btn-outline btn-sm whitespace-nowrap"><i class="fas fa-search mr-1"></i>조회</button>' +
+          '</div>' +
+          '<div id="rep-serial-results" class="sm:col-span-3"></div>' +
+        '</div>' +
+      '</div>' +
+      linkedProductHtml +
+      '<div><label class="input-label">제품명 (자유 입력)</label><input name="product_name" type="text" value="' + csEsc(r.product_name) + '" class="input" placeholder="미등록 제품"></div>' +
+      '<div><label class="input-label">시리얼 (자유 입력)</label><input name="serial_no_text" type="text" value="' + csEsc(r.serial_no_text) + '" class="input"></div>' +
+
+      // 고객 섹션
+      '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-user mr-1 text-slate-500"></i>고객/연락처</div>' +
+      '</div>' +
+      '<div class="col-span-full"><label class="input-label">등록 고객 연결</label><select name="customer_id" onchange="_csRepOnCustomerChange()" class="input">' + custOpts + '</select></div>' +
+      '<div><label class="input-label">연락자 이름</label><input name="contact_name" type="text" value="' + csEsc(r.contact_name) + '" class="input"></div>' +
+      '<div><label class="input-label">연락처</label><input name="contact_phone" type="tel" value="' + csEsc(r.contact_phone) + '" class="input" placeholder="010-1234-5678"></div>' +
+      '<div class="col-span-full"><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(r.contact_email) + '" class="input"></div>' +
+
+      // 비용/일정
+      '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-calendar-check mr-1 text-slate-500"></i>비용 · 일정</div>' +
+      '</div>' +
+      '<div><label class="input-label">비용 (원)</label><input name="cost" type="number" value="' + (r.cost != null ? r.cost : '') + '" class="input" min="0" step="1"></div>' +
+      '<div><label class="input-label">완료 예정일</label><input name="expected_completion_at" type="date" value="' + csEsc((r.expected_completion_at || '').slice(0, 10)) + '" class="input"></div>' +
+
+      // 진단/처리 (편집 모드만)
+      (id ?
+        '<div class="col-span-full border-t border-slate-100 pt-3 mt-2">' +
+          '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-clipboard-check mr-1 text-slate-500"></i>진단 · 처리</div>' +
+        '</div>' +
+        '<div class="col-span-full"><label class="input-label">진단 결과</label><textarea name="diagnosis" rows="2" class="input">' + csEsc(r.diagnosis) + '</textarea></div>' +
+        '<div class="col-span-full"><label class="input-label">처리 내용</label><textarea name="resolution" rows="2" class="input">' + csEsc(r.resolution) + '</textarea></div>'
+        : '') +
+
+      '<div class="col-span-full"><label class="input-label">비고</label><textarea name="notes" rows="2" class="input">' + csEsc(r.notes) + '</textarea></div>' +
+      '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2">' +
+        '<button type="button" onclick="closeModal()" class="btn btn-outline">취소</button>' +
+        '<button type="submit" class="btn btn-primary">' + (id ? '저장' : '접수') + '</button>' +
+      '</div>' +
+    '</form>',
+    'wide');
+
+  document.getElementById('fm').onsubmit = async function(e) {
+    e.preventDefault();
+    var f = Object.fromEntries(new FormData(e.target));
+    if (!f.symptom || !f.symptom.trim()) { toast('증상은 필수입니다', 'warn'); return; }
+    // 빈 문자열 → null
+    ['customer_id','hospital_id','assignee_id','product_unit_id','cost','expected_completion_at']
+      .forEach(function(k) { if (f[k] === '') f[k] = null; });
+    try {
+      if (id) await API.put('/cs/repairs/' + id, f);
+      else await API.post('/cs/repairs', f);
+      toast(id ? '수리 요청이 저장되었습니다' : '수리 요청이 접수되었습니다');
+      closeModal();
+      fetchCsRepairs();
+    } catch(err) {
+      var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
+      toast(msg, 'err');
+    }
+  };
+}
+
+function _csRepClearProduct() {
+  var box = document.getElementById('rep-linked-product');
+  if (box) box.innerHTML = '<input type="hidden" name="product_unit_id" value="">';
+  var res = document.getElementById('rep-serial-results');
+  if (res) res.innerHTML = '';
+}
+
+async function _csRepLookupSerial() {
+  var q = (document.getElementById('rep-serial-lookup') || {}).value || '';
+  q = q.trim();
+  var res = document.getElementById('rep-serial-results');
+  if (!res) return;
+  if (!q) { res.innerHTML = '<div class="text-[11px] text-slate-400">시리얼을 입력하세요</div>'; return; }
+  res.innerHTML = '<div class="text-[11px] text-slate-400"><i class="fas fa-spinner fa-spin mr-1"></i>조회 중...</div>';
+  try {
+    var r = await API.get('/cs/repairs/lookup-serial?serial=' + encodeURIComponent(q));
+    var items = r.data.data || [];
+    if (!items.length) {
+      res.innerHTML = '<div class="text-[11px] text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2"><i class="fas fa-triangle-exclamation mr-1"></i>일치하는 등록 제품이 없습니다. 아래 자유 입력 필드에 직접 입력하세요.</div>';
+      return;
+    }
+    res.innerHTML = '<div class="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-40 overflow-y-auto">' +
+      items.map(function(it) {
+        var label = (it.product_name || '') + (it.serial_no ? ' · ' + it.serial_no : '');
+        return '<button type="button" onclick="_csRepPickProduct(' + it.product_unit_id + ',\'' + csEsc(label).replace(/'/g,'&#39;') + '\',\'' + csEsc(it.serial_no || '').replace(/'/g,'&#39;') + '\',\'' + csEsc(it.asset_code || '').replace(/'/g,'&#39;') + '\')" class="w-full text-left px-3 py-2 hover:bg-indigo-50 text-[12px]">' +
+          '<div class="font-semibold text-slate-800">' + csEsc(it.product_name || '') + '</div>' +
+          '<div class="text-[11px] text-slate-500">S/N: ' + csEsc(it.serial_no || '-') + (it.asset_code ? ' · 자산: ' + csEsc(it.asset_code) : '') + ' · ' + csEsc(it.unit_status || '') + '</div>' +
+        '</button>';
+      }).join('') +
+      '</div>';
+  } catch(e) {
+    res.innerHTML = '<div class="text-[11px] text-rose-600">조회 실패</div>';
+  }
+}
+
+function _csRepPickProduct(unitId, label, serialNo, assetCode) {
+  var box = document.getElementById('rep-linked-product');
+  if (!box) return;
+  box.innerHTML =
+    '<div class="p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-[12px]">' +
+      '<div class="flex items-center justify-between">' +
+        '<div>' +
+          '<div class="font-semibold text-indigo-800"><i class="fas fa-link mr-1"></i>' + csEsc(label) + '</div>' +
+          '<div class="text-[11px] text-indigo-600 mt-0.5">S/N: ' + csEsc(serialNo || '-') + (assetCode ? ' · 자산: ' + csEsc(assetCode) : '') + '</div>' +
+        '</div>' +
+        '<button type="button" onclick="_csRepClearProduct()" class="text-indigo-500 hover:text-indigo-700 text-sm"><i class="fas fa-times"></i></button>' +
+      '</div>' +
+      '<input type="hidden" name="product_unit_id" value="' + unitId + '">' +
+    '</div>';
+  var res = document.getElementById('rep-serial-results');
+  if (res) res.innerHTML = '';
+}
+
+function _csRepOnCustomerChange() {
+  var sel = document.querySelector('#fm select[name="customer_id"]');
+  if (!sel || !sel.value) return;
+  var c = _csRepCustomers.find(function(x) { return String(x.id) === String(sel.value); });
+  if (!c) return;
+  var fm = document.getElementById('fm');
+  if (!fm) return;
+  var n = fm.elements['contact_name'];
+  var p = fm.elements['contact_phone'];
+  var e = fm.elements['contact_email'];
+  if (n && !n.value) n.value = c.name || '';
+  if (p && !p.value) p.value = c.phone || '';
+  if (e && !e.value) e.value = c.email || '';
+}
+
+// ---------- 상세 보기 ----------
+async function viewCsRepair(id) {
+  try {
+    var res = await API.get('/cs/repairs/' + id);
+    var r = res.data.data;
+    if (!r) { toast('수리 요청을 찾을 수 없습니다', 'err'); return; }
+    var steps = r.steps || [];
+
+    var stCol = CS_REP_STATUS_COLORS[r.status] || CS_REP_STATUS_COLORS.received;
+    var prCol = CS_INQ_PRIORITY_COLORS[r.priority] || CS_INQ_PRIORITY_COLORS.mid;
+    var wrCol = CS_REP_WARRANTY_COLORS[r.warranty_status] || CS_REP_WARRANTY_COLORS.unknown;
+    var custName = r.customer_name || r.contact_name || '(연락처 없음)';
+    var custPhone = r.customer_phone || r.contact_phone || '';
+    var custEmail = r.customer_email || r.contact_email || '';
+
+    var productHtml = '';
+    if (r.product_master_name || r.product_serial_no) {
+      productHtml =
+        '<div class="p-3 bg-indigo-50 border border-indigo-200 rounded-lg">' +
+          '<div class="text-[11px] font-semibold text-indigo-700 mb-1"><i class="fas fa-link mr-1"></i>연결된 등록 제품</div>' +
+          '<div class="text-[13px] font-semibold text-indigo-900">' + csEsc(r.product_master_name || '-') + '</div>' +
+          '<div class="text-[11px] text-indigo-700 mt-0.5">S/N: ' + csEsc(r.product_serial_no || '-') + (r.product_asset_code ? ' · 자산: ' + csEsc(r.product_asset_code) : '') + ' · ' + csEsc(r.product_unit_status || '') + '</div>' +
+        '</div>';
+    } else if (r.product_name || r.serial_no_text) {
+      productHtml =
+        '<div class="p-3 bg-slate-50 border border-slate-200 rounded-lg">' +
+          '<div class="text-[11px] font-semibold text-slate-700 mb-1"><i class="fas fa-microchip mr-1"></i>제품 (자유 입력)</div>' +
+          '<div class="text-[13px] font-semibold text-slate-900">' + csEsc(r.product_name || '-') + '</div>' +
+          (r.serial_no_text ? '<div class="text-[11px] text-slate-600 mt-0.5">S/N: ' + csEsc(r.serial_no_text) + '</div>' : '') +
+        '</div>';
+    }
+
+    var stepsHtml = steps.length ? steps.map(function(s) {
+      var meta = CS_REP_STEP_LABELS[s.step_type] || CS_REP_STEP_LABELS.note;
+      var body = '';
+      if (s.step_type === 'status_change') {
+        body = (s.from_value ? (CS_REP_STATUS_LABELS[s.from_value] || s.from_value) + ' → ' : '') + (CS_REP_STATUS_LABELS[s.to_value] || s.to_value || '');
+      } else if (s.step_type === 'assignee_change') {
+        body = '담당자 변경';
+      } else if (s.step_type === 'cost_update') {
+        body = csRepFmtCost(s.from_value) + ' → ' + csRepFmtCost(s.to_value);
+      } else {
+        body = s.content || '';
+      }
+      return '<div class="flex gap-2">' +
+        '<div class="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0" style="background:' + meta.bg + ';color:' + meta.fg + '"><i class="fas ' + meta.icon + ' text-[11px]"></i></div>' +
+        '<div class="flex-1 bg-white border border-slate-100 rounded-lg px-3 py-2">' +
+          '<div class="flex items-center justify-between mb-0.5">' +
+            '<span class="text-[11px] font-semibold" style="color:' + meta.fg + '">' + meta.label + '</span>' +
+            '<span class="text-[10px] text-slate-400">' + csFmtDateTime(s.created_at) + (s.user_name ? ' · ' + csEsc(s.user_name) : '') + '</span>' +
+          '</div>' +
+          '<div class="text-[12px] text-slate-700 whitespace-pre-wrap">' + csEsc(body) + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('') : '<div class="text-[12px] text-slate-400 py-3 text-center">진행 이력이 없습니다</div>';
+
+    openModal('수리 요청 상세',
+      '<div class="space-y-3">' +
+        '<div class="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">' +
+          '<div class="flex-1 min-w-0">' +
+            '<div class="flex flex-wrap items-center gap-1.5 mb-1">' +
+              '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border:1px solid ' + stCol.bd + '">' + csEsc(CS_REP_STATUS_LABELS[r.status] || r.status) + '</span>' +
+              '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + csEsc(CS_INQ_PRIORITY_LABELS[r.priority] || r.priority) + '</span>' +
+              '<span class="text-[10px] px-2 py-0.5 rounded" style="background:' + wrCol.bg + ';color:' + wrCol.fg + ';border:1px solid ' + wrCol.bd + '">' + csEsc(CS_REP_WARRANTY_LABELS[r.warranty_status] || r.warranty_status) + '</span>' +
+              '<span class="text-[10px] text-slate-400">#' + r.id + '</span>' +
+            '</div>' +
+            '<h3 class="text-[16px] font-bold text-slate-800 whitespace-pre-wrap">' + csEsc(r.symptom || '') + '</h3>' +
+          '</div>' +
+          '<div class="flex gap-1">' +
+            '<button onclick="closeModal();setTimeout(function(){openCsRepairModal(' + r.id + ')},100)" class="btn btn-outline btn-sm text-[11px]"><i class="fas fa-pen mr-1"></i>편집</button>' +
+          '</div>' +
+        '</div>' +
+        (productHtml ? productHtml : '') +
+        '<div class="grid grid-cols-2 gap-3 text-[12px]">' +
+          _custInfoRow('고객', custName + (r.customer_id ? ' <a onclick="closeModal();setTimeout(function(){viewCustomer(' + r.customer_id + ')},100)" class="text-blue-500 cursor-pointer hover:underline">(상세)</a>' : '')) +
+          _custInfoRow('연락처', custPhone || '-') +
+          _custInfoRow('이메일', custEmail || '-') +
+          _custInfoRow('기관', r.hospital_name || '-') +
+          _custInfoRow('담당자', r.assignee_name || '미지정') +
+          _custInfoRow('비용', r.cost != null ? csRepFmtCost(r.cost) : '-') +
+          _custInfoRow('접수일', csFmtDateTime(r.received_at)) +
+          _custInfoRow('완료 예정', r.expected_completion_at ? csFmtDate(r.expected_completion_at) : '-') +
+          (r.completed_at ? _custInfoRow('완료일', csFmtDateTime(r.completed_at)) : '') +
+          (r.shipped_at ? _custInfoRow('발송일', csFmtDateTime(r.shipped_at)) : '') +
+          (r.closed_at ? _custInfoRow('종료일', csFmtDateTime(r.closed_at)) : '') +
+        '</div>' +
+        (r.diagnosis ? '<div class="p-3 bg-indigo-50 border border-indigo-100 rounded-lg"><div class="text-[11px] font-semibold text-indigo-700 mb-1">진단</div><div class="text-[12px] text-indigo-900 whitespace-pre-wrap">' + csEsc(r.diagnosis) + '</div></div>' : '') +
+        (r.resolution ? '<div class="p-3 bg-emerald-50 border border-emerald-100 rounded-lg"><div class="text-[11px] font-semibold text-emerald-700 mb-1">처리 내용</div><div class="text-[12px] text-emerald-900 whitespace-pre-wrap">' + csEsc(r.resolution) + '</div></div>' : '') +
+        (r.notes ? '<div class="p-3 bg-slate-50 border border-slate-100 rounded-lg"><div class="text-[11px] font-semibold text-slate-600 mb-1">비고</div><div class="text-[12px] text-slate-700 whitespace-pre-wrap">' + csEsc(r.notes) + '</div></div>' : '') +
+
+        '<div class="border-t border-slate-100 pt-3">' +
+          '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-plus-circle mr-1"></i>메모/단계 추가</div>' +
+          '<div class="flex gap-2">' +
+            '<select id="rep-step-type" class="input" style="max-width:120px">' +
+              '<option value="note">메모</option>' +
+              '<option value="part_order">부품 주문</option>' +
+              '<option value="diagnosis">진단</option>' +
+              '<option value="resolution">처리</option>' +
+            '</select>' +
+            '<input id="rep-step-content" type="text" placeholder="내용 입력 후 Enter" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_csRepAddStep(' + r.id + ')}" class="input flex-1">' +
+            '<button onclick="_csRepAddStep(' + r.id + ')" class="btn btn-primary btn-sm whitespace-nowrap"><i class="fas fa-paper-plane"></i></button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="border-t border-slate-100 pt-3">' +
+          '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-clock-rotate-left mr-1"></i>진행 이력 (' + steps.length + ')</div>' +
+          '<div class="space-y-2">' + stepsHtml + '</div>' +
+        '</div>' +
+        '<div class="flex justify-between pt-3 border-t border-gray-50 mt-2">' +
+          '<button onclick="deleteCsRepair(' + r.id + ')" class="btn btn-outline text-red-500 border-red-100 hover:bg-red-50"><i class="fas fa-trash mr-1"></i>삭제</button>' +
+          '<button onclick="closeModal()" class="btn btn-outline">닫기</button>' +
+        '</div>' +
+      '</div>',
+      'wide');
+  } catch(e) {
+    toast('불러오기 실패', 'err');
+  }
+}
+
+async function _csRepAddStep(id) {
+  var step_type = (document.getElementById('rep-step-type') || {}).value || 'note';
+  var content = (document.getElementById('rep-step-content') || {}).value || '';
+  content = content.trim();
+  if (!content) return;
+  try {
+    await API.post('/cs/repairs/' + id + '/steps', { step_type: step_type, content: content });
+    closeModal();
+    setTimeout(function() { viewCsRepair(id); }, 100);
+  } catch(e) { toast('추가 실패', 'err'); }
+}
+
+async function deleteCsRepair(id) {
+  if (!confirm('이 수리 요청을 삭제하시겠습니까?\n(관련 진행 이력도 함께 삭제됩니다)')) return;
+  try {
+    await API.delete('/cs/repairs/' + id);
+    toast('수리 요청이 삭제되었습니다');
+    closeModal();
+    fetchCsRepairs();
+  } catch(e) { toast('삭제 실패', 'err'); }
+}
+
 function loadCsContactLogPending() {
   _csPending('응대 로그', 'CS · 준비 중', 'fas fa-phone-volume',
     '전화·이메일·방문 등 고객과의 모든 응대 이력을 통합 기록·조회하는 기능을 준비하고 있습니다.');

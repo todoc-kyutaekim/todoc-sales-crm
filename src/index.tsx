@@ -18,6 +18,7 @@ import comments from './routes/comments'
 import products from './routes/products'
 import customers from './routes/customers'
 import csInquiries from './routes/cs_inquiries'
+import csRepairs from './routes/cs_repairs'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number; user?: { id: number, name: string, email: string } }
@@ -77,6 +78,7 @@ app.route('/api/comments', comments)
 app.route('/api/products', products)
 app.route('/api/customers', customers)
 app.route('/api/cs/inquiries', csInquiries)
+app.route('/api/cs/repairs', csRepairs)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
