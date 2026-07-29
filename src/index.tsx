@@ -195,7 +195,7 @@ const HTML = `<!DOCTYPE html>
   </div>
   <div class="h-px mx-5" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.15),transparent)" aria-hidden="true"></div>
   <nav class="flex-1 py-4 space-y-0.5 overflow-y-auto px-1" role="navigation" aria-label="주 메뉴">
-    <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">Main</span></div>
+    <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">영업 Main</span></div>
     <div onclick="nav('dashboard')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('dashboard')}" id="n-dashboard" class="nav-item" role="link" tabindex="0" aria-label="대시보드"><span class="nav-icon" aria-hidden="true"><i class="fas fa-chart-pie"></i></span>대시보드</div>
     <div onclick="nav('hospitals')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('hospitals')}" id="n-hospitals" class="nav-item" role="link" tabindex="0" aria-label="기관 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-hospital"></i></span>기관 관리</div>
     <div onclick="nav('doctors')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('doctors')}" id="n-doctors" class="nav-item" role="link" tabindex="0" aria-label="의료진 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
