@@ -327,8 +327,8 @@ const HTML = `<!DOCTYPE html>
 <div id="mention-panel" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:54px;right:60px;width:340px;max-height:480px;overflow-y:auto" role="dialog" aria-label="멘션 알림 목록"></div>
 <div id="header-more-menu" class="hidden fixed z-[85] rounded-xl shadow-xl" style="top:52px;right:8px;width:240px;overflow:hidden" role="menu" aria-label="더보기 메뉴"></div>
 
-<!-- Modal (z-[70]: above bottom nav z-45, FAB z-55/56, search overlay z-55) -->
-<div id="modal" class="fixed inset-0 modal-bg z-[70] hidden items-end lg:items-center justify-center lg:p-4" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true" onclick="if(event.target===this)tryCloseModal()">
+<!-- Modal (z-[100]: above side-panel z-91, bottom nav z-45, FAB z-55/56, search overlay z-55) -->
+<div id="modal" class="fixed inset-0 modal-bg z-[100] hidden items-end lg:items-center justify-center lg:p-4" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-hidden="true" onclick="if(event.target===this)tryCloseModal()">
   <div id="modal-content" class="modal-box bg-white w-full max-w-lg overflow-y-auto relative" style="max-height:calc(100dvh - 48px);max-height:calc(100vh - 48px);border-radius:20px 20px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.12)" tabindex="-1" onclick="event.stopPropagation()">
     <div class="flex items-center justify-between px-5 lg:px-6 py-3.5 lg:py-4 sticky top-0 bg-white z-10" style="border-bottom:1px solid #eef0f5;border-radius:20px 20px 0 0">
       <h3 id="modal-title" class="font-bold text-slate-800 text-[15px] tracking-tight"></h3>
@@ -354,8 +354,8 @@ const HTML = `<!DOCTYPE html>
   <div id="side-panel-footer" class="side-panel-footer hidden"></div>
 </aside>
 
-<!-- Confirm Dialog (z-[80]: above main modal z-[70]) -->
-<div id="confirm-dialog" class="fixed inset-0 modal-bg z-[80] hidden flex items-center justify-center p-4">
+<!-- Confirm Dialog (z-[110]: above main modal z-[100] and side-panel z-91) -->
+<div id="confirm-dialog" class="fixed inset-0 modal-bg z-[110] hidden flex items-center justify-center p-4">
   <div id="confirm-box" class="bg-white w-full max-w-sm p-6 text-center" style="border-radius:20px;box-shadow:0 24px 48px -12px rgba(16,24,40,.18);animation:scaleIn .2s ease">
     <div id="confirm-icon" class="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"></div>
     <h4 id="confirm-title" class="font-bold text-slate-800 text-[15px] mb-2"></h4>

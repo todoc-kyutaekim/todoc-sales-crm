@@ -37,7 +37,7 @@ cistats.get('/', async (c) => {
     const cagrP = (Math.pow(last.patients / first.patients, 1 / (last.year - first.year)) - 1) * 100
     const cagrU = (Math.pow(last.usage / first.usage, 1 / (last.year - first.year)) - 1) * 100
     insights.push({ icon: 'fa-chart-line', title: '환자수 연평균 성장률', value: cagrP.toFixed(1) + '%', desc: first.year + '년 ' + first.patients + '명 → ' + last.year + '년 ' + last.patients + '명' })
-    insights.push({ icon: 'fa-arrow-trend-up', title: '시술건수 연평균 성장률', value: cagrU.toFixed(1) + '%', desc: first.year + '년 ' + first.usage + '건 → ' + last.year + '년 ' + last.usage + '건' })
+    insights.push({ icon: 'fa-arrow-trend-up', title: '수술건수 연평균 성장률', value: cagrU.toFixed(1) + '%', desc: first.year + '년 ' + first.usage + '건 → ' + last.year + '년 ' + last.usage + '건' })
     const totalM = yearlyData.reduce((a, b) => a + b.male_patients, 0)
     const totalF = yearlyData.reduce((a, b) => a + b.female_patients, 0)
     const total = totalM + totalF

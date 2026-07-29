@@ -580,10 +580,19 @@ async function loadCustomers() {
 // ─────────────────────────────────────────────────────────────
 // 그룹: 로드 · 사이드바 렌더 · CRUD
 // ─────────────────────────────────────────────────────────────
-async function _custLoadGroups() {
+async function _custLoadGroups(forceRefresh) {
+  // 그룹 캐시: TTL 60초 · CRUD 시엔 forceRefresh=true 로 우회
+  var now = Date.now();
+  if (!forceRefresh && _custCache.groups && (now - _custCache.groupsAt) < 60 * 1000) {
+    _custGroups = _custCache.groups;
+    _custRenderSidebar();
+    return;
+  }
   try {
     var r = await API.get('/customer-groups');
     _custGroups = r.data.data || [];
+    _custCache.groups = _custGroups;
+    _custCache.groupsAt = now;
   } catch(e) { _custGroups = []; }
   _custRenderSidebar();
 }
@@ -694,7 +703,7 @@ async function _custOpenGroupEdit(gid) {
           await API.post('/customer-groups', { name: nameVal, color: colorVal, description: descVal, sort_order: sortVal });
           toast('그룹이 생성되었습니다', 'success');
         }
-        await _custLoadGroups();
+        await _custLoadGroups(true);
       } catch(e) {
         var msg = (e && e.response && e.response.data && e.response.data.error) || '저장 실패';
         toast(msg, 'error');
@@ -732,7 +741,7 @@ async function _custDeleteGroup(gid) {
         toast('그룹이 삭제되었습니다', 'success');
         // 현재 선택된 그룹이 삭제되면 전체로 이동
         if (String(_custFilter.group_id) === String(gid)) _custFilter.group_id = '';
-        await _custLoadGroups();
+        await _custLoadGroups(true);
         await fetchCustomers();
       } catch(e) {
         toast('삭제 실패', 'error');
@@ -810,7 +819,7 @@ async function _custBulkAddToGroup() {
         var added = (res.data.data && res.data.data.added) || 0;
         toast(added + '명이 그룹에 추가되었습니다', 'success');
         _custBulkClear();
-        await _custLoadGroups();
+        await _custLoadGroups(true);
         await fetchCustomers();
       } catch(e) {
         toast('추가 실패', 'error');
@@ -820,24 +829,59 @@ async function _custBulkAddToGroup() {
   });
 }
 
+// ─────────────────────────────────────────────────────────────
+// 세션 캐시: 자주 안 바뀌는 참조 데이터 (병원 목록, 지역 목록)
+//   · TTL 5분 · CRUD 시 명시적 무효화 가능 (window._custInvalidateCache)
+// ─────────────────────────────────────────────────────────────
+var _CUST_CACHE_TTL_MS = 5 * 60 * 1000;
+var _custCache = { hospitals: null, hospitalsAt: 0, regions: null, regionsAt: 0, groups: null, groupsAt: 0 };
+window._custInvalidateCache = function(kind) {
+  if (!kind || kind === 'hospitals') { _custCache.hospitals = null; _custCache.hospitalsAt = 0; }
+  if (!kind || kind === 'regions')   { _custCache.regions = null;   _custCache.regionsAt = 0; }
+  if (!kind || kind === 'groups')    { _custCache.groups = null;    _custCache.groupsAt = 0; }
+};
+
 async function _custLoadHospitals() {
+  var now = Date.now();
+  if (_custCache.hospitals && (now - _custCache.hospitalsAt) < _CUST_CACHE_TTL_MS) {
+    _custHospitals = _custCache.hospitals;
+    return;
+  }
   try {
     var r = await API.get('/hospitals');
     _custHospitals = r.data.data || [];
+    _custCache.hospitals = _custHospitals;
+    _custCache.hospitalsAt = now;
   } catch(e) { _custHospitals = []; }
 }
 
 async function _custLoadRegions() {
-  try {
-    var r = await API.get('/regions');
-    var sel = document.getElementById('cust-region');
-    if (!sel) return;
-    (r.data.data || []).forEach(function(rg) {
-      var opt = document.createElement('option');
-      opt.value = rg; opt.textContent = rg;
-      sel.appendChild(opt);
-    });
-  } catch(e) {}
+  var sel = document.getElementById('cust-region');
+  if (!sel) return;
+  var now = Date.now();
+  var data;
+  if (_custCache.regions && (now - _custCache.regionsAt) < _CUST_CACHE_TTL_MS) {
+    data = _custCache.regions;
+  } else {
+    try {
+      var r = await API.get('/regions');
+      data = r.data.data || [];
+      _custCache.regions = data;
+      _custCache.regionsAt = now;
+    } catch(e) { return; }
+  }
+  // 기존 옵션 (선택 안 함 제외) 클리어 후 재삽입 — 재진입 시 옵션 중복 방지
+  var firstOpt = sel.querySelector('option[value=""]');
+  sel.innerHTML = '';
+  if (firstOpt) sel.appendChild(firstOpt);
+  else { var o0 = document.createElement('option'); o0.value = ''; o0.textContent = '전체 지역'; sel.appendChild(o0); }
+  data.forEach(function(rg) {
+    var opt = document.createElement('option');
+    opt.value = rg; opt.textContent = rg;
+    sel.appendChild(opt);
+  });
+  // 필터 값 유지
+  if (_custFilter.region) sel.value = _custFilter.region;
 }
 
 async function fetchCustomers() {
@@ -1031,7 +1075,7 @@ function _custMfrLabel(v) {
   return v;
 }
 
-// 시술 부위(수술측) 옵션
+// 수술 부위(수술측) 옵션
 var SURGERY_SIDE_OPTIONS = [
   { v: '',      label: '선택 안 함' },
   { v: 'left',  label: '편측 - 좌측 (Left)' },
@@ -1106,11 +1150,12 @@ async function openCustomerModal(id) {
         ['active','inactive','dormant'].map(function(s) { return '<option value="' + s + '"' + (cst.status === s ? ' selected' : '') + '>' + CUST_STATUS_LABELS[s] + '</option>'; }).join('') +
       '</select></div>' +
 
-      // ===== 시술 부위 (수술측) =====
+      // ===== 수술 부위 =====
+
       '<div class="col-span-full mt-2 p-3 rounded-lg border" style="background:#fefce8;border-color:#fde68a">' +
         '<label class="input-label flex items-center gap-2 mb-2" style="color:#92400e">' +
           '<i class="fas fa-user-doctor text-[12px]"></i>' +
-          '<span>시술 부위 (수술측)</span>' +
+          '<span>수술 부위</span>' +
         '</label>' +
         '<select id="cst-surgery-side" name="surgery_side" class="input" onchange="_custOnSurgerySideChange()">' +
           SURGERY_SIDE_OPTIONS.map(function(o) { return '<option value="' + o.v + '"' + ((cst.surgery_side || '') === o.v ? ' selected' : '') + '>' + o.label + '</option>'; }).join('') +
@@ -1166,10 +1211,10 @@ async function openCustomerModal(id) {
 
       // 기존 필드 (호환용) — 접이식 details
       '<details class="col-span-full">' +
-        '<summary class="text-[11px] text-slate-400 cursor-pointer hover:text-slate-600 py-1"><i class="fas fa-history text-[10px] mr-1"></i>이전 flat 필드 (호환용) — 시술일 · 이전 시술 부위 · 기기 모델 · 시리얼</summary>' +
+        '<summary class="text-[11px] text-slate-400 cursor-pointer hover:text-slate-600 py-1"><i class="fas fa-history text-[10px] mr-1"></i>이전 flat 필드 (호환용) — 수술일 · 이전 수술 부위 · 기기 모델 · 시리얼</summary>' +
         '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2 p-3 rounded-lg bg-slate-50">' +
-          '<div><label class="input-label">시술일 (legacy)</label><input name="implant_date" type="date" value="' + csEsc(cst.implant_date) + '" class="input"></div>' +
-          '<div><label class="input-label">이전 시술 부위 (legacy)</label><select name="implant_side" class="input">' +
+          '<div><label class="input-label">수술일 (legacy)</label><input name="implant_date" type="date" value="' + csEsc(cst.implant_date) + '" class="input"></div>' +
+          '<div><label class="input-label">이전 수술 부위 (legacy)</label><select name="implant_side" class="input">' +
             ['','L','R','BOTH'].map(function(s) { var l = s === 'L' ? '좌측' : s === 'R' ? '우측' : s === 'BOTH' ? '양측' : '선택 안 함'; return '<option value="' + s + '"' + (cst.implant_side === s ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
           '</select></div>' +
           '<div><label class="input-label">기기 모델 (legacy)</label><input name="device_model" type="text" value="' + csEsc(cst.device_model) + '" class="input"></div>' +
@@ -1250,7 +1295,7 @@ function _custDeleteFromPanel(id, name) {
 // 고객 디바이스 UI (내부기 좌/우 슬롯 + 외부기 다중 리스트)
 // ═══════════════════════════════════════════════════════════════
 
-// 시술 부위 변경 시 내부기 슬롯 재렌더
+// 수술 부위 변경 시 내부기 슬롯 재렌더
 function _custOnSurgerySideChange() {
   var sel = document.getElementById('cst-surgery-side');
   var slotBox = document.getElementById('cst-internal-slots');
@@ -1267,7 +1312,7 @@ function _custRenderInternalSlots(custId, surgerySide) {
     return '<div class="text-[11px] text-slate-500 bg-white/60 rounded-md p-2 text-center"><i class="fas fa-lock mr-1"></i>고객 저장 후 등록 가능합니다</div>';
   }
   if (!surgerySide) {
-    return '<div class="text-[11px] text-slate-500 bg-white/60 rounded-md p-2 text-center"><i class="fas fa-arrow-up mr-1"></i>위에서 시술 부위를 먼저 선택하세요</div>';
+    return '<div class="text-[11px] text-slate-500 bg-white/60 rounded-md p-2 text-center"><i class="fas fa-arrow-up mr-1"></i>위에서 수술 부위를 먼저 선택하세요</div>';
   }
 
   var sides = surgerySide === 'both' ? ['left', 'right'] : [surgerySide];
@@ -1476,7 +1521,7 @@ async function _custRefreshGroupsInModal(custId) {
     var box = document.getElementById('cst-groups-list');
     if (box) box.innerHTML = _custRenderGroupsInModal(custId, res.data.data.groups || []);
     // 상단 사이드바/목록도 갱신
-    await _custLoadGroups();
+    await _custLoadGroups(true);
     await fetchCustomers();
   } catch(e) {}
 }
@@ -2715,7 +2760,7 @@ async function deleteCsRepair(id) {
 // ============================================================
 // ===== CS Main — Phase 3: FAQ / 지식베이스 =====
 // ============================================================
-var CS_KB_CATEGORY_LABELS = { product: '제품', procedure: '시술', warranty: '보증', billing: '청구', other: '기타' };
+var CS_KB_CATEGORY_LABELS = { product: '제품', procedure: '수술', warranty: '보증', billing: '청구', other: '기타' };
 var CS_KB_CATEGORY_COLORS = {
   product:   { bg: '#eef2ff', fg: '#4338ca', bd: '#c7d2fe' },
   procedure: { bg: '#f0fdf4', fg: '#15803d', bd: '#bbf7d0' },
@@ -4158,7 +4203,7 @@ async function loadDash() {
       widgetWrap('kpiGauge', (s.kpiTarget && s.kpiTarget.target_meetings > 0 ? '<div class="card-flat p-5"><div class="flex items-center justify-between mb-4"><div class="flex items-center gap-2.5"><div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#eef4ff,#dbeafe)"><i class="fas fa-bullseye text-brand-600 text-xs"></i></div><span class="font-bold text-[14px] text-slate-800 tracking-tight">KPI 달성률</span></div><button class="btn btn-ghost btn-sm text-xs" onclick="showKPISettings()"><i class="fas fa-cog text-xs"></i> 설정</button></div><div class="grid grid-cols-1 sm:grid-cols-3 gap-4">' + kpiGaugeCard('미팅', s.stats.monthMeetings, s.kpiTarget.target_meetings, 'fa-handshake', '#2563eb') + '</div></div>' :
         '<div class="card-flat p-4 flex items-center justify-between"><div class="flex items-center gap-2 text-sm text-slate-400"><i class="fas fa-bullseye text-slate-300"></i>KPI 목표가 설정되지 않았습니다</div><button class="btn btn-outline btn-sm" onclick="showKPISettings()"><i class="fas fa-plus text-xs mr-1"></i>설정</button></div>')) +
       // CI KPI banner
-      (s.ciKpi && !isWidgetHidden('ciKpi') ? '<div class="card-flat p-4 lg:p-5 flex flex-wrap items-center gap-4 lg:gap-8" data-widget="ciKpi"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-line text-indigo-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">인공와우 시장 현황 (' + s.ciKpi.year + '년)</div><div class="text-sm font-bold text-slate-800">환자 ' + fmtNum(s.ciKpi.patients) + '명</div></div></div><div class="flex gap-4 lg:gap-6 text-center flex-wrap"><div><div class="text-[10px] text-slate-400">시술건수</div><div class="text-sm font-bold text-brand-600">' + fmtNum(s.ciKpi.usage) + '</div></div><div><div class="text-[10px] text-slate-400">진료금액</div><div class="text-sm font-bold text-emerald-600">' + fmtAmount(s.ciKpi.amount) + '</div></div><div><div class="text-[10px] text-slate-400">환자 증가율</div><div class="text-sm font-bold ' + (parseFloat(s.ciKpi.growth_patients) > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (parseFloat(s.ciKpi.growth_patients) > 0 ? '+' : '') + s.ciKpi.growth_patients + '%</div></div></div><button class="btn btn-outline btn-sm ml-auto" onclick="nav(\'cistats\')">통계 상세 <i class="fas fa-arrow-right text-[10px]"></i></button></div>' : '') +
+      (s.ciKpi && !isWidgetHidden('ciKpi') ? '<div class="card-flat p-4 lg:p-5 flex flex-wrap items-center gap-4 lg:gap-8" data-widget="ciKpi"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center"><i class="fas fa-chart-line text-indigo-500"></i></div><div><div class="text-[11px] text-slate-400 font-medium">인공와우 시장 현황 (' + s.ciKpi.year + '년)</div><div class="text-sm font-bold text-slate-800">환자 ' + fmtNum(s.ciKpi.patients) + '명</div></div></div><div class="flex gap-4 lg:gap-6 text-center flex-wrap"><div><div class="text-[10px] text-slate-400">수술건수</div><div class="text-sm font-bold text-brand-600">' + fmtNum(s.ciKpi.usage) + '</div></div><div><div class="text-[10px] text-slate-400">진료금액</div><div class="text-sm font-bold text-emerald-600">' + fmtAmount(s.ciKpi.amount) + '</div></div><div><div class="text-[10px] text-slate-400">환자 증가율</div><div class="text-sm font-bold ' + (parseFloat(s.ciKpi.growth_patients) > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (parseFloat(s.ciKpi.growth_patients) > 0 ? '+' : '') + s.ciKpi.growth_patients + '%</div></div></div><button class="btn btn-outline btn-sm ml-auto" onclick="nav(\'cistats\')">통계 상세 <i class="fas fa-arrow-right text-[10px]"></i></button></div>' : '') +
 
       // ===== Recently added highlights =====
       ((s.recentHospitals?.length || s.recentDoctors?.length) && !isWidgetHidden('recentHighlights') ?

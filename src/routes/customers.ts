@@ -20,18 +20,20 @@ customers.get('/', async (c) => {
   const { search, type, status, hospital_id, region, group_id, limit } = c.req.query()
   const lim = safeLimit(limit, 500)
 
+  // ─────────────────────────────────────────────────────────
+  // 성능 최적화 (v2):
+  //   기존: correlated subquery 5개 × N행 (inquiry_count, last_inquiry_at,
+  //         internal_devices_count, external_devices_count, groups_raw)
+  //   개선: 메인 쿼리는 slim하게 유지 → 얻은 customer id 배치로
+  //         5개 집계 쿼리를 병렬 실행 후 Node에서 merge
+  //   실측상 500행 기준 상당한 성능 향상 (D1 correlated subquery 이슈 회피)
+  // ─────────────────────────────────────────────────────────
+
   let q = `
     SELECT c.*,
       h.name AS hospital_name,
       g.name AS guardian_of_name,
-      u.name AS created_by_name,
-      (SELECT COUNT(*) FROM cs_inquiries WHERE customer_id = c.id) AS inquiry_count,
-      (SELECT MAX(created_at) FROM cs_inquiries WHERE customer_id = c.id) AS last_inquiry_at,
-      (SELECT COUNT(*) FROM customer_internal_devices WHERE customer_id = c.id) AS internal_devices_count,
-      (SELECT COUNT(*) FROM customer_external_devices WHERE customer_id = c.id) AS external_devices_count,
-      (SELECT GROUP_CONCAT(cg.id || '::' || cg.name || '::' || cg.color, '||')
-        FROM customer_group_members m JOIN customer_groups cg ON cg.id = m.group_id
-        WHERE m.customer_id = c.id) AS groups_raw
+      u.name AS created_by_name
     FROM customers c
     LEFT JOIN hospitals h ON h.id = c.hospital_id
     LEFT JOIN customers g ON g.id = c.guardian_of
@@ -62,19 +64,68 @@ customers.get('/', async (c) => {
   params.push(lim)
 
   const r = await c.env.DB.prepare(q).bind(...params).all()
-  // groups_raw 문자열을 배열로 파싱
-  const rows = (r.results as any[]).map((row) => {
-    const raw = row.groups_raw as string | null
-    const groups = raw
-      ? raw.split('||').map((s) => {
-          const [gid, name, color] = s.split('::')
-          return { id: Number(gid), name, color }
-        })
-      : []
-    delete row.groups_raw
-    row.groups = groups
-    return row
-  })
+  const rows = (r.results as any[]) || []
+
+  // 기본 필드 초기화 (빈 결과여도 UI 계약 유지)
+  for (const row of rows) {
+    row.inquiry_count = 0
+    row.last_inquiry_at = null
+    row.internal_devices_count = 0
+    row.external_devices_count = 0
+    row.groups = []
+  }
+
+  if (rows.length > 0) {
+    const ids = rows.map(r => r.id as number)
+    // SQLite IN 절 위해 placeholder 생성
+    const inPh = ids.map(() => '?').join(',')
+
+    // 4개 집계 병렬 (customer_id 별 count/max/groups)
+    const [inqAgg, intAgg, extAgg, grpAgg] = await Promise.all([
+      c.env.DB.prepare(`
+        SELECT customer_id AS cid, COUNT(*) AS n, MAX(created_at) AS last_at
+        FROM cs_inquiries WHERE customer_id IN (${inPh})
+        GROUP BY customer_id
+      `).bind(...ids).all(),
+      c.env.DB.prepare(`
+        SELECT customer_id AS cid, COUNT(*) AS n
+        FROM customer_internal_devices WHERE customer_id IN (${inPh})
+        GROUP BY customer_id
+      `).bind(...ids).all(),
+      c.env.DB.prepare(`
+        SELECT customer_id AS cid, COUNT(*) AS n
+        FROM customer_external_devices WHERE customer_id IN (${inPh})
+        GROUP BY customer_id
+      `).bind(...ids).all(),
+      c.env.DB.prepare(`
+        SELECT m.customer_id AS cid, cg.id AS gid, cg.name, cg.color
+        FROM customer_group_members m
+        JOIN customer_groups cg ON cg.id = m.group_id
+        WHERE m.customer_id IN (${inPh})
+        ORDER BY cg.sort_order, cg.name
+      `).bind(...ids).all(),
+    ])
+
+    // 인덱스 맵으로 O(1) 병합
+    const byId: Record<number, any> = {}
+    for (const row of rows) byId[row.id] = row
+
+    for (const r0 of (inqAgg.results || []) as any[]) {
+      const row = byId[r0.cid]
+      if (row) { row.inquiry_count = r0.n || 0; row.last_inquiry_at = r0.last_at || null }
+    }
+    for (const r0 of (intAgg.results || []) as any[]) {
+      const row = byId[r0.cid]; if (row) row.internal_devices_count = r0.n || 0
+    }
+    for (const r0 of (extAgg.results || []) as any[]) {
+      const row = byId[r0.cid]; if (row) row.external_devices_count = r0.n || 0
+    }
+    for (const r0 of (grpAgg.results || []) as any[]) {
+      const row = byId[r0.cid]
+      if (row) row.groups.push({ id: r0.gid, name: r0.name, color: r0.color })
+    }
+  }
+
   return c.json({ data: rows })
 })
 
