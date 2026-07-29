@@ -1,0 +1,16 @@
+-- 최근상담일시가 있는 SMC 고객의 초기 응대 이력
+-- 엑셀 임포트 시점의 마지막 상담 기록을 cs_inquiries에 한 건씩 생성
+-- customer_id는 phone으로 조회, 이미 같은 subject/customer_id 조합이 있으면 스킵
+
+-- 김중태 최근상담 2026-06-02 10:55
+INSERT INTO cs_inquiries (customer_id, hospital_id, contact_name, contact_phone, subject, category, channel, priority, status, direction, first_message, created_at, updated_at, resolved_at) SELECT (SELECT id FROM customers WHERE phone='010-7368-8745' LIMIT 1), (SELECT id FROM hospitals WHERE name='삼성서울병원' LIMIT 1), '김중태', '010-7368-8745', '최근 상담 (엑셀 임포트)', 'general', 'phone', 'mid', 'closed', 'inbound', '엑셀 원본에서 최근상담일시로 기록된 항목. 상세 내용 없음.', '2026-06-02 10:55:00', '2026-06-02 10:55:00', '2026-06-02 10:55:00' WHERE (SELECT id FROM customers WHERE phone='010-7368-8745' LIMIT 1) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cs_inquiries WHERE customer_id=(SELECT id FROM customers WHERE phone='010-7368-8745' LIMIT 1) AND subject='최근 상담 (엑셀 임포트)');
+
+-- 김종광 최근상담 2026-06-24 14:26
+INSERT INTO cs_inquiries (customer_id, hospital_id, contact_name, contact_phone, subject, category, channel, priority, status, direction, first_message, created_at, updated_at, resolved_at) SELECT (SELECT id FROM customers WHERE phone='010-2111-7815' LIMIT 1), (SELECT id FROM hospitals WHERE name='삼성서울병원' LIMIT 1), '김종광', '010-2111-7815', '최근 상담 (엑셀 임포트)', 'general', 'phone', 'mid', 'closed', 'inbound', '엑셀 원본에서 최근상담일시로 기록된 항목. 상세 내용 없음.', '2026-06-24 14:26:00', '2026-06-24 14:26:00', '2026-06-24 14:26:00' WHERE (SELECT id FROM customers WHERE phone='010-2111-7815' LIMIT 1) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cs_inquiries WHERE customer_id=(SELECT id FROM customers WHERE phone='010-2111-7815' LIMIT 1) AND subject='최근 상담 (엑셀 임포트)');
+
+-- 박의규 최근상담 2026-04-16 14:23
+INSERT INTO cs_inquiries (customer_id, hospital_id, contact_name, contact_phone, subject, category, channel, priority, status, direction, first_message, created_at, updated_at, resolved_at) SELECT (SELECT id FROM customers WHERE phone='010-4101-7551' LIMIT 1), (SELECT id FROM hospitals WHERE name='삼성서울병원' LIMIT 1), '박의규', '010-4101-7551', '최근 상담 (엑셀 임포트)', 'general', 'phone', 'mid', 'closed', 'inbound', '엑셀 원본에서 최근상담일시로 기록된 항목. 상세 내용 없음.', '2026-04-16 14:23:00', '2026-04-16 14:23:00', '2026-04-16 14:23:00' WHERE (SELECT id FROM customers WHERE phone='010-4101-7551' LIMIT 1) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cs_inquiries WHERE customer_id=(SELECT id FROM customers WHERE phone='010-4101-7551' LIMIT 1) AND subject='최근 상담 (엑셀 임포트)');
+
+-- 신창규 최근상담 2026-07-06 14:00
+INSERT INTO cs_inquiries (customer_id, hospital_id, contact_name, contact_phone, subject, category, channel, priority, status, direction, first_message, created_at, updated_at, resolved_at) SELECT (SELECT id FROM customers WHERE phone='010-5592-2502' LIMIT 1), (SELECT id FROM hospitals WHERE name='삼성서울병원' LIMIT 1), '신창규', '010-5592-2502', '최근 상담 (엑셀 임포트)', 'general', 'phone', 'mid', 'closed', 'inbound', '엑셀 원본에서 최근상담일시로 기록된 항목. 상세 내용 없음.', '2026-07-06 14:00:00', '2026-07-06 14:00:00', '2026-07-06 14:00:00' WHERE (SELECT id FROM customers WHERE phone='010-5592-2502' LIMIT 1) IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cs_inquiries WHERE customer_id=(SELECT id FROM customers WHERE phone='010-5592-2502' LIMIT 1) AND subject='최근 상담 (엑셀 임포트)');
+

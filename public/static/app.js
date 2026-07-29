@@ -639,8 +639,25 @@ function filterCust() {
 // 새 함수: 사이드 패널로 통합. openCustomerModal은 아래에서 alias 처리.
 async function openCustomerPanel(id) { return openCustomerModal(id); }
 
+// 제조사 옵션 (드롭다운 순서 고정: 토닥 → 코클리어 → 메델 → AB → 오티콘메디컬 → 기타)
+var CUST_MFR_OPTIONS = [
+  { v: 'todoc',    label: '토닥 (TODOC)' },
+  { v: 'cochlear', label: '코클리어 (Cochlear)' },
+  { v: 'medel',    label: '메델 (MED-EL)' },
+  { v: 'ab',       label: 'AB (Advanced Bionics)' },
+  { v: 'oticon',   label: '오티콘메디컬 (Oticon Medical)' },
+  { v: 'other',    label: '기타' }
+];
+function _custMfrOptions(selected) {
+  return '<option value="">선택 안 함</option>' + CUST_MFR_OPTIONS.map(function(m) {
+    return '<option value="' + m.v + '"' + (selected === m.v ? ' selected' : '') + '>' + m.label + '</option>';
+  }).join('');
+}
+
 async function openCustomerModal(id) {
-  var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'prospect', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '' };
+  var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'prospect', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '',
+    internal_manufacturer: '', internal_model: '', internal_serial: '', internal_implant_date: '', internal_side: '',
+    external_manufacturer: '', external_model: '', external_serial: '', external_supply_date: '', external_version: '' };
   if (id) {
     try { var r = await API.get('/customers/' + id); cst = Object.assign(cst, r.data.data || {}); } catch(e) { toast('고객 정보를 불러올 수 없습니다', 'err'); return; }
   }
@@ -685,15 +702,65 @@ async function openCustomerModal(id) {
       '<div><label class="input-label">병원</label><select name="hospital_id" class="input">' + hospOpts + '</select></div>' +
       '<div><label class="input-label">지역</label><select name="region" class="input">' + regionOpts + '</select></div>' +
       '<div class="col-span-full"><label class="input-label">주소</label><input name="address" type="text" value="' + csEsc(cst.address) + '" class="input"></div>' +
-      '<div><label class="input-label">시술일 <span class="text-[10px] text-slate-400">(수술 환자)</span></label><input name="implant_date" type="date" value="' + csEsc(cst.implant_date) + '" class="input"></div>' +
-      '<div><label class="input-label">시술 부위</label><select name="implant_side" class="input">' +
-        ['','L','R','BOTH'].map(function(s) { var l = s === 'L' ? '좌측' : s === 'R' ? '우측' : s === 'BOTH' ? '양측' : '선택 안 함'; return '<option value="' + s + '"' + (cst.implant_side === s ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
-      '</select></div>' +
-      '<div><label class="input-label">기기 모델</label><input name="device_model" type="text" value="' + csEsc(cst.device_model) + '" class="input" placeholder="예: Nucleus 8"></div>' +
-      '<div><label class="input-label">기기 시리얼</label><input name="device_serial" type="text" value="' + csEsc(cst.device_serial) + '" class="input"></div>' +
       '<div><label class="input-label">상태</label><select name="status" class="input">' +
         ['active','inactive','dormant'].map(function(s) { return '<option value="' + s + '"' + (cst.status === s ? ' selected' : '') + '>' + CUST_STATUS_LABELS[s] + '</option>'; }).join('') +
       '</select></div>' +
+
+      // ===== 내부기 (Implant) 카드 =====
+      '<div class="col-span-full mt-3 p-3 rounded-lg border" style="background:#eff6ff;border-color:#bfdbfe">' +
+        '<div class="flex items-center gap-2 mb-3">' +
+          '<div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:#dbeafe">' +
+            '<i class="fas fa-microchip text-[13px]" style="color:#1d4ed8"></i>' +
+          '</div>' +
+          '<div>' +
+            '<div class="text-[12px] font-bold" style="color:#1d4ed8">내부기 (Implant)</div>' +
+            '<div class="text-[10px] text-slate-500">수술로 삽입되는 임플란트</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+          '<div><label class="input-label">제조사</label><select name="internal_manufacturer" class="input">' + _custMfrOptions(cst.internal_manufacturer) + '</select></div>' +
+          '<div><label class="input-label">모델명</label><input name="internal_model" type="text" value="' + csEsc(cst.internal_model || '') + '" class="input" placeholder="예: Nucleus Profile Plus"></div>' +
+          '<div><label class="input-label">시리얼 번호</label><input name="internal_serial" type="text" value="' + csEsc(cst.internal_serial || '') + '" class="input"></div>' +
+          '<div><label class="input-label">이식일</label><input name="internal_implant_date" type="date" value="' + csEsc(cst.internal_implant_date || '') + '" class="input"></div>' +
+          '<div class="sm:col-span-2"><label class="input-label">이식 위치</label><select name="internal_side" class="input">' +
+            ['','L','R','BOTH'].map(function(s) { var l = s === 'L' ? '좌측' : s === 'R' ? '우측' : s === 'BOTH' ? '양측' : '선택 안 함'; return '<option value="' + s + '"' + (cst.internal_side === s ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
+          '</select></div>' +
+        '</div>' +
+      '</div>' +
+
+      // ===== 외부기 (Sound Processor) 카드 =====
+      '<div class="col-span-full p-3 rounded-lg border" style="background:#f0fdf4;border-color:#bbf7d0">' +
+        '<div class="flex items-center gap-2 mb-3">' +
+          '<div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:#dcfce7">' +
+            '<i class="fas fa-headphones text-[13px]" style="color:#15803d"></i>' +
+          '</div>' +
+          '<div>' +
+            '<div class="text-[12px] font-bold" style="color:#15803d">외부기 (Sound Processor)</div>' +
+            '<div class="text-[10px] text-slate-500">착용형 어음처리기 · 교체 가능</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+          '<div><label class="input-label">제조사</label><select name="external_manufacturer" class="input">' + _custMfrOptions(cst.external_manufacturer) + '</select></div>' +
+          '<div><label class="input-label">모델명</label><input name="external_model" type="text" value="' + csEsc(cst.external_model || '') + '" class="input" placeholder="예: Nucleus 8"></div>' +
+          '<div><label class="input-label">시리얼 번호</label><input name="external_serial" type="text" value="' + csEsc(cst.external_serial || '') + '" class="input"></div>' +
+          '<div><label class="input-label">지급/교체일</label><input name="external_supply_date" type="date" value="' + csEsc(cst.external_supply_date || '') + '" class="input"></div>' +
+          '<div class="sm:col-span-2"><label class="input-label">버전 / 펌웨어</label><input name="external_version" type="text" value="' + csEsc(cst.external_version || '') + '" class="input" placeholder="예: 1.5"></div>' +
+        '</div>' +
+      '</div>' +
+
+      // 기존 필드 (호환용) — 접이식 details
+      '<details class="col-span-full">' +
+        '<summary class="text-[11px] text-slate-400 cursor-pointer hover:text-slate-600 py-1"><i class="fas fa-history text-[10px] mr-1"></i>이전 필드 (호환용) — 시술일 · 시술 부위 · 기기 모델 · 시리얼</summary>' +
+        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2 p-3 rounded-lg bg-slate-50">' +
+          '<div><label class="input-label">시술일</label><input name="implant_date" type="date" value="' + csEsc(cst.implant_date) + '" class="input"></div>' +
+          '<div><label class="input-label">시술 부위</label><select name="implant_side" class="input">' +
+            ['','L','R','BOTH'].map(function(s) { var l = s === 'L' ? '좌측' : s === 'R' ? '우측' : s === 'BOTH' ? '양측' : '선택 안 함'; return '<option value="' + s + '"' + (cst.implant_side === s ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
+          '</select></div>' +
+          '<div><label class="input-label">기기 모델</label><input name="device_model" type="text" value="' + csEsc(cst.device_model) + '" class="input"></div>' +
+          '<div><label class="input-label">기기 시리얼</label><input name="device_serial" type="text" value="' + csEsc(cst.device_serial) + '" class="input"></div>' +
+        '</div>' +
+      '</details>' +
+
       '<div class="col-span-full"><label class="input-label">메모</label><textarea name="notes" rows="3" class="input">' + csEsc(cst.notes) + '</textarea></div>' +
     '</form>' +
     // 편집 모드에서만 문의 이력 표시

@@ -30,8 +30,8 @@ customers.get('/', async (c) => {
   if (region) { conds.push('c.region = ?'); params.push(region) }
   if (search) {
     const s = `%${safeLike(search)}%`
-    conds.push('(c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.device_serial LIKE ?)')
-    params.push(s, s, s, s)
+    conds.push('(c.name LIKE ? OR c.phone LIKE ? OR c.email LIKE ? OR c.device_serial LIKE ? OR c.internal_serial LIKE ? OR c.external_serial LIKE ?)')
+    params.push(s, s, s, s, s, s)
   }
   if (conds.length) q += ' WHERE ' + conds.join(' AND ')
   q += ' ORDER BY c.updated_at DESC, c.id DESC LIMIT ?'
@@ -99,8 +99,10 @@ customers.post('/', async (c) => {
       name, phone, email, birth_date, gender, customer_type,
       hospital_id, address, region,
       implant_date, implant_side, device_model, device_serial,
-      guardian_of, status, tags, notes, created_by
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      guardian_of, status, tags, notes, created_by,
+      internal_manufacturer, internal_model, internal_serial, internal_implant_date, internal_side,
+      external_manufacturer, external_model, external_serial, external_supply_date, external_version
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).bind(
     b.name.trim(),
     b.phone || '', b.email || '', b.birth_date || '', b.gender || '',
@@ -112,7 +114,9 @@ customers.post('/', async (c) => {
     b.guardian_of ? safeInt(String(b.guardian_of)) : null,
     b.status || 'active',
     b.tags || '', b.notes || '',
-    uid || null
+    uid || null,
+    b.internal_manufacturer || null, b.internal_model || null, b.internal_serial || null, b.internal_implant_date || null, b.internal_side || null,
+    b.external_manufacturer || null, b.external_model || null, b.external_serial || null, b.external_supply_date || null, b.external_version || null
   ).run()
 
   await logActivity(c.env.DB, 'create', 'customer', r.meta.last_row_id as number, b.name.trim())
@@ -132,6 +136,8 @@ customers.put('/:id', async (c) => {
       hospital_id=?, address=?, region=?,
       implant_date=?, implant_side=?, device_model=?, device_serial=?,
       guardian_of=?, status=?, tags=?, notes=?,
+      internal_manufacturer=?, internal_model=?, internal_serial=?, internal_implant_date=?, internal_side=?,
+      external_manufacturer=?, external_model=?, external_serial=?, external_supply_date=?, external_version=?,
       updated_at=CURRENT_TIMESTAMP
     WHERE id=?
   `).bind(
@@ -145,6 +151,8 @@ customers.put('/:id', async (c) => {
     b.guardian_of ? safeInt(String(b.guardian_of)) : null,
     b.status || 'active',
     b.tags || '', b.notes || '',
+    b.internal_manufacturer || null, b.internal_model || null, b.internal_serial || null, b.internal_implant_date || null, b.internal_side || null,
+    b.external_manufacturer || null, b.external_model || null, b.external_serial || null, b.external_supply_date || null, b.external_version || null,
     id
   ).run()
 
