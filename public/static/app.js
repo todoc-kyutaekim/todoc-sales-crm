@@ -395,7 +395,6 @@ function nav(p) {
     customers: loadCustomers,
     cs_inquiry: loadCsInquiry,
     cs_repair: loadCsRepair,
-    cs_contact_log: loadCsContactLog,
     cs_faq: loadCsKb,
   })[p]?.();
 }
@@ -784,7 +783,13 @@ function deleteCustomer(id, name) {
 // ===== 고객 문의 =====
 // ============================================================
 var _csInqList = [];
-var _csInqFilter = { search: '', status: '', category: '', priority: '', assignee_id: '', channel: '' };
+var _csInqFilter = { search: '', status: '', category: '', priority: '', assignee_id: '', channel: '', direction: '' };
+var CS_INQ_DIRECTION_LABELS = { inbound: '수신 (고객→우리)', outbound: '발신 (우리→고객)' };
+var CS_INQ_DIRECTION_SHORT = { inbound: '수신', outbound: '발신' };
+var CS_INQ_DIRECTION_COLORS = {
+  inbound:  { bg: '#eff6ff', fg: '#1d4ed8', bd: '#bfdbfe', icon: 'fa-arrow-down-long' },
+  outbound: { bg: '#f0fdf4', fg: '#15803d', bd: '#bbf7d0', icon: 'fa-arrow-up-long' }
+};
 var _csInqUsers = [];
 var _csInqCustomers = []; // 자동완성용 캐시
 
@@ -821,6 +826,11 @@ async function loadCsInquiry() {
           '<option value="high">높음</option>' +
           '<option value="mid">보통</option>' +
           '<option value="low">낮음</option>' +
+        '</select>' +
+        '<select id="cs-inq-direction" onchange="filterCsInq()" class="input filter-select">' +
+          '<option value="">전체 방향</option>' +
+          '<option value="inbound">수신</option>' +
+          '<option value="outbound">발신</option>' +
         '</select>' +
         '<select id="cs-inq-assignee" onchange="filterCsInq()" class="input filter-select">' +
           '<option value="">전체 담당자</option>' +
@@ -859,6 +869,7 @@ async function fetchCsInquiries() {
     if (_csInqFilter.category) params.push('category=' + _csInqFilter.category);
     if (_csInqFilter.priority) params.push('priority=' + _csInqFilter.priority);
     if (_csInqFilter.assignee_id) params.push('assignee_id=' + _csInqFilter.assignee_id);
+    if (_csInqFilter.direction) params.push('direction=' + _csInqFilter.direction);
     var qs = params.length ? '?' + params.join('&') : '';
     var res = await API.get('/cs/inquiries' + qs);
     _csInqList = res.data.data || [];
@@ -921,10 +932,20 @@ function renderCsInquiries() {
       '</div>' +
       // 제목 / 고객
       '<div class="min-w-0">' +
-        '<div class="text-[13px] font-semibold text-slate-800 truncate">' + csEsc(inq.subject) + '</div>' +
+        '<div class="text-[13px] font-semibold text-slate-800 truncate flex items-center gap-1.5">' +
+          (function() {
+            var d = inq.direction || 'inbound';
+            var dc = CS_INQ_DIRECTION_COLORS[d] || CS_INQ_DIRECTION_COLORS.inbound;
+            return '<span class="inline-flex items-center text-[9px] font-bold px-1 py-0.5 rounded flex-shrink-0" style="background:' + dc.bg + ';color:' + dc.fg + '" title="' + CS_INQ_DIRECTION_LABELS[d] + '"><i class="fas ' + dc.icon + '"></i></span>';
+          })() +
+          '<span class="truncate">' + csEsc(inq.subject) + '</span>' +
+          (inq.duration_min ? '<span class="text-[10px] font-normal text-slate-400 flex-shrink-0"><i class="far fa-clock mr-0.5"></i>' + inq.duration_min + '분</span>' : '') +
+          (inq.followup_at ? '<span class="text-[10px] font-normal text-amber-600 flex-shrink-0" title="후속 예정"><i class="fas fa-bell mr-0.5"></i>' + csEsc(String(inq.followup_at).slice(0,16).replace('T',' ')) + '</span>' : '') +
+        '</div>' +
         '<div class="text-[11px] text-slate-400 truncate">' +
           '<i class="fas fa-user text-[9px] mr-1"></i>' + (inq.customer_id ? csEsc(custName) : custName) +
           (custPhone ? ' <span class="text-slate-300">·</span> ' + csEsc(custPhone) : '') +
+          (inq.related_repair_id ? ' <span class="text-slate-300">·</span> <span class="text-blue-500"><i class="fas fa-screwdriver-wrench text-[9px]"></i> AS#' + inq.related_repair_id + '</span>' : '') +
         '</div>' +
       '</div>' +
       // 유형
@@ -957,12 +978,13 @@ function filterCsInq() {
   _csInqFilter.category = (document.getElementById('cs-inq-category') || {}).value || '';
   _csInqFilter.priority = (document.getElementById('cs-inq-priority') || {}).value || '';
   _csInqFilter.assignee_id = (document.getElementById('cs-inq-assignee') || {}).value || '';
+  _csInqFilter.direction = (document.getElementById('cs-inq-direction') || {}).value || '';
   clearTimeout(window._csInqFilterTimer);
   window._csInqFilterTimer = setTimeout(fetchCsInquiries, 250);
 }
 
 async function openCsInquiryModal(id, prefillCustomerId) {
-  var inq = { subject: '', category: 'general', channel: 'phone', priority: 'mid', status: 'open', customer_id: prefillCustomerId || '', contact_name: '', contact_phone: '', contact_email: '', first_message: '', assignee_id: '', hospital_id: '' };
+  var inq = { subject: '', category: 'general', channel: 'phone', priority: 'mid', status: 'open', customer_id: prefillCustomerId || '', contact_name: '', contact_phone: '', contact_email: '', first_message: '', assignee_id: '', hospital_id: '', direction: 'inbound', duration_min: '', followup_at: '', related_repair_id: '' };
   if (id) {
     try { var r = await API.get('/cs/inquiries/' + id); inq = Object.assign(inq, r.data.data || {}); } catch(e) { toast('문의를 불러올 수 없습니다', 'err'); return; }
   }
@@ -1034,8 +1056,16 @@ async function openCsInquiryModal(id, prefillCustomerId) {
       '<div class="pb-3 mb-4 border-b border-slate-100">' +
         '<div class="flex items-center gap-1.5 mb-2 flex-wrap">' +
           '<span class="text-[10px] text-slate-400 font-mono">#' + inq.id + '</span>' +
+          (function() {
+            var d = inq.direction || 'inbound';
+            var dc = CS_INQ_DIRECTION_COLORS[d] || CS_INQ_DIRECTION_COLORS.inbound;
+            return '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + dc.bg + ';color:' + dc.fg + '"><i class="fas ' + dc.icon + '"></i>' + CS_INQ_DIRECTION_SHORT[d] + '</span>';
+          })() +
           '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + stCol.bg + ';color:' + stCol.fg + ';border-color:' + stCol.bd + '">' + (CS_INQ_STATUS_LABELS[inq.status] || inq.status) + '</span>' +
           '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + prCol.bg + ';color:' + prCol.fg + '">' + (inq.priority === 'urgent' ? '<i class="fas fa-fire mr-0.5"></i>' : '') + (CS_INQ_PRIORITY_LABELS[inq.priority] || inq.priority) + '</span>' +
+          (inq.duration_min ? '<span class="text-[10px] text-slate-500 px-2 py-0.5 rounded bg-slate-50"><i class="far fa-clock mr-1"></i>' + inq.duration_min + '분</span>' : '') +
+          (inq.followup_at ? '<span class="text-[10px] text-amber-700 px-2 py-0.5 rounded bg-amber-50 border border-amber-100" title="후속 예정"><i class="fas fa-bell mr-1"></i>' + csEsc(String(inq.followup_at).slice(0,16).replace('T',' ')) + '</span>' : '') +
+          (inq.related_repair_id ? '<a href="javascript:void(0)" onclick="openCsRepairModal(' + inq.related_repair_id + ')" class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100 hover:bg-blue-100" title="관련 AS/수리 열기"><i class="fas fa-screwdriver-wrench"></i>AS#' + inq.related_repair_id + '</a>' : '') +
         '</div>' +
         '<div class="grid grid-cols-3 gap-2 text-[11px]">' +
           '<div><div class="text-slate-400 font-semibold text-[10px]">고객</div><div class="text-slate-700 truncate">' + csEsc(displayCustName) + (inq.customer_id ? ' <a href="javascript:void(0)" onclick="openCustomerModal(' + inq.customer_id + ')" class="text-blue-500 text-[10px]">↗</a>' : '') + '</div></div>' +
@@ -1053,6 +1083,13 @@ async function openCsInquiryModal(id, prefillCustomerId) {
       '<div><label class="input-label">채널</label><select name="channel" class="input">' + chOpts + '</select></div>' +
       '<div><label class="input-label">우선순위</label><select name="priority" class="input">' + prOpts + '</select></div>' +
       '<div><label class="input-label">상태</label><select name="status" class="input">' + stOpts + '</select></div>' +
+      '<div><label class="input-label">방향</label><select name="direction" class="input">' +
+        '<option value="inbound"' + (inq.direction === 'inbound' ? ' selected' : '') + '>수신 (고객→우리)</option>' +
+        '<option value="outbound"' + (inq.direction === 'outbound' ? ' selected' : '') + '>발신 (우리→고객)</option>' +
+      '</select></div>' +
+      '<div><label class="input-label">통화/응대 시간 <span class="text-[10px] text-slate-400">(분)</span></label><input name="duration_min" type="number" min="0" value="' + csEsc(inq.duration_min == null ? '' : inq.duration_min) + '" class="input" placeholder="예: 5"></div>' +
+      '<div><label class="input-label">후속 예정 <span class="text-[10px] text-slate-400">(선택)</span></label><input name="followup_at" type="datetime-local" value="' + csEsc(inq.followup_at ? String(inq.followup_at).slice(0,16).replace(' ','T') : '') + '" class="input"></div>' +
+      '<div class="col-span-full"><label class="input-label">관련 AS/수리 <span class="text-[10px] text-slate-400">(선택 · AS ID 직접 입력)</span></label><input name="related_repair_id" type="number" min="1" value="' + csEsc(inq.related_repair_id || '') + '" class="input" placeholder="예: 12"></div>' +
       '<div class="col-span-full"><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
       '<div class="col-span-full relative">' +
         '<label class="input-label">고객' + (inq.customer_id ? ' <span class="text-[10px] text-blue-500">(연결됨)</span>' : '') + '</label>' +
@@ -1161,6 +1198,11 @@ async function _csInqSaveFromPanel(id) {
   if (!f.subject || !f.subject.trim()) { toast('제목을 입력하세요', 'warn'); return; }
   if (f.customer_id === '') delete f.customer_id;
   if (f.assignee_id === '') delete f.assignee_id;
+  if (f.related_repair_id === '') delete f.related_repair_id;
+  if (f.duration_min === '') delete f.duration_min;
+  // datetime-local (YYYY-MM-DDTHH:MM) → SQLite DATETIME (YYYY-MM-DD HH:MM:00)
+  if (f.followup_at) f.followup_at = String(f.followup_at).replace('T', ' ') + ':00';
+  else delete f.followup_at;
   try {
     if (id) await API.put('/cs/inquiries/' + id, f);
     else await API.post('/cs/inquiries', f);
@@ -1784,356 +1826,6 @@ async function deleteCsRepair(id) {
     },
     { type: 'delete', yesLabel: '삭제' });
 }
-
-// ============================================================
-// ===== CS Main — Phase 3: 응대 로그 =====
-// ============================================================
-var CS_CTL_DIRECTION_LABELS = { inbound: '수신', outbound: '발신' };
-var CS_CTL_DIRECTION_COLORS = {
-  inbound:  { bg: '#eff6ff', fg: '#1d4ed8', bd: '#bfdbfe', icon: 'fa-arrow-down-long' },
-  outbound: { bg: '#f0fdf4', fg: '#15803d', bd: '#bbf7d0', icon: 'fa-arrow-up-long' }
-};
-var CS_CTL_CHANNEL_LABELS = { phone: '전화', email: '이메일', visit: '방문', sms: 'SMS', kakao: '카카오', other: '기타' };
-var CS_CTL_CHANNEL_ICONS = { phone: 'fa-phone', email: 'fa-envelope', visit: 'fa-user-check', sms: 'fa-comment-sms', kakao: 'fa-comment', other: 'fa-circle' };
-var CS_CTL_OUTCOME_LABELS = { resolved: '해결', needs_followup: '후속 필요', no_answer: '부재중', transferred: '이관' };
-var CS_CTL_OUTCOME_COLORS = {
-  resolved:       { bg: '#f0fdf4', fg: '#15803d', bd: '#bbf7d0' },
-  needs_followup: { bg: '#fef3c7', fg: '#a16207', bd: '#fde68a' },
-  no_answer:      { bg: '#fee2e2', fg: '#b91c1c', bd: '#fecaca' },
-  transferred:    { bg: '#eef2ff', fg: '#4338ca', bd: '#c7d2fe' }
-};
-
-var _csCtlUsers = [];
-var _csCtlCustomersCache = [];
-
-async function _csCtlLoadUsers() {
-  if (_csCtlUsers.length) return;
-  try { var r = await API.get('/users'); _csCtlUsers = r.data.data || []; } catch(e) { _csCtlUsers = []; }
-}
-async function _csCtlLoadCustomers() {
-  if (_csCtlCustomersCache.length) return;
-  try { var r = await API.get('/customers?limit=500'); _csCtlCustomersCache = r.data.data || []; } catch(e) { _csCtlCustomersCache = []; }
-}
-
-async function loadCsContactLog() {
-  var c = document.getElementById('content');
-  document.getElementById('page-title').textContent = '응대 로그';
-  document.getElementById('page-subtitle').textContent = '전화 · 이메일 · 방문 · 메시지 응대 이력 통합 기록';
-  document.getElementById('header-actions').innerHTML =
-    '<button onclick="openCsContactLogPanel()" class="btn btn-primary btn-sm"><i class="fas fa-plus mr-1"></i>응대 기록</button>';
-
-  c.innerHTML = '<div class="p-4 lg:p-6 max-w-7xl mx-auto">' +
-    '<div id="csctl-stats" class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5"></div>' +
-    '<div class="card p-4 mb-4">' +
-      '<div class="flex flex-wrap gap-2 items-center">' +
-        '<div class="relative flex-1 min-w-[200px] filter-search">' +
-          '<i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>' +
-          '<input id="csctl-search" oninput="filterCsCtl()" placeholder="주제 · 내용 · 이름 · 전화 검색" class="input pl-10">' +
-        '</div>' +
-        '<select id="csctl-direction" onchange="filterCsCtl()" class="input filter-select">' +
-          '<option value="">전체 방향</option>' +
-          '<option value="inbound">수신</option>' +
-          '<option value="outbound">발신</option>' +
-        '</select>' +
-        '<select id="csctl-channel" onchange="filterCsCtl()" class="input filter-select">' +
-          '<option value="">전체 채널</option>' +
-          Object.keys(CS_CTL_CHANNEL_LABELS).map(function(k) { return '<option value="' + k + '">' + CS_CTL_CHANNEL_LABELS[k] + '</option>'; }).join('') +
-        '</select>' +
-        '<select id="csctl-outcome" onchange="filterCsCtl()" class="input filter-select">' +
-          '<option value="">전체 결과</option>' +
-          Object.keys(CS_CTL_OUTCOME_LABELS).map(function(k) { return '<option value="' + k + '">' + CS_CTL_OUTCOME_LABELS[k] + '</option>'; }).join('') +
-        '</select>' +
-      '</div>' +
-    '</div>' +
-    '<div id="csctl-list" class="space-y-2"></div>' +
-  '</div>';
-
-  await _csCtlLoadUsers();
-  await _csCtlLoadCustomers();
-  fetchCsContactLogStats();
-  fetchCsContactLogs();
-}
-
-async function fetchCsContactLogStats() {
-  try {
-    var r = await API.get('/cs/contact-logs/stats');
-    var s = r.data.data || {};
-    var el = document.getElementById('csctl-stats');
-    if (!el) return;
-    function card(label, value, icon, color) {
-      return '<div class="card p-3">' +
-        '<div class="flex items-center gap-2 mb-1">' +
-          '<div class="w-7 h-7 rounded-lg flex items-center justify-center" style="background:' + color + '15;color:' + color + '"><i class="fas ' + icon + ' text-[11px]"></i></div>' +
-          '<div class="text-[11px] text-slate-500 font-semibold">' + label + '</div>' +
-        '</div>' +
-        '<div class="text-[20px] font-bold text-slate-800">' + (value || 0) + '</div>' +
-      '</div>';
-    }
-    el.innerHTML =
-      card('전체', s.total, 'fa-list', '#64748b') +
-      card('오늘', s.today, 'fa-calendar-day', '#0891b2') +
-      card('수신', s.inbound, 'fa-arrow-down-long', '#2563eb') +
-      card('발신', s.outbound, 'fa-arrow-up-long', '#15803d') +
-      card('후속 필요', s.needs_followup, 'fa-clock', '#a16207');
-  } catch(e) {}
-}
-
-async function fetchCsContactLogs() {
-  var listEl = document.getElementById('csctl-list');
-  if (!listEl) return;
-  listEl.innerHTML = '<div class="text-center py-8 text-slate-400"><i class="fas fa-spinner fa-spin text-xl"></i></div>';
-  try {
-    var search = (document.getElementById('csctl-search') || {}).value || '';
-    var direction = (document.getElementById('csctl-direction') || {}).value || '';
-    var channel = (document.getElementById('csctl-channel') || {}).value || '';
-    var outcome = (document.getElementById('csctl-outcome') || {}).value || '';
-    var qs = new URLSearchParams();
-    if (search) qs.set('search', search);
-    if (direction) qs.set('direction', direction);
-    if (channel) qs.set('channel', channel);
-    if (outcome) qs.set('outcome', outcome);
-    qs.set('limit', '200');
-    var r = await API.get('/cs/contact-logs?' + qs.toString());
-    renderCsContactLogs(r.data.data || []);
-  } catch(e) {
-    listEl.innerHTML = '<div class="card p-6 text-center text-slate-400">데이터를 불러올 수 없습니다</div>';
-  }
-}
-
-function filterCsCtl() {
-  clearTimeout(window._csCtlFilterTimer);
-  window._csCtlFilterTimer = setTimeout(fetchCsContactLogs, 200);
-}
-
-function renderCsContactLogs(items) {
-  var el = document.getElementById('csctl-list');
-  if (!el) return;
-  if (!items.length) {
-    el.innerHTML = '<div class="card p-8 text-center">' +
-      '<i class="fas fa-phone-slash text-3xl text-slate-200 mb-2"></i>' +
-      '<div class="text-slate-500 text-sm">기록된 응대가 없습니다</div>' +
-    '</div>';
-    return;
-  }
-  el.innerHTML = items.map(function(it) {
-    var dirCol = CS_CTL_DIRECTION_COLORS[it.direction] || CS_CTL_DIRECTION_COLORS.inbound;
-    var outCol = CS_CTL_OUTCOME_COLORS[it.outcome] || CS_CTL_OUTCOME_COLORS.resolved;
-    var chIcon = CS_CTL_CHANNEL_ICONS[it.channel] || 'fa-circle';
-    var custName = it.customer_name || it.contact_name || '(연락처 없음)';
-    var custPhone = it.customer_phone || it.contact_phone || '';
-    var relatedBadges = '';
-    if (it.related_inquiry_id) relatedBadges += '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-100"><i class="fas fa-headset mr-1"></i>문의#' + it.related_inquiry_id + '</span>';
-    if (it.related_repair_id) relatedBadges += '<span class="text-[10px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-100"><i class="fas fa-screwdriver-wrench mr-1"></i>수리#' + it.related_repair_id + '</span>';
-
-    return '<div class="card p-3 hover:shadow-md cursor-pointer transition" onclick="viewCsContactLog(' + it.id + ')">' +
-      '<div class="flex items-start gap-3">' +
-        '<div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:' + dirCol.bg + ';color:' + dirCol.fg + '">' +
-          '<i class="fas ' + chIcon + ' text-[14px]"></i>' +
-        '</div>' +
-        '<div class="flex-1 min-w-0">' +
-          '<div class="flex items-center gap-1.5 mb-1 flex-wrap">' +
-            '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded" style="background:' + dirCol.bg + ';color:' + dirCol.fg + '"><i class="fas ' + dirCol.icon + ' mr-1"></i>' + CS_CTL_DIRECTION_LABELS[it.direction] + '</span>' +
-            '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">' + CS_CTL_CHANNEL_LABELS[it.channel] + '</span>' +
-            '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded border" style="background:' + outCol.bg + ';color:' + outCol.fg + ';border-color:' + outCol.bd + '">' + CS_CTL_OUTCOME_LABELS[it.outcome] + '</span>' +
-            relatedBadges +
-            '<span class="text-[10px] text-slate-400 ml-auto">' + csFmtDateTime(it.contacted_at) + '</span>' +
-          '</div>' +
-          '<div class="text-[13px] font-semibold text-slate-800 mb-0.5 truncate">' + csEsc(it.subject) + '</div>' +
-          '<div class="text-[11px] text-slate-500 flex items-center gap-2 flex-wrap">' +
-            '<span><i class="fas fa-user text-slate-300 mr-1"></i>' + csEsc(custName) + '</span>' +
-            (custPhone ? '<span class="text-slate-300">·</span><span>' + csEsc(custPhone) + '</span>' : '') +
-            (it.user_name ? '<span class="text-slate-300">·</span><span><i class="fas fa-headset text-slate-300 mr-1"></i>' + csEsc(it.user_name) + '</span>' : '') +
-            (it.duration_min ? '<span class="text-slate-300">·</span><span>' + it.duration_min + '분</span>' : '') +
-          '</div>' +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  }).join('');
-}
-
-async function openCsContactLogPanel(id, prefillCustomerId) {
-  var it = {
-    customer_id: prefillCustomerId || '', hospital_id: '',
-    contact_name: '', contact_phone: '', contact_email: '',
-    direction: 'inbound', channel: 'phone',
-    subject: '', content: '', duration_min: '',
-    outcome: 'resolved', followup_at: '',
-    related_inquiry_id: '', related_repair_id: '',
-    contacted_at: '', notes: ''
-  };
-  if (id) {
-    try { var r = await API.get('/cs/contact-logs/' + id); it = Object.assign(it, r.data.data || {}); }
-    catch(e) { toast('응대 로그를 불러올 수 없습니다', 'err'); return; }
-  }
-  await _csCtlLoadCustomers();
-
-  // 고객 옵션
-  var custOpts = '<option value="">— 미등록 (연락처 직접 입력) —</option>' +
-    _csCtlCustomersCache.map(function(cst) {
-      var sel = (String(it.customer_id || '') === String(cst.id)) ? ' selected' : '';
-      return '<option value="' + cst.id + '"' + sel + '>' + csEsc(cst.name + (cst.phone ? ' · ' + cst.phone : '')) + '</option>';
-    }).join('');
-
-  // 현재 시각 프리필 (신규만)
-  var contactedInit = it.contacted_at || (id ? '' : new Date().toISOString().slice(0, 16));
-  contactedInit = (contactedInit || '').slice(0, 16);
-
-  // 상세 헤더 (편집 모드)
-  var detailHeader = '';
-  if (id) {
-    var dirCol = CS_CTL_DIRECTION_COLORS[it.direction] || CS_CTL_DIRECTION_COLORS.inbound;
-    var outCol = CS_CTL_OUTCOME_COLORS[it.outcome] || CS_CTL_OUTCOME_COLORS.resolved;
-    detailHeader =
-      '<div class="pb-3 mb-4 border-b border-slate-100">' +
-        '<div class="flex flex-wrap items-center gap-1.5 mb-2">' +
-          '<span class="text-[10px] text-slate-400 font-mono">#' + it.id + '</span>' +
-          '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + dirCol.bg + ';color:' + dirCol.fg + '"><i class="fas ' + dirCol.icon + ' mr-1"></i>' + CS_CTL_DIRECTION_LABELS[it.direction] + '</span>' +
-          '<span class="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">' + CS_CTL_CHANNEL_LABELS[it.channel] + '</span>' +
-          '<span class="text-[10px] font-bold px-2 py-0.5 rounded border" style="background:' + outCol.bg + ';color:' + outCol.fg + ';border-color:' + outCol.bd + '">' + CS_CTL_OUTCOME_LABELS[it.outcome] + '</span>' +
-        '</div>' +
-        '<div class="grid grid-cols-3 gap-2 text-[11px]">' +
-          '<div><div class="text-slate-400 font-semibold text-[10px]">응대자</div><div class="text-slate-700 truncate">' + csEsc(it.user_name || '-') + '</div></div>' +
-          '<div><div class="text-slate-400 font-semibold text-[10px]">응대 시각</div><div class="text-slate-700">' + csFmtDateTime(it.contacted_at) + '</div></div>' +
-          '<div><div class="text-slate-400 font-semibold text-[10px]">기록일</div><div class="text-slate-700">' + csFmtDate(it.created_at) + '</div></div>' +
-        '</div>' +
-      '</div>';
-  }
-
-  // 관련 항목 링크 (편집 모드 + 값 있을 때)
-  var relatedLinks = '';
-  if (id && (it.related_inquiry_id || it.related_repair_id)) {
-    relatedLinks = '<div class="mt-3 p-2.5 bg-slate-50 border border-slate-100 rounded-lg text-[11px] space-y-1">' +
-      '<div class="text-[10px] font-bold text-slate-500 mb-1"><i class="fas fa-link mr-1"></i>연결 항목</div>' +
-      (it.related_inquiry_id ? '<div class="flex items-center gap-2"><span class="text-slate-500">문의</span><a href="javascript:void(0)" onclick="openCsInquiryModal(' + it.related_inquiry_id + ')" class="text-blue-600 hover:underline">#' + it.related_inquiry_id + ' ' + csEsc(it.related_inquiry_subject || '') + '</a></div>' : '') +
-      (it.related_repair_id ? '<div class="flex items-center gap-2"><span class="text-slate-500">수리</span><a href="javascript:void(0)" onclick="openCsRepairModal(' + it.related_repair_id + ')" class="text-indigo-600 hover:underline">#' + it.related_repair_id + ' ' + csEsc((it.related_repair_symptom || '').slice(0, 40)) + '</a></div>' : '') +
-    '</div>';
-  }
-
-  var body =
-    detailHeader +
-    '<form id="fm-ctl" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-      '<div class="col-span-full"><label class="input-label">주제 <span class="text-rose-500">*</span></label><input name="subject" type="text" value="' + csEsc(it.subject) + '" class="input" required placeholder="예: 배터리 교체 문의, 예약 확인"></div>' +
-      '<div><label class="input-label">방향</label><select name="direction" class="input">' +
-        Object.keys(CS_CTL_DIRECTION_LABELS).map(function(k) { return '<option value="' + k + '"' + (it.direction === k ? ' selected' : '') + '>' + CS_CTL_DIRECTION_LABELS[k] + '</option>'; }).join('') +
-      '</select></div>' +
-      '<div><label class="input-label">채널</label><select name="channel" class="input">' +
-        Object.keys(CS_CTL_CHANNEL_LABELS).map(function(k) { return '<option value="' + k + '"' + (it.channel === k ? ' selected' : '') + '>' + CS_CTL_CHANNEL_LABELS[k] + '</option>'; }).join('') +
-      '</select></div>' +
-      '<div><label class="input-label">결과</label><select name="outcome" id="csctl-outcome-sel" onchange="_csCtlOutcomeToggle()" class="input">' +
-        Object.keys(CS_CTL_OUTCOME_LABELS).map(function(k) { return '<option value="' + k + '"' + (it.outcome === k ? ' selected' : '') + '>' + CS_CTL_OUTCOME_LABELS[k] + '</option>'; }).join('') +
-      '</select></div>' +
-      '<div><label class="input-label">응대 시각</label><input name="contacted_at" type="datetime-local" value="' + csEsc(contactedInit) + '" class="input"></div>' +
-      '<div id="csctl-followup-wrap"' + (it.outcome === 'needs_followup' ? '' : ' style="display:none"') + '><label class="input-label">후속 예정 <span class="text-[10px] text-slate-400">(후속 필요 시)</span></label><input name="followup_at" type="datetime-local" value="' + csEsc((it.followup_at || '').slice(0, 16)) + '" class="input"></div>' +
-      '<div><label class="input-label">소요 시간 (분)</label><input name="duration_min" type="number" min="0" step="1" value="' + csEsc(it.duration_min != null ? it.duration_min : '') + '" class="input"></div>' +
-
-      // 대상 (고객)
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
-        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-user mr-1 text-slate-500"></i>대상</div>' +
-      '</div>' +
-      '<div class="col-span-full"><label class="input-label">등록 고객 연결</label><select name="customer_id" onchange="_csCtlOnCustomerChange()" class="input">' + custOpts + '</select></div>' +
-      '<div><label class="input-label">연락자 이름 <span class="text-[10px] text-slate-400">(미등록 시)</span></label><input name="contact_name" type="text" value="' + csEsc(it.contact_name) + '" class="input"></div>' +
-      '<div><label class="input-label">전화번호</label><input name="contact_phone" type="tel" value="' + csEsc(it.contact_phone) + '" class="input" placeholder="010-1234-5678"></div>' +
-      '<div class="col-span-full"><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(it.contact_email) + '" class="input"></div>' +
-
-      // 내용
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
-        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-align-left mr-1 text-slate-500"></i>내용</div>' +
-      '</div>' +
-      '<div class="col-span-full"><label class="input-label">상세 내용</label><textarea name="content" rows="4" class="input" placeholder="응대 내용 요약">' + csEsc(it.content) + '</textarea></div>' +
-      '<div class="col-span-full"><label class="input-label">비고</label><textarea name="notes" rows="2" class="input">' + csEsc(it.notes) + '</textarea></div>' +
-
-      // 관련 항목
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
-        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-link mr-1 text-slate-500"></i>관련 항목 (선택)</div>' +
-      '</div>' +
-      '<div><label class="input-label">관련 문의 ID</label><input name="related_inquiry_id" type="number" min="1" value="' + csEsc(it.related_inquiry_id || '') + '" class="input" placeholder="예: 12"></div>' +
-      '<div><label class="input-label">관련 수리 ID</label><input name="related_repair_id" type="number" min="1" value="' + csEsc(it.related_repair_id || '') + '" class="input" placeholder="예: 34"></div>' +
-    '</form>' +
-    relatedLinks;
-
-  var actions = id ?
-    '<button type="button" onclick="_csCtlDeleteFromPanel(' + id + ')" class="btn btn-outline text-red-500 border-red-100 hover:bg-red-50 btn-sm text-[11px]" title="삭제"><i class="fas fa-trash"></i></button>'
-    : '';
-
-  var footer =
-    '<button type="button" onclick="closeSidePanel()" class="btn btn-outline">닫기</button>' +
-    '<button type="button" onclick="_csCtlSaveFromPanel(' + (id || 'null') + ')" class="btn btn-primary">' + (id ? '저장' : '기록') + '</button>';
-
-  openSidePanel({
-    title: id ? '응대 · ' + (it.subject || '') : '새 응대 기록',
-    icon: id ? 'fa-phone-volume' : 'fa-plus',
-    body: body,
-    actions: actions,
-    footer: footer,
-    onOpen: function() {
-      var fm = document.getElementById('fm-ctl');
-      if (fm) fm.onsubmit = function(e) { e.preventDefault(); _csCtlSaveFromPanel(id); };
-    }
-  });
-}
-
-function _csCtlOutcomeToggle() {
-  var sel = document.getElementById('csctl-outcome-sel');
-  var wrap = document.getElementById('csctl-followup-wrap');
-  if (!sel || !wrap) return;
-  wrap.style.display = (sel.value === 'needs_followup') ? '' : 'none';
-}
-
-function _csCtlOnCustomerChange() {
-  var fm = document.getElementById('fm-ctl');
-  if (!fm) return;
-  var sel = fm.elements['customer_id'];
-  if (!sel || !sel.value) return;
-  var cst = _csCtlCustomersCache.find(function(x) { return String(x.id) === String(sel.value); });
-  if (!cst) return;
-  var n = fm.elements['contact_name'];
-  var p = fm.elements['contact_phone'];
-  var e = fm.elements['contact_email'];
-  if (n && !n.value) n.value = cst.name || '';
-  if (p && !p.value) p.value = cst.phone || '';
-  if (e && !e.value) e.value = cst.email || '';
-}
-
-async function _csCtlSaveFromPanel(id) {
-  var fm = document.getElementById('fm-ctl');
-  if (!fm) return;
-  var f = Object.fromEntries(new FormData(fm));
-  if (!f.subject || !f.subject.trim()) { toast('주제는 필수입니다', 'warn'); return; }
-  // 빈 문자열 → null 정규화
-  ['customer_id','hospital_id','duration_min','followup_at','related_inquiry_id','related_repair_id']
-    .forEach(function(k) { if (f[k] === '') f[k] = null; });
-  if (f.contacted_at) f.contacted_at = f.contacted_at.replace('T', ' ') + ':00';
-  if (f.followup_at) f.followup_at = f.followup_at.replace('T', ' ') + ':00';
-  try {
-    if (id) await API.put('/cs/contact-logs/' + id, f);
-    else await API.post('/cs/contact-logs', f);
-    toast(id ? '응대 로그가 저장되었습니다' : '응대가 기록되었습니다');
-    closeSidePanel(true);
-    fetchCsContactLogStats();
-    fetchCsContactLogs();
-  } catch(err) {
-    var msg = (err.response && err.response.data && err.response.data.error) || '저장 실패';
-    toast(msg, 'err');
-  }
-}
-
-function _csCtlDeleteFromPanel(id) {
-  showConfirm('응대 로그 삭제',
-    '이 응대 로그를 삭제하시겠습니까?',
-    async function() {
-      try {
-        await API.delete('/cs/contact-logs/' + id);
-        toast('삭제되었습니다');
-        closeSidePanel(true);
-        fetchCsContactLogStats();
-        fetchCsContactLogs();
-      } catch(e) { toast('삭제 실패', 'err'); }
-    },
-    { type: 'delete', yesLabel: '삭제' });
-}
-
-// 상세 = 편집 통합 (사이드 패널)
-async function viewCsContactLog(id) { return openCsContactLogPanel(id); }
 
 // ============================================================
 // ===== CS Main — Phase 3: FAQ / 지식베이스 =====

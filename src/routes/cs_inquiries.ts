@@ -7,7 +7,7 @@ const cs = new Hono<{ Bindings: Bindings, Variables: Variables }>()
 
 // GET /api/cs/inquiries?search=&status=&category=&priority=&assignee_id=&customer_id=&channel=&limit=
 cs.get('/', async (c) => {
-  const { search, status, category, priority, assignee_id, customer_id, channel, limit } = c.req.query()
+  const { search, status, category, priority, assignee_id, customer_id, channel, direction, limit } = c.req.query()
   const lim = safeLimit(limit, 500)
 
   let q = `
@@ -17,6 +17,8 @@ cs.get('/', async (c) => {
       u.name AS assignee_name,
       h.name AS hospital_name,
       creator.name AS created_by_name,
+      rep.symptom AS related_repair_symptom,
+      rep.status AS related_repair_status,
       (SELECT COUNT(*) FROM cs_inquiry_responses WHERE inquiry_id = i.id) AS response_count,
       (SELECT MAX(created_at) FROM cs_inquiry_responses WHERE inquiry_id = i.id) AS last_response_at
     FROM cs_inquiries i
@@ -24,6 +26,7 @@ cs.get('/', async (c) => {
     LEFT JOIN users u ON u.id = i.assignee_id
     LEFT JOIN users creator ON creator.id = i.created_by
     LEFT JOIN hospitals h ON h.id = i.hospital_id
+    LEFT JOIN cs_repairs rep ON rep.id = i.related_repair_id
   `
   const conds: string[] = []
   const params: any[] = []
@@ -31,6 +34,7 @@ cs.get('/', async (c) => {
   if (category) { conds.push('i.category = ?'); params.push(category) }
   if (priority) { conds.push('i.priority = ?'); params.push(priority) }
   if (channel) { conds.push('i.channel = ?'); params.push(channel) }
+  if (direction) { conds.push('i.direction = ?'); params.push(direction) }
   if (assignee_id) { conds.push('i.assignee_id = ?'); params.push(safeInt(assignee_id)) }
   if (customer_id) { conds.push('i.customer_id = ?'); params.push(safeInt(customer_id)) }
   if (search) {
@@ -95,12 +99,15 @@ cs.get('/:id', async (c) => {
       cust.customer_type AS customer_type,
       u.name AS assignee_name,
       h.name AS hospital_name,
-      creator.name AS created_by_name
+      creator.name AS created_by_name,
+      rep.symptom AS related_repair_symptom,
+      rep.status AS related_repair_status
     FROM cs_inquiries i
     LEFT JOIN customers cust ON cust.id = i.customer_id
     LEFT JOIN users u ON u.id = i.assignee_id
     LEFT JOIN users creator ON creator.id = i.created_by
     LEFT JOIN hospitals h ON h.id = i.hospital_id
+    LEFT JOIN cs_repairs rep ON rep.id = i.related_repair_id
     WHERE i.id = ?
   `).bind(id).first()
   if (!row) return apiError(c, 404, '문의를 찾을 수 없습니다', ErrorCodes.NOT_FOUND)
@@ -127,8 +134,9 @@ cs.post('/', async (c) => {
     INSERT INTO cs_inquiries (
       customer_id, contact_name, contact_phone, contact_email,
       subject, category, channel, priority, status,
-      assignee_id, first_message, hospital_id, created_by
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      assignee_id, first_message, hospital_id, created_by,
+      direction, duration_min, followup_at, related_repair_id
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).bind(
     b.customer_id ? safeInt(String(b.customer_id)) : null,
     b.contact_name || '', b.contact_phone || '', b.contact_email || '',
@@ -140,7 +148,11 @@ cs.post('/', async (c) => {
     b.assignee_id ? safeInt(String(b.assignee_id)) : null,
     b.first_message || '',
     b.hospital_id ? safeInt(String(b.hospital_id)) : null,
-    uid || null
+    uid || null,
+    b.direction === 'outbound' ? 'outbound' : 'inbound',
+    b.duration_min != null && b.duration_min !== '' ? safeInt(String(b.duration_min)) : null,
+    b.followup_at || null,
+    b.related_repair_id ? safeInt(String(b.related_repair_id)) : null
   ).run()
 
   const newId = r.meta.last_row_id as number
@@ -174,6 +186,12 @@ cs.put('/:id', async (c) => {
     : (prev?.status === 'resolved' && nowStatus !== 'resolved') ? 'NULL'
     : null // 유지
 
+  // 신규 필드 정규화
+  const nowDirection = b.direction === 'outbound' ? 'outbound' : 'inbound'
+  const nowDuration = (b.duration_min != null && b.duration_min !== '') ? safeInt(String(b.duration_min)) : null
+  const nowFollowupAt = b.followup_at || null
+  const nowRelatedRepair = b.related_repair_id ? safeInt(String(b.related_repair_id)) : null
+
   // resolved_at은 상태 전환 시에만 갱신
   if (nowResolvedAt === "datetime('now')") {
     await c.env.DB.prepare(`
@@ -181,6 +199,7 @@ cs.put('/:id', async (c) => {
         customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
         subject=?, category=?, channel=?, priority=?, status=?,
         assignee_id=?, first_message=?, hospital_id=?,
+        direction=?, duration_min=?, followup_at=?, related_repair_id=?,
         updated_at=CURRENT_TIMESTAMP, resolved_at=datetime('now')
       WHERE id=?
     `).bind(
@@ -191,6 +210,7 @@ cs.put('/:id', async (c) => {
       b.priority || 'mid', nowStatus,
       nowAssignee, b.first_message || '',
       b.hospital_id ? safeInt(String(b.hospital_id)) : null,
+      nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
       id
     ).run()
   } else if (nowResolvedAt === 'NULL') {
@@ -199,6 +219,7 @@ cs.put('/:id', async (c) => {
         customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
         subject=?, category=?, channel=?, priority=?, status=?,
         assignee_id=?, first_message=?, hospital_id=?,
+        direction=?, duration_min=?, followup_at=?, related_repair_id=?,
         updated_at=CURRENT_TIMESTAMP, resolved_at=NULL
       WHERE id=?
     `).bind(
@@ -209,6 +230,7 @@ cs.put('/:id', async (c) => {
       b.priority || 'mid', nowStatus,
       nowAssignee, b.first_message || '',
       b.hospital_id ? safeInt(String(b.hospital_id)) : null,
+      nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
       id
     ).run()
   } else {
@@ -217,6 +239,7 @@ cs.put('/:id', async (c) => {
         customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
         subject=?, category=?, channel=?, priority=?, status=?,
         assignee_id=?, first_message=?, hospital_id=?,
+        direction=?, duration_min=?, followup_at=?, related_repair_id=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=?
     `).bind(
@@ -227,6 +250,7 @@ cs.put('/:id', async (c) => {
       b.priority || 'mid', nowStatus,
       nowAssignee, b.first_message || '',
       b.hospital_id ? safeInt(String(b.hospital_id)) : null,
+      nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
       id
     ).run()
   }
