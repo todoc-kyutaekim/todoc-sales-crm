@@ -125,7 +125,10 @@ auth.get('/me', async (c) => {
   }
 
   const session = await c.env.DB.prepare(
-    'SELECT s.id, s.user_id, s.expires_at, u.name, u.email FROM sessions s JOIN users u ON s.user_id=u.id WHERE s.id=? AND s.expires_at > datetime("now")'
+    `SELECT s.id, s.user_id, s.expires_at,
+            u.name, u.email, u.phone, u.department, u.position, u.job_role, u.avatar_url, u.bio
+     FROM sessions s JOIN users u ON s.user_id=u.id
+     WHERE s.id=? AND s.expires_at > datetime("now")`
   ).bind(sessionId).first() as any
 
   if (!session) {
@@ -133,7 +136,17 @@ auth.get('/me', async (c) => {
   }
 
   return c.json({
-    data: { id: session.user_id, name: session.name, email: session.email }
+    data: {
+      id: session.user_id,
+      name: session.name,
+      email: session.email,
+      phone: session.phone,
+      department: session.department,
+      position: session.position,
+      job_role: session.job_role,
+      avatar_url: session.avatar_url,
+      bio: session.bio,
+    }
   })
 })
 

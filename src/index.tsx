@@ -21,6 +21,7 @@ import customerGroups from './routes/customer_groups'
 import csInquiries from './routes/cs_inquiries'
 import csRepairs from './routes/cs_repairs'
 import csKb from './routes/cs_kb'
+import mypage from './routes/mypage'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number; user?: { id: number, name: string, email: string } }
@@ -83,6 +84,7 @@ app.route('/api/customer-groups', customerGroups)
 app.route('/api/cs/inquiries', csInquiries)
 app.route('/api/cs/repairs', csRepairs)
 app.route('/api/cs/kb', csKb)
+app.route('/api/mypage', mypage)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
@@ -226,6 +228,7 @@ const HTML = `<!DOCTYPE html>
     <div onclick="nav('cistats')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('cistats')}" id="n-cistats" class="nav-item" role="link" tabindex="0" aria-label="인공와우 통계"><span class="nav-icon" aria-hidden="true"><i class="fas fa-chart-bar"></i></span>인공와우 통계</div>
     <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
     <div class="px-4 mb-2" role="presentation"><span class="text-[9px] font-bold tracking-[.15em] uppercase" style="color:rgba(148,163,184,.4)">System</span></div>
+    <div onclick="nav('mypage')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('mypage')}" id="n-mypage" class="nav-item" role="link" tabindex="0" aria-label="마이페이지"><span class="nav-icon" aria-hidden="true"><i class="fas fa-user-circle"></i></span>마이페이지</div>
     <div onclick="nav('activity')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('activity')}" id="n-activity" class="nav-item" role="link" tabindex="0" aria-label="활동 로그"><span class="nav-icon" aria-hidden="true"><i class="fas fa-clock-rotate-left"></i></span>활동 로그</div>
   </nav>
   <div class="px-5 py-4" style="border-top:1px solid rgba(148,163,184,.1)">

@@ -172,6 +172,7 @@ function updateUserUI() {
       '<div id="user-dropdown" class="absolute right-0 top-full mt-2 w-56 bg-white z-50 hidden py-1" style="border-radius:14px;border:1px solid #eef0f5;box-shadow:0 12px 32px -4px rgba(16,24,40,.12),0 0 0 1px rgba(0,0,0,.03)">' +
       '<div class="px-4 py-3" style="border-bottom:1px solid #eef0f5"><div class="text-[13px] font-bold text-slate-800">' + currentUser.name + '</div><div class="text-[11px] text-slate-400 mt-0.5">' + currentUser.email + '</div></div>' +
       '<div class="py-1">' +
+      '<div class="px-4 py-2.5 text-[13px] text-slate-600 hover:bg-gray-50 cursor-pointer flex items-center gap-2.5 transition" onclick="toggleUserDropdown();nav(\'mypage\')"><i class="fas fa-user-circle text-slate-400 text-xs w-4"></i>마이페이지</div>' +
       '<div class="px-4 py-2.5 text-[13px] text-slate-600 hover:bg-gray-50 cursor-pointer flex items-center gap-2.5 transition" onclick="showChangePassword()"><i class="fas fa-key text-slate-400 text-xs w-4"></i>비밀번호 변경</div>' +
       '<div class="px-4 py-2.5 text-[13px] text-red-500 hover:bg-red-50 cursor-pointer flex items-center gap-2.5 transition" onclick="doLogout()"><i class="fas fa-sign-out-alt text-xs w-4"></i>로그아웃</div>' +
       '</div></div>';
@@ -446,6 +447,7 @@ function nav(p) {
     cs_inquiry: loadCsInquiry,
     cs_repair: loadCsRepair,
     cs_faq: loadCsKb,
+    mypage: loadMypage,
   })[p]?.();
 }
 
@@ -3568,6 +3570,10 @@ function toggleHeaderMore(e) {
         '<div class="hm-user-name">' + (currentUser.name || '사용자') + '</div>' +
         '<div class="hm-user-email">' + (currentUser.email || '') + '</div>' +
       '</div>' +
+      '<button class="hm-item" onclick="toggleHeaderMore();nav(\'mypage\')">' +
+        '<i class="fas fa-user-circle hm-icon"></i>' +
+        '<span class="hm-text">마이페이지</span>' +
+      '</button>' +
       '<button class="hm-item hm-item-danger" onclick="logout();toggleHeaderMore()">' +
         '<i class="fas fa-right-from-bracket hm-icon"></i>' +
         '<span class="hm-text"><b>로그아웃</b></span>' +
@@ -7705,6 +7711,296 @@ function applyMeetSort() {
 }
 
 // ===== ACTIVITY LOG =====
+// ============================================================
+// ===== 마이페이지 =====
+// ============================================================
+var _mypageData = null;
+var _mypageEditing = false;
+
+async function loadMypage() {
+  document.getElementById('page-title').textContent = '마이페이지';
+  document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat p-6">' + skeleton(6) + '</div></div>';
+  try {
+    var r = await API.get('/mypage');
+    _mypageData = r.data.data;
+    _mypageEditing = false;
+    renderMypage();
+  } catch(e) {
+    document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7"><div class="card-flat p-8 text-center text-slate-400"><i class="fas fa-exclamation-circle text-2xl mb-2"></i><div>마이페이지를 불러올 수 없습니다.</div></div></div>';
+  }
+}
+
+function _mypAvatar(profile, size) {
+  size = size || 96;
+  if (profile.avatar_url) {
+    return '<img src="' + csEsc(profile.avatar_url) + '" alt="프로필 사진" ' +
+      'style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;object-fit:cover;box-shadow:0 4px 12px rgba(37,99,235,.15);border:3px solid #fff" ' +
+      'onerror="this.outerHTML=_mypAvatarFallback(' + JSON.stringify(profile.name || '?') + ',' + size + ')">';
+  }
+  return _mypAvatarFallback(profile.name || '?', size);
+}
+function _mypAvatarFallback(name, size) {
+  size = size || 96;
+  var initial = String(name || '?').trim().charAt(0).toUpperCase() || '?';
+  return '<div style="width:' + size + 'px;height:' + size + 'px;border-radius:50%;background:linear-gradient(135deg,#3b7bf7,#2563eb);color:#fff;font-weight:800;font-size:' + Math.floor(size * 0.4) + 'px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(37,99,235,.35);border:3px solid #fff">' + csEsc(initial) + '</div>';
+}
+
+function _mypJobRoleBadge(role) {
+  if (!role) return '';
+  var colors = {
+    '영업': { bg: '#dbeafe', fg: '#1d4ed8' },
+    'CS':   { bg: '#dcfce7', fg: '#166534' },
+    '임상': { bg: '#f5f3ff', fg: '#6d28d9' },
+    '마케팅': { bg: '#fef3c7', fg: '#92400e' },
+    '개발': { bg: '#f1f5f9', fg: '#475569' },
+    '경영': { bg: '#fee2e2', fg: '#b91c1c' }
+  };
+  var c = colors[role] || { bg: '#f1f5f9', fg: '#334155' };
+  return '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold" style="background:' + c.bg + ';color:' + c.fg + '"><i class="fas fa-briefcase text-[9px]"></i>' + csEsc(role) + '</span>';
+}
+
+function renderMypage() {
+  var d = _mypageData;
+  if (!d) return;
+  var p = d.profile || {};
+  var s = d.summary || {};
+
+  // 통계 카드 (6개)
+  var stats = [
+    { label: '이번 달 미팅', value: s.month_meetings || 0, icon: 'fa-calendar-check', color: '#2563eb', bg: '#eff6ff' },
+    { label: '담당 고객', value: s.my_customers || 0, icon: 'fa-user-group', color: '#059669', bg: '#ecfdf5' },
+    { label: '처리한 문의', value: s.resolved_inquiries || 0, icon: 'fa-check-circle', color: '#7c3aed', bg: '#f5f3ff' },
+    { label: '열린 문의', value: s.open_inquiries || 0, icon: 'fa-headset', color: '#dc2626', bg: '#fef2f2' },
+    { label: '최근 7일 미팅', value: s.week7_meetings || 0, icon: 'fa-route', color: '#0891b2', bg: '#ecfeff' },
+    { label: '최근 7일 문의', value: s.week7_inquiries || 0, icon: 'fa-bell', color: '#d97706', bg: '#fffbeb' }
+  ];
+  var statsHtml = stats.map(function(x) {
+    return '<div class="card-flat p-4">' +
+      '<div class="flex items-center gap-3">' +
+        '<div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background:' + x.bg + ';color:' + x.color + '">' +
+          '<i class="fas ' + x.icon + ' text-[15px]"></i>' +
+        '</div>' +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="text-[10px] text-slate-400 font-semibold uppercase tracking-wide">' + x.label + '</div>' +
+          '<div class="text-xl font-bold text-slate-800">' + x.value + '</div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  // 세션 목록
+  var sessionsHtml = (d.sessions || []).map(function(sess) {
+    var isCur = sess.is_current;
+    return '<div class="flex items-center justify-between px-3 py-2.5 rounded-lg ' + (isCur ? 'bg-blue-50 border border-blue-200' : 'hover:bg-slate-50 border border-transparent') + '">' +
+      '<div class="flex items-center gap-2.5 min-w-0 flex-1">' +
+        '<i class="fas ' + (isCur ? 'fa-desktop text-blue-500' : 'fa-globe text-slate-400') + ' text-[13px]"></i>' +
+        '<div class="min-w-0">' +
+          '<div class="text-[12px] font-semibold text-slate-700 flex items-center gap-1.5 flex-wrap">' +
+            '<span class="font-mono text-[11px] text-slate-500">' + csEsc(sess.id_masked) + '</span>' +
+            (isCur ? '<span class="text-[9px] bg-blue-500 text-white px-1.5 py-0.5 rounded font-bold">현재</span>' : '') +
+          '</div>' +
+          '<div class="text-[10px] text-slate-400 mt-0.5">로그인: ' + csFmtDate(sess.created_at) + ' · 만료: ' + csFmtDate(sess.expires_at) + '</div>' +
+        '</div>' +
+      '</div>' +
+      (isCur ? '' : '<button onclick="_mypEndSession(\'' + csEsc(sess.id_masked.replace(/\.\.\.$/, '')) + '\')" class="text-red-500 hover:text-red-600 text-[11px] font-semibold px-2 py-1 rounded hover:bg-red-50 transition"><i class="fas fa-times-circle mr-1"></i>종료</button>') +
+    '</div>';
+  }).join('');
+  var otherSessionsCount = (d.sessions || []).filter(function(x) { return !x.is_current; }).length;
+
+  // 최근 활동
+  var recentHtml = (d.recent || []).slice(0, 15).map(function(item) {
+    var kindIcon = item.kind === 'meeting' ? 'fa-calendar-check' : 'fa-headset';
+    var kindColor = item.kind === 'meeting' ? '#2563eb' : '#7c3aed';
+    var kindLabel = item.kind === 'meeting' ? '미팅' : '문의';
+    var linkPage = item.kind === 'meeting' ? 'meetings' : 'cs_inquiry';
+    return '<div class="flex items-center gap-2.5 px-3 py-2.5 rounded-lg hover:bg-slate-50 cursor-pointer transition" onclick="nav(\'' + linkPage + '\')">' +
+      '<div class="w-8 h-8 rounded-lg flex items-center justify-center" style="background:' + kindColor + '15;color:' + kindColor + '"><i class="fas ' + kindIcon + ' text-[12px]"></i></div>' +
+      '<div class="flex-1 min-w-0">' +
+        '<div class="text-[12px] font-semibold text-slate-700 truncate">' + csEsc(item.title || '(제목 없음)') + '</div>' +
+        '<div class="text-[10px] text-slate-400 mt-0.5">' + kindLabel + (item.desc ? ' · ' + csEsc(String(item.desc).slice(0, 40)) : '') + '</div>' +
+      '</div>' +
+      '<div class="text-[10px] text-slate-400 flex-shrink-0">' + (item.date ? csFmtDate(item.date) : '-') + '</div>' +
+    '</div>';
+  }).join('') || '<div class="text-center text-slate-400 py-6 text-[12px]"><i class="fas fa-inbox mr-1"></i>최근 활동이 없습니다</div>';
+
+  // 프로필 카드 (편집 모드)
+  var editMode = _mypageEditing;
+  var profileCard = editMode ? _mypRenderEditForm(p) : _mypRenderProfileView(p);
+
+  var html =
+    '<div class="p-4 lg:p-7 fade-in space-y-5">' +
+
+      // 헤더 카드 (프로필)
+      '<div class="card-flat overflow-hidden" style="background:linear-gradient(135deg,#f0f7ff 0%, #fff 60%)">' +
+        profileCard +
+      '</div>' +
+
+      // 통계 그리드
+      '<div>' +
+        '<h3 class="text-[13px] font-bold text-slate-700 mb-3 flex items-center gap-2"><i class="fas fa-chart-line text-brand-500"></i>내 활동 요약</h3>' +
+        '<div class="grid grid-cols-2 lg:grid-cols-6 gap-3">' + statsHtml + '</div>' +
+      '</div>' +
+
+      // 좌: 최근 활동 · 우: 세션 관리
+      '<div class="grid grid-cols-1 lg:grid-cols-2 gap-5">' +
+
+        '<div class="card-flat p-5">' +
+          '<h3 class="text-[13px] font-bold text-slate-700 mb-3 flex items-center gap-2"><i class="fas fa-clock-rotate-left text-brand-500"></i>최근 내 활동' +
+            '<span class="text-[10px] text-slate-400 font-normal ml-auto">최대 15개</span>' +
+          '</h3>' +
+          '<div class="space-y-1">' + recentHtml + '</div>' +
+        '</div>' +
+
+        '<div class="card-flat p-5">' +
+          '<div class="flex items-center justify-between mb-3">' +
+            '<h3 class="text-[13px] font-bold text-slate-700 flex items-center gap-2"><i class="fas fa-shield-halved text-brand-500"></i>활성 로그인 세션</h3>' +
+            (otherSessionsCount > 0 ? '<button onclick="_mypLogoutOthers()" class="btn btn-outline btn-sm text-[11px] text-red-500 border-red-200 hover:bg-red-50"><i class="fas fa-power-off mr-1"></i>다른 기기 로그아웃 (' + otherSessionsCount + ')</button>' : '') +
+          '</div>' +
+          '<div class="space-y-1.5">' + sessionsHtml + '</div>' +
+          '<div class="text-[10px] text-slate-400 mt-3 flex items-center gap-1"><i class="fas fa-info-circle"></i>세션 ID는 앞 8자리만 표시됩니다.</div>' +
+        '</div>' +
+
+      '</div>' +
+    '</div>';
+
+  document.getElementById('content').innerHTML = html;
+}
+
+function _mypRenderProfileView(p) {
+  return '<div class="p-6 lg:p-8">' +
+    '<div class="flex flex-col lg:flex-row items-center lg:items-start gap-5">' +
+      // 아바타
+      '<div class="flex-shrink-0">' + _mypAvatar(p, 96) + '</div>' +
+      // 이름 + 이메일 + 배지 + 필드
+      '<div class="flex-1 min-w-0 text-center lg:text-left">' +
+        '<div class="flex items-center justify-center lg:justify-start gap-2 flex-wrap">' +
+          '<h2 class="text-xl font-bold text-slate-800">' + csEsc(p.name || '사용자') + '</h2>' +
+          _mypJobRoleBadge(p.job_role) +
+        '</div>' +
+        '<div class="text-[12px] text-slate-500 mt-1">' +
+          '<i class="fas fa-envelope text-slate-400 mr-1"></i>' + csEsc(p.email || '') +
+        '</div>' +
+        // 필드 그리드
+        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-4">' +
+          _mypField('phone', 'fa-phone', '전화번호', p.phone) +
+          _mypField('department', 'fa-building', '부서', p.department) +
+          _mypField('position', 'fa-user-tie', '직책', p.position) +
+          _mypField('job_role', 'fa-briefcase', '담당 직무', p.job_role) +
+        '</div>' +
+        (p.bio ? '<div class="mt-3 p-3 rounded-lg bg-white/60 border border-slate-100 text-[12px] text-slate-600 leading-relaxed"><i class="fas fa-comment-dots text-slate-400 mr-1.5"></i>' + csEsc(p.bio).replace(/\n/g, '<br>') + '</div>' : '') +
+      '</div>' +
+      // 편집 버튼
+      '<div class="flex-shrink-0">' +
+        '<button onclick="_mypStartEdit()" class="btn btn-primary btn-sm"><i class="fas fa-pen mr-1"></i>프로필 편집</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function _mypField(key, icon, label, value) {
+  return '<div class="flex items-center gap-2 text-[12px] px-2 py-1.5 rounded-lg bg-white/50">' +
+    '<i class="fas ' + icon + ' text-slate-400 text-[11px] w-3.5"></i>' +
+    '<span class="text-slate-500 font-medium w-16 flex-shrink-0">' + label + '</span>' +
+    '<span class="text-slate-700 font-semibold truncate flex-1">' + (value ? csEsc(value) : '<span class="text-slate-300 font-normal">미입력</span>') + '</span>' +
+  '</div>';
+}
+
+function _mypRenderEditForm(p) {
+  var roleOpts = ['', '영업', 'CS', '임상', '마케팅', '개발', '경영', '기타'];
+  return '<form id="myp-edit-form" class="p-6 lg:p-8" onsubmit="return _mypSubmit(event)">' +
+    '<div class="flex flex-col lg:flex-row items-center lg:items-start gap-5">' +
+      '<div class="flex-shrink-0 text-center">' +
+        _mypAvatar(p, 96) +
+        '<div class="mt-2">' +
+          '<input name="avatar_url" type="url" value="' + csEsc(p.avatar_url || '') + '" class="input text-[11px]" placeholder="이미지 URL" style="width:180px">' +
+          '<div class="text-[9px] text-slate-400 mt-1">http(s):// 형식</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="flex-1 min-w-0 w-full">' +
+        '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+          '<div><label class="input-label">이름 <span class="text-red-500">*</span></label><input name="name" type="text" value="' + csEsc(p.name || '') + '" class="input" required maxlength="100"></div>' +
+          '<div><label class="input-label">이메일</label><input type="email" value="' + csEsc(p.email || '') + '" class="input bg-slate-50" disabled title="이메일은 변경할 수 없습니다"></div>' +
+          '<div><label class="input-label">전화번호</label><input name="phone" type="tel" value="' + csEsc(p.phone || '') + '" class="input" placeholder="010-1234-5678" maxlength="30"></div>' +
+          '<div><label class="input-label">담당 직무</label><select name="job_role" class="input">' +
+            roleOpts.map(function(r) { return '<option value="' + csEsc(r) + '"' + ((p.job_role || '') === r ? ' selected' : '') + '>' + (r || '선택 안 함') + '</option>'; }).join('') +
+          '</select></div>' +
+          '<div><label class="input-label">부서</label><input name="department" type="text" value="' + csEsc(p.department || '') + '" class="input" placeholder="예: 영업1팀" maxlength="100"></div>' +
+          '<div><label class="input-label">직책</label><input name="position" type="text" value="' + csEsc(p.position || '') + '" class="input" placeholder="예: 팀장, 대리" maxlength="100"></div>' +
+          '<div class="col-span-full"><label class="input-label">자기소개 / 메모</label><textarea name="bio" rows="3" class="input" maxlength="1000" placeholder="담당 업무, 관심 분야, 연락 가능한 시간대 등">' + csEsc(p.bio || '') + '</textarea></div>' +
+        '</div>' +
+        '<div class="flex gap-2 mt-4 justify-end">' +
+          '<button type="button" onclick="_mypCancelEdit()" class="btn btn-outline btn-sm">취소</button>' +
+          '<button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-check mr-1"></i>저장</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>' +
+  '</form>';
+}
+
+function _mypStartEdit() { _mypageEditing = true; renderMypage(); }
+function _mypCancelEdit() { _mypageEditing = false; renderMypage(); }
+
+async function _mypSubmit(e) {
+  e.preventDefault();
+  var fm = document.getElementById('myp-edit-form');
+  if (!fm) return false;
+  var f = Object.fromEntries(new FormData(fm));
+  try {
+    var r = await API.put('/mypage', f);
+    _mypageData.profile = r.data.data;
+    _mypageEditing = false;
+    // 헤더의 currentUser 정보도 업데이트
+    if (currentUser) {
+      currentUser.name = r.data.data.name;
+      currentUser.avatar_url = r.data.data.avatar_url;
+      currentUser.department = r.data.data.department;
+      currentUser.position = r.data.data.position;
+      currentUser.job_role = r.data.data.job_role;
+      currentUser.phone = r.data.data.phone;
+      currentUser.bio = r.data.data.bio;
+      localStorage.setItem('todoc_user', JSON.stringify(currentUser));
+      updateUserUI();
+    }
+    toast('프로필이 저장되었습니다', 'success');
+    renderMypage();
+  } catch(err) {
+    var msg = (err && err.response && err.response.data && err.response.data.error) || '저장 실패';
+    toast(msg, 'error');
+  }
+  return false;
+}
+
+function _mypLogoutOthers() {
+  showConfirm('다른 기기 로그아웃',
+    '다른 모든 기기의 로그인 세션을 종료합니다.<br><span class="text-[11px] text-slate-500">현재 사용 중인 세션은 유지됩니다.</span>',
+    async function() {
+      try {
+        var r = await API.post('/mypage/logout-others');
+        toast((r.data.data.deleted || 0) + '개 세션이 종료되었습니다', 'success');
+        loadMypage();
+      } catch(e) { toast('처리 실패', 'error'); throw e; }
+    },
+    { type: 'delete', yesLabel: '로그아웃' });
+}
+
+function _mypEndSession(prefix) {
+  showConfirm('세션 종료',
+    '해당 세션(<span class="font-mono text-[11px]">' + csEsc(prefix) + '...</span>)을 종료하시겠습니까?',
+    async function() {
+      try {
+        await API.delete('/mypage/sessions/' + encodeURIComponent(prefix));
+        toast('세션이 종료되었습니다', 'success');
+        loadMypage();
+      } catch(e) {
+        var msg = (e && e.response && e.response.data && e.response.data.error) || '종료 실패';
+        toast(msg, 'error');
+        throw e;
+      }
+    },
+    { type: 'delete', yesLabel: '종료' });
+}
+
 async function loadActivity() {
   document.getElementById('page-title').textContent = '활동 로그';
   document.getElementById('header-actions').innerHTML = '';
