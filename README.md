@@ -191,7 +191,7 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-07-29
+- **Last Updated**: 2026-07-30
 
 ## 프론트엔드 빌드 (⚠️ 필수 확인)
 
@@ -213,7 +213,47 @@ npm run verify:css   # 클래스 누락 검증
    `app.js`가 최상단에서 `axios.create()`를 즉시 호출하므로, 하나라도 빠지면 실행 순서가 깨집니다.
 5. `sw.js`의 자산 목록을 바꾸면 `CACHE_NAME` 버전을 올리세요.
 
-### 성능 최적화 이력 (2026-07-29)
+## 백엔드 성능 규칙 (⚠️ 필수 확인)
+
+### D1 왕복 횟수가 성능을 지배합니다
+
+현재 D1 설정 (`npx wrangler d1 info todoc-crm-production`으로 확인):
+
+| 항목 | 값 | 의미 |
+|---|---|---|
+| `running_in_region` | **ENAM** (미국 동부) | 모든 쿼리가 미국까지 왕복 |
+| `read_replication.mode` | **disabled** | 읽기 복제본 없음 → 항상 primary로 |
+
+Worker는 사용자 근처(서울) 엣지에서 실행되지만 **D1 쿼리는 매번 미국 동부까지 왕복**합니다.
+왕복 1회당 약 **200ms**(한국 기준)이므로, 쿼리를 하나씩 `await`하면 그 수만큼 지연이 곱해집니다.
+
+**규칙**: 서로 의존하지 않는 쿼리는 **반드시 `env.DB.batch([...])`로 묶으세요.**
+- `batch()` = 요청 1건에 모든 statement → **왕복 1회 보장**
+- `Promise.all()` = 동시 요청이지만 statement 수만큼 별도 호출
+- 개별 `await env.DB.prepare(...)` 반복 = **최악** (왕복이 그대로 누적)
+
+참고 구현: `src/routes/cs_dashboard.ts` (14개 쿼리를 batch 1회로 처리)
+`batch()` 결과는 `D1Result[]`이므로 `.all()`/`.first()` 대신 헬퍼로 꺼냅니다.
+```ts
+const rowsOf  = (r: any): any[] => (r?.results || []) as any[]   // 기존 .all()  대체
+const firstOf = (r: any): any   => (r?.results?.[0] ?? null)     // 기존 .first() 대체
+```
+
+> ⚠️ 인증 미들웨어(`src/index.tsx`)도 세션 조회로 왕복 1회를 씁니다.
+> 즉 API 요청 1건의 최소 왕복은 **1회(인증) + 1회(batch) = 2회**입니다.
+
+### 성능 최적화 이력 (2026-07-30) — CS 대시보드
+| 항목 | 개선 전 | 개선 후 |
+|---|---|---|
+| D1 왕복 횟수 (요청 1건) | 12회 (인증1 + Promise.all1 + 개별10) | **2회** (인증1 + batch1) |
+| 로컬 응답시간 (중앙값) | 38.0ms | **10.4ms** (-73%) |
+| 한국 접속 예상 대기 | 약 2.4초 | **약 0.4초** |
+
+- `src/routes/cs_dashboard.ts`의 순차 `await` 10개 + `Promise.all` 1개를 **`batch()` 1회**로 통합
+- SQL은 한 줄도 변경하지 않음 → 응답 JSON은 기간 4종 × `mine` 2종 = **8개 조합 모두 완전 일치** 검증
+- 미사용 죽은 코드 `todayStr` 제거
+
+### 성능 최적화 이력 (2026-07-29) — 초기 로딩
 | 항목 | 개선 전 | 개선 후 |
 |---|---|---|
 | domContentLoaded | 1680ms | **990ms** (-41%) |
@@ -228,6 +268,13 @@ npm run verify:css   # 클래스 누락 검증
 - 정적 자산 `Cache-Control: max-age=0` → 파일명 해시 + 장기 캐시
 - chart.js/leaflet(113KB)을 사용 페이지에서만 동적 로드
 - `loadMyKpi`의 `/dashboard/me` → `/dashboard/kpi-target` 순차 호출을 `Promise.all`로 병렬화
+
+**백엔드 (D1 왕복 감축) — 위 "백엔드 성능 규칙" 참고**
+- 다른 라우트의 순차 `await`도 `batch()`로 전환 (파일별 순차 await 개수: `products.ts` 93,
+  `customers.ts` 20, `hospitals.ts`/`exports.ts`/`doctors.ts`/`cs_repairs.ts`/`cs_inquiries.ts` 각 18)
+- `wrangler.jsonc`에 Smart Placement 추가 (`"placement": { "mode": "smart" }`)
+  → Worker를 D1 근처로 이동, **전체 라우트가 함께 개선**. 단 HTML 셸 응답은 100~200ms 느려질 수 있음
+- D1 읽기 복제(Sessions API) 활성화 → 대시보드는 전부 읽기 전용이라 적합
 
 ### Migration 이력
 | 번호 | 파일명 | 내용 |

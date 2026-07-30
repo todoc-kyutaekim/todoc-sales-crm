@@ -46,87 +46,184 @@ dash.get('/', async (c) => {
   const mineRepCond = mine ? ' AND assignee_id = ?' : ''
   const mineArgs = mine ? [userId] : []
 
-  // ────────────────────────────────────────────────
-  // 1) KPI 카드 (4장)
-  //   - new_inquiries: period 내 신규 문의
-  //   - open_inquiries: 현재 open + in_progress
-  //   - active_repairs: 현재 진행 중 수리 (received/diagnosing/waiting_parts/repairing)
-  //   - resolved_today: 오늘(UTC) 해결된 문의
-  // ────────────────────────────────────────────────
-  const todayStr = new Date().toISOString().slice(0, 10)
+  // ═══════════════════════════════════════════════════════════════
+  // ⚠️⚠️ 성능 핵심 — 절대 개별 await로 되돌리지 마세요 ⚠️⚠️
+  //
+  // 이 엔드포인트가 필요한 14개 쿼리는 서로 전혀 의존하지 않습니다.
+  // 예전에는 이것을 하나씩 await 하여 D1 왕복이 11회 발생했고,
+  // 인증 미들웨어(index.tsx) 1회를 더하면 요청당 12회 왕복이었습니다.
+  //
+  // D1 primary 리전은 ENAM(미국 동부)이고 읽기 복제는 꺼져 있어,
+  // 한국에서 접속하면 왕복 1회당 약 200ms가 듭니다.
+  //   → 12회 × 200ms ≈ 2.4초가 순수 대기 시간으로 낭비됐습니다.
+  //
+  // 그래서 D1 batch()로 14개를 "단 1회 왕복"에 묶었습니다.
+  // (Promise.all과 달리 batch는 요청 1건에 모든 statement를 담아
+  //  왕복 1회를 보장합니다.)
+  //
+  // 🔧 쿼리를 추가할 때 규칙
+  //   1. STMTS 배열 끝에 statement를 추가하고,
+  //   2. 아래 구조 분해(destructuring) 목록 끝에 변수명을 추가하세요.
+  //   배열 순서와 구조 분해 순서가 1:1로 대응해야 합니다.
+  //   개별 `await env.DB.prepare(...)`를 새로 만들면 왕복이 다시 늘어납니다.
+  // ═══════════════════════════════════════════════════════════════
 
-  const kpiSql = [
-    // new_inquiries (기간 내)
-    `SELECT COUNT(*) AS n FROM cs_inquiries WHERE created_at >= ?${mineInqCond}`,
-    // open_inquiries (현재 미처리 — 기간 무관)
-    `SELECT COUNT(*) AS n FROM cs_inquiries WHERE status IN ('open','in_progress')${mineInqCond}`,
-    // active_repairs (현재 진행 중 — 기간 무관)
-    `SELECT COUNT(*) AS n FROM cs_repairs WHERE status IN ('received','diagnosing','waiting_parts','repairing')${mineRepCond}`,
-    // resolved_today (오늘 해결 — 기간 무관, 항상 "오늘")
-    `SELECT COUNT(*) AS n FROM cs_inquiries WHERE resolved_at IS NOT NULL AND DATE(resolved_at) = DATE('now')${mineInqCond}`,
-  ]
+  const [
+    // 1) KPI 카드 4장
+    kpiNewRes,            // period 내 신규 문의
+    kpiOpenRes,           // 현재 open + in_progress (기간 무관)
+    kpiActiveRepairRes,   // 현재 진행 중 수리 (기간 무관)
+    kpiResolvedTodayRes,  // 오늘 해결된 문의 (항상 "오늘")
+    // 2) 문의 상태별 분포 (기간 내)
+    inqStatusRes,
+    // 3) 우선순위 분포 (현재 미처리)
+    priorityRes,
+    // 4) 최근 14일 추이
+    trendNewRes,
+    trendResolvedRes,
+    // 5) AS/수리 상태 분포 (기간 무관)
+    repStatusRes,
+    // 6-a) 긴급/장기 미처리 문의 TOP 10
+    urgentRes,
+    // 6-b) 담당자별 처리 현황
+    assigneeRes,
+    // 7) FAQ / 지식베이스 요약
+    kbCatRes,
+    kbRecentRes,
+    // 8) 평균 해결 시간 (기간 내)
+    avgRes,
+  ] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM cs_inquiries WHERE created_at >= ?${mineInqCond}`
+    ).bind(since, ...mineArgs),
 
-  const kpiRes = await Promise.all([
-    env.DB.prepare(kpiSql[0]).bind(since, ...mineArgs).first(),
-    env.DB.prepare(kpiSql[1]).bind(...mineArgs).first(),
-    env.DB.prepare(kpiSql[2]).bind(...mineArgs).first(),
-    env.DB.prepare(kpiSql[3]).bind(...mineArgs).first(),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM cs_inquiries WHERE status IN ('open','in_progress')${mineInqCond}`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM cs_repairs WHERE status IN ('received','diagnosing','waiting_parts','repairing')${mineRepCond}`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM cs_inquiries WHERE resolved_at IS NOT NULL AND DATE(resolved_at) = DATE('now')${mineInqCond}`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT status, COUNT(*) AS n FROM cs_inquiries
+       WHERE created_at >= ?${mineInqCond}
+       GROUP BY status`
+    ).bind(since, ...mineArgs),
+
+    env.DB.prepare(
+      `SELECT priority, COUNT(*) AS n FROM cs_inquiries
+       WHERE status IN ('open','in_progress')${mineInqCond}
+       GROUP BY priority`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT DATE(created_at) AS d, COUNT(*) AS n
+       FROM cs_inquiries
+       WHERE created_at >= DATE('now','-13 days')${mineInqCond}
+       GROUP BY DATE(created_at)`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT DATE(resolved_at) AS d, COUNT(*) AS n
+       FROM cs_inquiries
+       WHERE resolved_at IS NOT NULL AND DATE(resolved_at) >= DATE('now','-13 days')${mineInqCond}
+       GROUP BY DATE(resolved_at)`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT status, COUNT(*) AS n FROM cs_repairs
+       WHERE 1=1${mineRepCond}
+       GROUP BY status`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT i.id, i.subject, i.priority, i.status, i.category, i.created_at,
+              i.contact_name, cust.name AS customer_name,
+              u.name AS assignee_name,
+              CAST((julianday('now') - julianday(i.created_at)) AS INTEGER) AS days_open
+       FROM cs_inquiries i
+       LEFT JOIN customers cust ON cust.id = i.customer_id
+       LEFT JOIN users u ON u.id = i.assignee_id
+       WHERE i.status IN ('open','in_progress')${mine ? ' AND i.assignee_id = ?' : ''}
+       ORDER BY
+         CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'mid' THEN 2 ELSE 3 END ASC,
+         i.created_at ASC
+       LIMIT 10`
+    ).bind(...mineArgs),
+
+    env.DB.prepare(
+      `SELECT u.id, u.name,
+         SUM(CASE WHEN i.status='open' THEN 1 ELSE 0 END) AS open_n,
+         SUM(CASE WHEN i.status='in_progress' THEN 1 ELSE 0 END) AS progress_n,
+         SUM(CASE WHEN i.status='resolved' AND i.resolved_at >= ? THEN 1 ELSE 0 END) AS resolved_n
+       FROM users u
+       JOIN cs_inquiries i ON i.assignee_id = u.id
+       GROUP BY u.id, u.name
+       HAVING (open_n + progress_n + resolved_n) > 0
+       ORDER BY (open_n + progress_n) DESC, resolved_n DESC
+       LIMIT 10`
+    ).bind(since),
+
+    env.DB.prepare(
+      `SELECT category, COUNT(*) AS n FROM cs_kb_articles
+       WHERE status='published'
+       GROUP BY category
+       ORDER BY n DESC`
+    ),
+
+    env.DB.prepare(
+      `SELECT id, title, category, view_count, updated_at
+       FROM cs_kb_articles
+       WHERE status='published'
+       ORDER BY updated_at DESC
+       LIMIT 5`
+    ),
+
+    env.DB.prepare(
+      `SELECT AVG((julianday(resolved_at) - julianday(created_at)) * 24) AS avg_hours
+       FROM cs_inquiries
+       WHERE resolved_at IS NOT NULL AND resolved_at >= ?${mineInqCond}`
+    ).bind(since, ...mineArgs),
   ])
+
+  // batch() 결과는 D1Result 형태이므로 헬퍼로 꺼냅니다.
+  //   rowsOf  : 기존 `.all()`  → results 배열
+  //   firstOf : 기존 `.first()` → results[0] (없으면 null)
+  const rowsOf = (r: any): any[] => (r?.results || []) as any[]
+  const firstOf = (r: any): any => (r?.results?.[0] ?? null)
+
+  // ── 1) KPI 카드 ──
   const kpi = {
-    new_inquiries: Number((kpiRes[0] as any)?.n || 0),
-    open_inquiries: Number((kpiRes[1] as any)?.n || 0),
-    active_repairs: Number((kpiRes[2] as any)?.n || 0),
-    resolved_today: Number((kpiRes[3] as any)?.n || 0),
+    new_inquiries: Number(firstOf(kpiNewRes)?.n || 0),
+    open_inquiries: Number(firstOf(kpiOpenRes)?.n || 0),
+    active_repairs: Number(firstOf(kpiActiveRepairRes)?.n || 0),
+    resolved_today: Number(firstOf(kpiResolvedTodayRes)?.n || 0),
   }
 
-  // ────────────────────────────────────────────────
-  // 2) 문의 상태별 분포 (기간 내)
-  //   - open / in_progress / resolved / closed / canceled
-  // ────────────────────────────────────────────────
-  const inqStatusRows = await env.DB.prepare(
-    `SELECT status, COUNT(*) AS n FROM cs_inquiries
-     WHERE created_at >= ?${mineInqCond}
-     GROUP BY status`
-  ).bind(since, ...mineArgs).all()
+  // ── 2) 문의 상태별 분포 ──
   const inqStatus: Record<string, number> = {
     open: 0, in_progress: 0, resolved: 0, closed: 0, canceled: 0,
   }
-  for (const r of (inqStatusRows.results || []) as any[]) {
+  for (const r of rowsOf(inqStatusRes)) {
     if (r.status in inqStatus) inqStatus[r.status] = Number(r.n)
   }
 
-  // ────────────────────────────────────────────────
-  // 3) 우선순위 분포 (기간 내 오픈 상태)
-  // ────────────────────────────────────────────────
-  const priorityRows = await env.DB.prepare(
-    `SELECT priority, COUNT(*) AS n FROM cs_inquiries
-     WHERE status IN ('open','in_progress')${mineInqCond}
-     GROUP BY priority`
-  ).bind(...mineArgs).all()
+  // ── 3) 우선순위 분포 ──
   const priority: Record<string, number> = { urgent: 0, high: 0, mid: 0, low: 0 }
-  for (const r of (priorityRows.results || []) as any[]) {
+  for (const r of rowsOf(priorityRes)) {
     if (r.priority in priority) priority[r.priority] = Number(r.n)
   }
 
-  // ────────────────────────────────────────────────
-  // 4) 최근 14일 추이 (일별 신규 vs 해결)
-  // ────────────────────────────────────────────────
-  const trendNewRows = await env.DB.prepare(
-    `SELECT DATE(created_at) AS d, COUNT(*) AS n
-     FROM cs_inquiries
-     WHERE created_at >= DATE('now','-13 days')${mineInqCond}
-     GROUP BY DATE(created_at)`
-  ).bind(...mineArgs).all()
-  const trendResolvedRows = await env.DB.prepare(
-    `SELECT DATE(resolved_at) AS d, COUNT(*) AS n
-     FROM cs_inquiries
-     WHERE resolved_at IS NOT NULL AND DATE(resolved_at) >= DATE('now','-13 days')${mineInqCond}
-     GROUP BY DATE(resolved_at)`
-  ).bind(...mineArgs).all()
+  // ── 4) 최근 14일 추이 (일별 신규 vs 해결) ──
   const newMap: Record<string, number> = {}
-  for (const r of (trendNewRows.results || []) as any[]) newMap[r.d] = Number(r.n)
+  for (const r of rowsOf(trendNewRes)) newMap[r.d] = Number(r.n)
   const resMap: Record<string, number> = {}
-  for (const r of (trendResolvedRows.results || []) as any[]) resMap[r.d] = Number(r.n)
+  for (const r of rowsOf(trendResolvedRes)) resMap[r.d] = Number(r.n)
 
   // 14일 라벨 생성
   const trendLabels: string[] = []
@@ -143,84 +240,18 @@ dash.get('/', async (c) => {
     trendResolved.push(resMap[key] || 0)
   }
 
-  // ────────────────────────────────────────────────
-  // 5) AS/수리 상태 분포 (기간 무관 — 현재 진행 중 + 완료 요약)
-  // ────────────────────────────────────────────────
-  const repStatusRows = await env.DB.prepare(
-    `SELECT status, COUNT(*) AS n FROM cs_repairs
-     WHERE 1=1${mineRepCond}
-     GROUP BY status`
-  ).bind(...mineArgs).all()
+  // ── 5) AS/수리 상태 분포 ──
   const repStatus: Record<string, number> = {
     received: 0, diagnosing: 0, waiting_parts: 0, repairing: 0,
     completed: 0, shipped: 0, closed: 0, rejected: 0,
   }
-  for (const r of (repStatusRows.results || []) as any[]) {
+  for (const r of rowsOf(repStatusRes)) {
     if (r.status in repStatus) repStatus[r.status] = Number(r.n)
   }
 
-  // ────────────────────────────────────────────────
-  // 6-a) 긴급/장기 미처리 문의 TOP 10
-  //   - open/in_progress, 우선순위 순, 오래된 순
-  // ────────────────────────────────────────────────
-  const urgentRows = await env.DB.prepare(
-    `SELECT i.id, i.subject, i.priority, i.status, i.category, i.created_at,
-            i.contact_name, cust.name AS customer_name,
-            u.name AS assignee_name,
-            CAST((julianday('now') - julianday(i.created_at)) AS INTEGER) AS days_open
-     FROM cs_inquiries i
-     LEFT JOIN customers cust ON cust.id = i.customer_id
-     LEFT JOIN users u ON u.id = i.assignee_id
-     WHERE i.status IN ('open','in_progress')${mine ? ' AND i.assignee_id = ?' : ''}
-     ORDER BY
-       CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'mid' THEN 2 ELSE 3 END ASC,
-       i.created_at ASC
-     LIMIT 10`
-  ).bind(...mineArgs).all()
-
-  // ────────────────────────────────────────────────
-  // 6-b) 담당자별 처리 현황
-  //   - 담당자별: 오픈 / 진행 중 / 이번 기간 내 해결
-  // ────────────────────────────────────────────────
-  const assigneeRows = await env.DB.prepare(
-    `SELECT u.id, u.name,
-       SUM(CASE WHEN i.status='open' THEN 1 ELSE 0 END) AS open_n,
-       SUM(CASE WHEN i.status='in_progress' THEN 1 ELSE 0 END) AS progress_n,
-       SUM(CASE WHEN i.status='resolved' AND i.resolved_at >= ? THEN 1 ELSE 0 END) AS resolved_n
-     FROM users u
-     JOIN cs_inquiries i ON i.assignee_id = u.id
-     GROUP BY u.id, u.name
-     HAVING (open_n + progress_n + resolved_n) > 0
-     ORDER BY (open_n + progress_n) DESC, resolved_n DESC
-     LIMIT 10`
-  ).bind(since).all()
-
-  // ────────────────────────────────────────────────
-  // 7) FAQ / 지식베이스 요약
-  //   - 카테고리별 아티클 수 (published only)
-  //   - 최근 등록 5건
-  // ────────────────────────────────────────────────
-  const kbCatRows = await env.DB.prepare(
-    `SELECT category, COUNT(*) AS n FROM cs_kb_articles
-     WHERE status='published'
-     GROUP BY category
-     ORDER BY n DESC`
-  ).all()
-  const kbRecentRows = await env.DB.prepare(
-    `SELECT id, title, category, view_count, updated_at
-     FROM cs_kb_articles
-     WHERE status='published'
-     ORDER BY updated_at DESC
-     LIMIT 5`
-  ).all()
-
-  // 평균 응답 시간 (기간 내 resolved 문의의 created_at → resolved_at)
-  const avgRes = await env.DB.prepare(
-    `SELECT AVG((julianday(resolved_at) - julianday(created_at)) * 24) AS avg_hours
-     FROM cs_inquiries
-     WHERE resolved_at IS NOT NULL AND resolved_at >= ?${mineInqCond}`
-  ).bind(since, ...mineArgs).first() as any
-  const avgResolutionHours = avgRes?.avg_hours != null ? Math.round(Number(avgRes.avg_hours) * 10) / 10 : null
+  // ── 8) 평균 해결 시간 ──
+  const avgHoursRaw = firstOf(avgRes)?.avg_hours
+  const avgResolutionHours = avgHoursRaw != null ? Math.round(Number(avgHoursRaw) * 10) / 10 : null
 
   return c.json({
     period,
@@ -231,11 +262,11 @@ dash.get('/', async (c) => {
     priority,
     trend: { labels: trendLabels, new: trendNew, resolved: trendResolved },
     repair_status: repStatus,
-    urgent_inquiries: (urgentRows.results || []),
-    assignees: (assigneeRows.results || []),
+    urgent_inquiries: rowsOf(urgentRes),
+    assignees: rowsOf(assigneeRes),
     kb: {
-      categories: (kbCatRows.results || []),
-      recent: (kbRecentRows.results || []),
+      categories: rowsOf(kbCatRes),
+      recent: rowsOf(kbRecentRes),
     },
     avg_resolution_hours: avgResolutionHours,
   })
