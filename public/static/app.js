@@ -1123,7 +1123,7 @@ var _custDevicesState = { customerId: null, internal: [], external: [] };
 // 편집 모드에서만 CRUD 즉시 반영. 신규 등록에서는 저장 이후 devices 편집 유도.
 
 async function openCustomerModal(id) {
-  var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'patient', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '',
+  var cst = { name: '', phone: '', guardian_phone: '', email: '', birth_date: '', gender: '', customer_type: 'patient', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '',
     surgery_side: '',
     internal_manufacturer: '', internal_model: '', internal_serial: '', internal_implant_date: '', internal_side: '',
     external_manufacturer: '', external_model: '', external_serial: '', external_supply_date: '', external_version: '',
@@ -1169,16 +1169,22 @@ async function openCustomerModal(id) {
       //    신규 고객은 백엔드에서 '수술 환자'(patient)·'활성'(active)로 고정 생성되고,
       //    수정 시에는 백엔드 UPDATE 대상에서 빠져 기존 값이 그대로 보존됩니다.
       //    고객 분류가 필요하면 '고객 그룹' 기능으로 묶습니다.
-      '<div class="col-span-full"><label class="input-label">이름 *</label><input name="name" type="text" value="' + csEsc(cst.name) + '" class="input" required></div>' +
-      '<div><label class="input-label">전화번호</label><input name="phone" type="tel" value="' + csEsc(cst.phone) + '" class="input" placeholder="010-1234-5678"></div>' +
-      '<div><label class="input-label">이메일</label><input name="email" type="email" value="' + csEsc(cst.email) + '" class="input"></div>' +
-      '<div><label class="input-label">생년월일</label><input name="birth_date" type="date" value="' + csEsc(cst.birth_date) + '" class="input"></div>' +
-      '<div><label class="input-label">성별</label><select name="gender" class="input">' +
+      // ⚠️ 필드 순서는 사용자가 지정한 순서입니다. 임의로 바꾸지 마세요.
+      //    1 이름 → 2 성별 → 3 생년월일 → 4 병원 → 5 연락처1 → 6 보호자 연락처1 → 7 이메일 → 8 주소
+      //    '지역'(region)은 목록 필터·컬럼에서 쓰이므로 지정 순서 뒤에 그대로 둡니다.
+      /* 1 */ '<div class="col-span-full"><label class="input-label">이름 *</label><input name="name" type="text" value="' + csEsc(cst.name) + '" class="input" required></div>' +
+      /* 2 */ '<div><label class="input-label">성별</label><select name="gender" class="input">' +
         ['','M','F'].map(function(g) { var l = g === 'M' ? '남' : g === 'F' ? '여' : '선택 안 함'; return '<option value="' + g + '"' + (cst.gender === g ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
       '</select></div>' +
-      '<div><label class="input-label">병원</label><select name="hospital_id" class="input">' + hospOpts + '</select></div>' +
+      /* 3 */ '<div><label class="input-label">생년월일</label><input name="birth_date" type="date" value="' + csEsc(cst.birth_date) + '" class="input"></div>' +
+      /* 4 */ '<div><label class="input-label">병원</label><select name="hospital_id" class="input">' + hospOpts + '</select></div>' +
+      /* 5 */ '<div><label class="input-label">연락처1</label><input name="phone" type="tel" value="' + csEsc(cst.phone) + '" class="input" placeholder="010-1234-5678"></div>' +
+      // ⚠️ guardian_phone 은 기존 guardian_of(보호자 고객 ID, FK)와 다른 신규 컬럼입니다.
+      //    보호자를 고객으로 등록하지 않고 연락처만 남길 때 사용합니다. (migrations/0041)
+      /* 6 */ '<div><label class="input-label">보호자 연락처1</label><input name="guardian_phone" type="tel" value="' + csEsc(cst.guardian_phone) + '" class="input" placeholder="010-1234-5678"></div>' +
+      /* 7 */ '<div><label class="input-label">이메일</label><input name="email" type="email" value="' + csEsc(cst.email) + '" class="input"></div>' +
+      /* 8 */ '<div class="col-span-full"><label class="input-label">주소</label><input name="address" type="text" value="' + csEsc(cst.address) + '" class="input"></div>' +
       '<div><label class="input-label">지역</label><select name="region" class="input">' + regionOpts + '</select></div>' +
-      '<div class="col-span-full"><label class="input-label">주소</label><input name="address" type="text" value="' + csEsc(cst.address) + '" class="input"></div>' +
 
       // ===== 수술 부위 =====
 

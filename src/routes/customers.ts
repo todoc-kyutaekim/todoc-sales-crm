@@ -213,17 +213,19 @@ customers.post('/', async (c) => {
   const uid = c.get('userId')
   const r = await c.env.DB.prepare(`
     INSERT INTO customers (
-      name, phone, email, birth_date, gender, customer_type,
+      name, phone, guardian_phone, email, birth_date, gender, customer_type,
       hospital_id, address, region,
       implant_date, implant_side, device_model, device_serial,
       guardian_of, status, tags, notes, created_by,
       internal_manufacturer, internal_model, internal_serial, internal_implant_date, internal_side,
       external_manufacturer, external_model, external_serial, external_supply_date, external_version,
       surgery_side
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).bind(
     b.name.trim(),
-    b.phone || '', b.email || '', b.birth_date || '', b.gender || '',
+    // ⚠️ guardian_phone 은 guardian_of(보호자 고객 ID, FK)와 다른 필드입니다.
+    //    보호자를 고객으로 등록하지 않고 연락처만 남길 때 쓰는 자유 텍스트입니다.
+    b.phone || '', b.guardian_phone || '', b.email || '', b.birth_date || '', b.gender || '',
     // ⚠️ 유형·상태 입력칸은 폼에서 제거되었습니다(사용자 요청).
     //    신규 고객은 모두 '수술 환자'(patient) · '활성'(active)로 고정 생성합니다.
     //    분류가 필요하면 유형이 아니라 '고객 그룹' 기능으로 묶습니다.
@@ -260,7 +262,7 @@ customers.put('/:id', async (c) => {
   //    DB 컬럼은 유지되므로 기존 값은 그대로 보존됩니다.
   await c.env.DB.prepare(`
     UPDATE customers SET
-      name=?, phone=?, email=?, birth_date=?, gender=?,
+      name=?, phone=?, guardian_phone=COALESCE(?, guardian_phone), email=?, birth_date=?, gender=?,
       hospital_id=?, address=?, region=?,
       implant_date=?, implant_side=?, device_model=?, device_serial=?,
       guardian_of=?, tags=?, notes=?,
@@ -271,7 +273,13 @@ customers.put('/:id', async (c) => {
     WHERE id=?
   `).bind(
     b.name.trim(),
-    b.phone || '', b.email || '', b.birth_date || '', b.gender || '',
+    b.phone || '',
+    // ⚠️ guardian_phone(보호자 연락처)은 나중에 추가된 컬럼입니다.
+    //    폼이 값을 보내면 '' 포함 그대로 저장(= 의도된 삭제)하고,
+    //    키 자체가 없으면 null 을 넘겨 COALESCE 로 기존 값을 지킵니다.
+    //    이렇게 해야 이 필드를 모르는 다른 호출 경로가 값을 조용히 날리지 않습니다.
+    b.guardian_phone !== undefined ? String(b.guardian_phone) : null,
+    b.email || '', b.birth_date || '', b.gender || '',
     b.hospital_id ? safeInt(String(b.hospital_id)) : null,
     b.address || '', b.region || '',
     b.implant_date || '', b.implant_side || '',
