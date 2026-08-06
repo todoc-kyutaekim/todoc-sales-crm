@@ -2647,6 +2647,7 @@ async function openCsRepairModal(id, prefillCustomerId) {
     status: 'received', priority: 'mid', warranty_status: 'unknown',
     symptom: '', diagnosis: '', resolution: '',
     assignee_id: '', cost: '',
+    received_at: '', created_by: '',
     expected_completion_at: '', notes: '',
     product_master_name: '', product_serial_no: '', product_asset_code: ''
   };
@@ -2667,6 +2668,36 @@ async function openCsRepairModal(id, prefillCustomerId) {
       var sel = (String(r.assignee_id || '') === String(u.id)) ? ' selected' : '';
       return '<option value="' + u.id + '"' + sel + '>' + csEsc(u.name) + '</option>';
     }).join('');
+
+  // ─────────────────────────────────────────────────────────────
+  // 접수일시 입력값 준비
+  // ⚠️ DB의 received_at은 UTC(ISO)입니다. datetime-local 입력은 로컬 시각이므로
+  //    표시할 때 UTC→로컬로 변환하고, 저장할 때 로컬→UTC로 되돌립니다.
+  //    (변환을 빼먹으면 접수일시가 9시간씩 밀립니다)
+  // ─────────────────────────────────────────────────────────────
+  var receivedAtLocal = _csInqUtcToLocalInput(r.received_at || '');
+  // 신규 접수는 "지금"을 기본값으로 넣어줍니다 (수정 가능)
+  if (!id && !receivedAtLocal) receivedAtLocal = _csInqUtcToLocalInput(new Date().toISOString());
+
+  // 접수자: 신규는 로그인 사용자 기본 선택
+  var repCreatedById = r.created_by || (!id ? ((currentUser && currentUser.id) || '') : '');
+  var repCreatorOpts = '<option value="">미지정</option>' +
+    _csRepUsers.map(function(u) {
+      var sel = (String(repCreatedById || '') === String(u.id)) ? ' selected' : '';
+      return '<option value="' + u.id + '"' + sel + '>' + csEsc(u.name) + '</option>';
+    }).join('');
+
+  // 섹션 제목 헬퍼 (번호 + 아이콘) — 고객문의 폼과 동일한 형태
+  var sec = function(n, icon, title, hint) {
+    return '<div class="col-span-full mt-1 first:mt-0">' +
+      '<div class="flex items-center gap-2 pb-1.5 mb-0.5 border-b border-slate-100">' +
+        '<span class="flex-shrink-0 w-[18px] h-[18px] rounded-full bg-brand-500 text-white text-[10px] font-bold flex items-center justify-center">' + n + '</span>' +
+        '<i class="fas ' + icon + ' text-[11px] text-brand-500"></i>' +
+        '<span class="text-[12px] font-bold text-slate-700">' + title + '</span>' +
+        (hint ? '<span class="text-[10px] text-slate-400 font-normal">' + hint + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  };
 
   var linkedProductHtml = r.product_unit_id ?
     '<div id="rep-linked-product" class="col-span-full p-2.5 bg-indigo-50 border border-indigo-200 rounded-lg text-[12px]">' +
@@ -2754,10 +2785,37 @@ async function openCsRepairModal(id, prefillCustomerId) {
       '</div>';
   }
 
+  // ⚠️ 섹션 번호는 nx() 로 자동 증가시킵니다.
+  //    진단·처리 섹션은 편집 모드에서만 나타나므로 고정 숫자를 쓰면 번호가 건너뛰어 보입니다.
+  //    (JS 문자열 결합은 좌→우 순서로 평가되므로 아래 호출 순서가 곧 화면 순서입니다)
+  var _secN = 0;
+  var nx = function() { return String(++_secN); };
+
   var body =
     detailHeader +
-    '<form id="fm-repair" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-      '<div class="col-span-full"><label class="input-label">증상 <span class="text-rose-500">*</span></label><textarea name="symptom" rows="2" class="input" required placeholder="예: 전원이 켜지지 않음, 특정 주파수 소리 안 남">' + csEsc(r.symptom) + '</textarea></div>' +
+    '<form id="fm-repair" class="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-2.5">' +
+
+      // ── 1. 접수일 및 시간 / 접수자 ──
+      sec(nx(), 'fa-clock', '접수일 및 시간 / 접수자') +
+      '<div><label class="input-label">접수일시</label>' +
+        '<input name="received_at_local" type="datetime-local" value="' + csEsc(receivedAtLocal) + '" class="input">' +
+        '<div class="text-[10px] text-slate-400 mt-0.5">' + (id ? '비워두면 기존 값이 유지됩니다' : '비워두면 현재 시각으로 접수됩니다') + '</div>' +
+      '</div>' +
+      '<div><label class="input-label">접수자</label><select name="created_by" class="input">' + repCreatorOpts + '</select></div>' +
+
+      // ── 2. 고객 / 연락처 ──
+      sec(nx(), 'fa-user', '고객 / 연락처') +
+      '<div class="col-span-full"><label class="input-label">등록 고객 연결</label><select name="customer_id" onchange="_csRepOnCustomerChange()" class="input">' + custOpts + '</select></div>' +
+      '<div><label class="input-label">연락자 이름</label><input name="contact_name" type="text" value="' + csEsc(r.contact_name) + '" class="input" placeholder="예: 홍길동"></div>' +
+      '<div><label class="input-label">연락처</label><input name="contact_phone" type="tel" value="' + csEsc(r.contact_phone) + '" class="input" placeholder="010-1234-5678"></div>' +
+      '<div class="col-span-full"><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(r.contact_email) + '" class="input" placeholder="name@example.com"></div>' +
+
+      // ── 3. 증상 ──
+      sec(nx(), 'fa-triangle-exclamation', '증상', '필수') +
+      '<div class="col-span-full"><textarea name="symptom" rows="3" class="input" required placeholder="예: 전원이 켜지지 않음, 특정 주파수 소리 안 남">' + csEsc(r.symptom) + '</textarea></div>' +
+
+      // ── 4. 상태 / 순위 등 ──
+      sec(nx(), 'fa-sliders', '상태 / 순위 등') +
       '<div><label class="input-label">상태</label><select name="status" class="input">' +
         Object.keys(CS_REP_STATUS_LABELS).map(function(k) { return '<option value="' + k + '"' + (r.status === k ? ' selected' : '') + '>' + CS_REP_STATUS_LABELS[k] + '</option>'; }).join('') +
       '</select></div>' +
@@ -2769,11 +2827,12 @@ async function openCsRepairModal(id, prefillCustomerId) {
       '</select></div>' +
       '<div><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
 
-      // 제품 섹션
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
-        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-microchip mr-1 text-indigo-500"></i>제품 정보</div>' +
+      // ── 5. 제품정보 조회 ──
+      sec(nx(), 'fa-microchip', '제품정보 조회') +
+      '<div class="col-span-full">' +
+        '<label class="input-label">시리얼 / 자산번호 조회</label>' +
         '<div class="flex gap-2">' +
-          '<input id="rep-serial-lookup" type="text" placeholder="시리얼/자산번호 조회" class="input flex-1 text-[12px]" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_csRepLookupSerial()}">' +
+          '<input id="rep-serial-lookup" type="text" placeholder="시리얼/자산번호 입력 후 Enter" class="input flex-1 text-[12px]" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_csRepLookupSerial()}">' +
           '<button type="button" onclick="_csRepLookupSerial()" class="btn btn-outline btn-sm whitespace-nowrap text-[11px]"><i class="fas fa-search mr-1"></i>조회</button>' +
         '</div>' +
         '<div id="rep-serial-results" class="mt-2"></div>' +
@@ -2782,32 +2841,21 @@ async function openCsRepairModal(id, prefillCustomerId) {
       '<div><label class="input-label">제품명 (자유 입력)</label><input name="product_name" type="text" value="' + csEsc(r.product_name) + '" class="input" placeholder="미등록 제품"></div>' +
       '<div><label class="input-label">시리얼 (자유 입력)</label><input name="serial_no_text" type="text" value="' + csEsc(r.serial_no_text) + '" class="input"></div>' +
 
-      // 고객 섹션
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
-        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-user mr-1 text-slate-500"></i>고객/연락처</div>' +
-      '</div>' +
-      '<div class="col-span-full"><label class="input-label">등록 고객 연결</label><select name="customer_id" onchange="_csRepOnCustomerChange()" class="input">' + custOpts + '</select></div>' +
-      '<div><label class="input-label">연락자 이름</label><input name="contact_name" type="text" value="' + csEsc(r.contact_name) + '" class="input"></div>' +
-      '<div><label class="input-label">연락처</label><input name="contact_phone" type="tel" value="' + csEsc(r.contact_phone) + '" class="input" placeholder="010-1234-5678"></div>' +
-      '<div class="col-span-full"><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(r.contact_email) + '" class="input"></div>' +
-
-      // 비용/일정
-      '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
-        '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-calendar-check mr-1 text-slate-500"></i>비용 · 일정</div>' +
-      '</div>' +
+      // ── 6. 비용 · 일정 ──
+      sec(nx(), 'fa-calendar-check', '비용 · 일정') +
       '<div><label class="input-label">비용 (원)</label><input name="cost" type="number" value="' + (r.cost != null ? r.cost : '') + '" class="input" min="0" step="1"></div>' +
       '<div><label class="input-label">완료 예정일</label><input name="expected_completion_at" type="date" value="' + csEsc((r.expected_completion_at || '').slice(0, 10)) + '" class="input"></div>' +
 
-      // 진단/처리 (편집 모드만)
+      // ── 7. 진단 · 처리 (편집 모드만) ──
       (id ?
-        '<div class="col-span-full border-t border-slate-100 pt-3 mt-1">' +
-          '<div class="text-[12px] font-semibold text-slate-700 mb-2"><i class="fas fa-clipboard-check mr-1 text-slate-500"></i>진단 · 처리</div>' +
-        '</div>' +
+        sec(nx(), 'fa-clipboard-check', '진단 · 처리') +
         '<div class="col-span-full"><label class="input-label">진단 결과</label><textarea name="diagnosis" rows="2" class="input">' + csEsc(r.diagnosis) + '</textarea></div>' +
         '<div class="col-span-full"><label class="input-label">처리 내용</label><textarea name="resolution" rows="2" class="input">' + csEsc(r.resolution) + '</textarea></div>'
         : '') +
 
-      '<div class="col-span-full"><label class="input-label">비고</label><textarea name="notes" rows="2" class="input">' + csEsc(r.notes) + '</textarea></div>' +
+      // ── 8. 비고 ──
+      sec(nx(), 'fa-note-sticky', '비고') +
+      '<div class="col-span-full"><textarea name="notes" rows="2" class="input" placeholder="내부 참고 메모">' + csEsc(r.notes) + '</textarea></div>' +
     '</form>' +
     stepsSection;
 
@@ -2840,6 +2888,15 @@ async function _csRepSaveFromPanel(id) {
   // 빈 문자열 → null
   ['customer_id','hospital_id','assignee_id','product_unit_id','cost','expected_completion_at']
     .forEach(function(k) { if (f[k] === '') f[k] = null; });
+
+  // 접수일시: 로컬 입력값을 UTC로 되돌려 received_at 으로 보냅니다.
+  // ⚠️ received_at_local 은 화면 전용 필드이므로 반드시 지워서 서버로 보내지 않습니다.
+  //    값이 비었거나 형식이 어긋나면 received_at 을 아예 보내지 않아
+  //    신규는 "현재 시각", 수정은 "기존 값 유지"가 됩니다.
+  var repUtc = _csInqLocalInputToUtc(f.received_at_local);
+  delete f.received_at_local;
+  if (repUtc) f.received_at = repUtc;
+
   try {
     if (id) await API.put('/cs/repairs/' + id, f);
     else await API.post('/cs/repairs', f);

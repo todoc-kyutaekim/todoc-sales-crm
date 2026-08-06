@@ -33,6 +33,32 @@ async function getUserName(db: D1Database, uid: number | null): Promise<string |
   return u?.name
 }
 
+// ────────────────────────────────────────────────────────────────
+// 접수일시(received_at) 정규화
+//
+// ⚠️ 저장 형식 주의: cs_repairs 는 다른 타임스탬프를 모두
+//    new Date().toISOString() (= 'YYYY-MM-DDTHH:MM:SS.sssZ') 로 넣습니다.
+//    (cs_inquiries 는 SQLite CURRENT_TIMESTAMP = 'YYYY-MM-DD HH:MM:SS' 를 씁니다)
+//    한 컬럼에 두 형식이 섞이면 ORDER BY received_at DESC 정렬이 어긋나므로
+//    (문자열 비교에서 'T'(0x54) > ' '(0x20)) 여기서 반드시 ISO 로 통일합니다.
+//
+// 입력은 'YYYY-MM-DD HH:MM(:SS)'(UTC, 프론트가 보내는 형식) 또는 ISO 모두 허용.
+// 형식이 어긋나거나 실존하지 않는 날짜(예: 2026-02-31)면 null 을 돌려주고,
+// 호출측에서 "지금" 또는 "이전 값 유지"로 처리합니다.
+// ────────────────────────────────────────────────────────────────
+function normalizeReceivedAt(v: any): string | null {
+  if (v == null || v === '') return null
+  const s = String(v).trim().replace(' ', 'T')
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/)
+  if (!m) return null
+  const [, y, mo, d, h, mi, sec] = m
+  const dt = new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +(sec || 0)))
+  if (isNaN(dt.getTime())) return null
+  // 실존 날짜 검증 (2026-02-31 → Date 가 3/3 으로 넘겨버리는 것을 차단)
+  if (dt.getUTCFullYear() !== +y || dt.getUTCMonth() !== +mo - 1 || dt.getUTCDate() !== +d) return null
+  return dt.toISOString()
+}
+
 // -------------------- LIST --------------------
 // GET /api/cs/repairs?search=&status=&priority=&assignee_id=&customer_id=&hospital_id=&warranty_status=&limit=
 rep.get('/', async (c) => {
@@ -194,6 +220,14 @@ rep.post('/', async (c) => {
   if (!symptom) return apiError(c, 400, '증상(symptom)은 필수입니다.', ErrorCodes.VALIDATION)
 
   const now = new Date().toISOString()
+  // 접수일시: 폼에서 지정한 값이 유효하면 그대로, 아니면 현재 시각
+  const receivedAt = normalizeReceivedAt(b.received_at) || now
+  // 접수자: 폼에서 지정 가능. 미지정이면 로그인 사용자
+  // ⚠️ b.created_by 가 '' 이면 "미지정"을 의도한 것이므로 null 로 저장합니다.
+  const createdBy = b.created_by !== undefined
+    ? (b.created_by === '' || b.created_by === null ? null : safeInt(b.created_by))
+    : (userId || null)
+
   const rs = await c.env.DB.prepare(`
     INSERT INTO cs_repairs
       (customer_id, contact_name, contact_phone, contact_email, hospital_id,
@@ -222,10 +256,10 @@ rep.post('/', async (c) => {
     b.resolution || null,
     b.assignee_id || null,
     b.cost != null && b.cost !== '' ? Number(b.cost) : null,
-    b.received_at || now,
+    receivedAt,
     b.expected_completion_at || null,
     b.notes || null,
-    userId || null,
+    createdBy,
     now,
     now,
   ).run()
@@ -276,6 +310,14 @@ rep.put('/:id', async (c) => {
   if ((newStatus === 'closed' || newStatus === 'rejected') && !closed_at) closed_at = now
   if (newStatus !== 'closed' && newStatus !== 'rejected') closed_at = null
 
+  // 접수일시: 유효한 값이 오면 갱신, 아니면 이전 값 유지
+  // ⚠️ 폼이 값을 안 보내거나 형식이 어긋날 때 절대 NULL 로 덮어쓰지 않습니다.
+  const receivedAt = normalizeReceivedAt(b.received_at) || prev.received_at
+  // 접수자: 필드가 아예 없으면 이전 값 유지, ''(미지정)이면 null
+  const createdBy = b.created_by !== undefined
+    ? (b.created_by === '' || b.created_by === null ? null : safeInt(b.created_by))
+    : prev.created_by
+
   await c.env.DB.prepare(`
     UPDATE cs_repairs SET
       customer_id = ?, contact_name = ?, contact_phone = ?, contact_email = ?, hospital_id = ?,
@@ -283,9 +325,9 @@ rep.put('/:id', async (c) => {
       inquiry_id = ?, status = ?, priority = ?, warranty_status = ?,
       symptom = ?, diagnosis = ?, resolution = ?,
       assignee_id = ?, cost = ?,
-      expected_completion_at = ?,
+      received_at = ?, expected_completion_at = ?,
       completed_at = ?, shipped_at = ?, closed_at = ?,
-      notes = ?, updated_at = ?
+      notes = ?, created_by = ?, updated_at = ?
     WHERE id = ?
   `).bind(
     b.customer_id ?? prev.customer_id,
@@ -305,11 +347,13 @@ rep.put('/:id', async (c) => {
     b.resolution ?? prev.resolution,
     b.assignee_id ?? prev.assignee_id,
     b.cost !== undefined ? (b.cost === '' || b.cost === null ? null : Number(b.cost)) : prev.cost,
+    receivedAt,
     b.expected_completion_at ?? prev.expected_completion_at,
     completed_at,
     shipped_at,
     closed_at,
     b.notes ?? prev.notes,
+    createdBy,
     now,
     id,
   ).run()

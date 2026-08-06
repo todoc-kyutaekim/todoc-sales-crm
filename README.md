@@ -189,6 +189,9 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 11. **CS → 고객 문의 → 문의 접수**: 1 제목 → 2 접수일시/접수자 → 3 고객명 → 4 연락처 →
     5 문의 내용 → 6 유형·채널·우선순위·상태 순서로 입력. 저장 후 상세 화면에서
     7 응답/메모를 추가하고, 사람이 쓴 항목은 연필(수정)·휴지통(삭제) 버튼으로 관리
+12. **CS → AS/수리 요청 → 새 수리 접수**: 1 접수일 및 시간·접수자 → 2 고객·연락처 →
+    3 증상(필수) → 4 상태·우선순위·보증·담당자 → 5 제품정보 조회(시리얼/자산번호) →
+    6 비용·일정 순서로 입력. 저장 후 상세 화면에서 7 진단·처리, 8 비고와 진행 이력을 관리
 
 ## ⚠️ CS 고객문의 폼 — 날짜/시간 처리 규칙 (필수 확인)
 
@@ -208,6 +211,33 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 - 백엔드도 `normalizeDateTime()`으로 형식·실존 날짜(예: `2026-02-30` 거부)를 재검증하고,
   `created_at=COALESCE(?, created_at)` 패턴으로 잘못된 값이 기존 데이터를 덮어쓰지 못하게 막습니다.
 - `created_at_local`은 **화면 전용 필드**입니다. 전송 전에 반드시 `delete`하세요.
+
+## ⚠️ AS/수리 요청 — 접수일시 저장 형식은 ISO (문의와 다름)
+
+수리 요청 폼(`openCsRepairModal`)도 같은 UTC↔로컬 헬퍼 한 쌍을 씁니다.
+다만 **DB 저장 형식이 고객문의와 다릅니다.**
+
+| 테이블 | 컬럼 | 저장 형식 | 생성 주체 |
+|--------|------|-----------|-----------|
+| `cs_inquiries` | `created_at` | `'2026-05-20 05:35:00'` | SQLite `CURRENT_TIMESTAMP` |
+| `cs_repairs` | `received_at` | `'2026-05-20T05:35:00.000Z'` | JS `new Date().toISOString()` |
+
+- `cs_repairs`의 다른 타임스탬프(`created_at`/`updated_at`/`completed_at` 등)가 모두 ISO라서
+  `received_at`도 **ISO로 통일**해야 합니다. 한 컬럼에 두 형식이 섞이면
+  `ORDER BY received_at DESC`(인덱스 `idx_cs_repairs_received`) 정렬이 어긋납니다 —
+  문자열 비교에서 `'T'`(0x54) > `' '`(0x20)이므로 ISO 행이 항상 위로 올라옵니다.
+- 그래서 백엔드에 **`normalizeReceivedAt()`** 을 두었습니다. 프런트가 보내는
+  `'YYYY-MM-DD HH:MM:SS'`(UTC)와 ISO를 모두 받아 **항상 ISO로 되돌려 저장**하고,
+  형식 오류·실존하지 않는 날짜(`2026-02-31`)는 `null`을 돌려줍니다.
+- `null`일 때의 동작: POST는 **현재 시각**, PUT은 **`prev.received_at` 유지**.
+  잘못된 값이 기존 접수일시를 덮어쓰는 일은 없습니다.
+- `접수자`(`created_by`)는 폼에서 지정할 수 있습니다.
+  - 필드가 **아예 없으면** → POST는 로그인 사용자, PUT은 `prev.created_by` 유지
+  - 값이 **`''`(미지정)** 이면 → `null` 저장 (의도된 해제)
+- `received_at_local`은 **화면 전용 필드**입니다. 전송 전에 반드시 `delete`하세요.
+- 폼 섹션 번호는 `nx()`로 자동 증가합니다. `진단 · 처리` 섹션이 편집 모드에서만
+  나타나므로 고정 숫자를 쓰면 신규 접수에서 번호가 건너뛰어 보입니다.
+- 현재 `cs_repairs` SQL 개수: **POST 23/23/23, PUT SET 25 + WHERE 1 = 바인딩 26**
 
 ## ⚠️ 응답/메모 수정·삭제 — 시스템 이력 보호
 
