@@ -222,6 +222,24 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
   다른 문의의 응답 ID를 넣으면 404가 납니다. 이 조건을 절대 제거하지 마세요.
 - 응답 타입 변경은 `reply ↔ note` 사이에서만 허용됩니다(시스템 타입으로 승격 불가).
 
+## ⚠️ 제거된 입력 필드 — `duration_min` / `followup_at`
+
+`통화/응대 시간`(`duration_min`)과 `후속 예정`(`followup_at`)은 사용자 요청으로
+**접수 폼에서 제거**했습니다. 단, **DB 컬럼과 표시 로직은 그대로 유지**됩니다.
+
+- 컬럼 유지 이유: 과거에 입력된 값이 목록·상세의 배지(`37분`, `🔔 2026-09-01`)로
+  계속 표시되어야 하므로 `migrations/0033`의 컬럼을 삭제하지 않았습니다.
+- **백엔드 `UPDATE` 문에서도 두 필드를 제외**했습니다. 이게 핵심입니다 —
+  폼이 값을 보내지 않는데 `duration_min=?, followup_at=?` 를 남겨두면 수정할 때마다
+  `NULL`로 덮어써져 **기존 데이터가 조용히 지워집니다.**
+- 다시 살릴 때는 **세 곳을 함께** 되살려야 합니다.
+  1. `app.js` 6번 섹션의 입력칸 2개
+  2. `cs_inquiries.ts` POST 의 `INSERT` 컬럼/플레이스홀더/바인딩
+  3. `cs_inquiries.ts` PUT 의 `UPDATE` SET 절/바인딩
+- 수정 후에는 **컬럼 수 = 플레이스홀더 수 = 바인딩 인자 수**가 일치하는지 꼭 확인하세요.
+  어긋나면 값이 엉뚱한 컬럼에 저장되며 에러도 나지 않습니다.
+  (현재: POST 16/16/16, PUT SET 16 + WHERE 1 = 바인딩 17)
+
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active

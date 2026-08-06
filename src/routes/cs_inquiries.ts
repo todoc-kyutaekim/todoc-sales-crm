@@ -162,9 +162,9 @@ cs.post('/', async (c) => {
       customer_id, contact_name, contact_phone, contact_email,
       subject, category, channel, priority, status,
       assignee_id, first_message, hospital_id, created_by,
-      direction, duration_min, followup_at, related_repair_id,
+      direction, related_repair_id,
       created_at
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, COALESCE(?, CURRENT_TIMESTAMP))
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, COALESCE(?, CURRENT_TIMESTAMP))
   `).bind(
     b.customer_id ? safeInt(String(b.customer_id)) : null,
     b.contact_name || '', b.contact_phone || '', b.contact_email || '',
@@ -178,8 +178,6 @@ cs.post('/', async (c) => {
     b.hospital_id ? safeInt(String(b.hospital_id)) : null,
     createdBy,
     b.direction === 'outbound' ? 'outbound' : 'inbound',
-    b.duration_min != null && b.duration_min !== '' ? safeInt(String(b.duration_min)) : null,
-    b.followup_at || null,
     b.related_repair_id ? safeInt(String(b.related_repair_id)) : null,
     createdAt
   ).run()
@@ -218,9 +216,12 @@ cs.put('/:id', async (c) => {
 
   // 신규 필드 정규화
   const nowDirection = b.direction === 'outbound' ? 'outbound' : 'inbound'
-  const nowDuration = (b.duration_min != null && b.duration_min !== '') ? safeInt(String(b.duration_min)) : null
-  const nowFollowupAt = b.followup_at || null
   const nowRelatedRepair = b.related_repair_id ? safeInt(String(b.related_repair_id)) : null
+
+  // ⚠️ duration_min / followup_at 은 접수 폼에서 제거되었습니다(사용자 요청).
+  //    폼이 이 값을 보내지 않으므로 UPDATE 대상에 넣으면 매번 NULL로 덮어써져
+  //    과거에 입력된 값이 지워집니다. 그래서 아예 UPDATE 문에서 제외했습니다.
+  //    DB 컬럼은 유지되어 기존 데이터는 목록·상세 배지에 계속 표시됩니다.
 
   // ⚠️ 이전에는 resolved_at 처리 방식(설정/해제/유지) 때문에 거의 동일한
   //    UPDATE 문을 3벌 복사해 두었습니다. 필드를 하나 추가할 때 3곳을 모두
@@ -239,7 +240,7 @@ cs.put('/:id', async (c) => {
       customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
       subject=?, category=?, channel=?, priority=?, status=?,
       assignee_id=?, first_message=?, hospital_id=?,
-      direction=?, duration_min=?, followup_at=?, related_repair_id=?,
+      direction=?, related_repair_id=?,
       created_at=COALESCE(?, created_at),
       created_by=COALESCE(?, created_by),
       updated_at=CURRENT_TIMESTAMP${resolvedAtSql}
@@ -252,7 +253,7 @@ cs.put('/:id', async (c) => {
     b.priority || 'mid', nowStatus,
     nowAssignee, b.first_message || '',
     b.hospital_id ? safeInt(String(b.hospital_id)) : null,
-    nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
+    nowDirection, nowRelatedRepair,
     createdAt, createdBy,
     id
   ).run()

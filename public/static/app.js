@@ -2156,8 +2156,9 @@ async function openCsInquiryModal(id, prefillCustomerId) {
         '<option value="outbound"' + (inq.direction === 'outbound' ? ' selected' : '') + '>발신 (우리→고객)</option>' +
       '</select></div>' +
       '<div><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
-      '<div><label class="input-label">통화/응대 시간 <span class="text-[10px] text-slate-400">(분)</span></label><input name="duration_min" type="number" min="0" value="' + csEsc(inq.duration_min == null ? '' : inq.duration_min) + '" class="input" placeholder="예: 5"></div>' +
-      '<div><label class="input-label">후속 예정 <span class="text-[10px] text-slate-400">(선택)</span></label><input name="followup_at" type="datetime-local" value="' + csEsc(inq.followup_at ? String(inq.followup_at).slice(0,16).replace(' ','T') : '') + '" class="input"></div>' +
+      // ⚠️ '통화/응대 시간'(duration_min)·'후속 예정'(followup_at) 입력칸은 사용자 요청으로 제거했습니다.
+      //    DB 컬럼은 유지되므로(migrations/0033) 과거 데이터는 목록·상세 배지에 그대로 표시됩니다.
+      //    다시 살릴 때는 백엔드 POST/PUT의 해당 바인딩도 함께 되살려야 합니다(cs_inquiries.ts).
       '<div class="col-span-full"><label class="input-label">관련 AS/수리 <span class="text-[10px] text-slate-400">(선택 · AS ID 직접 입력)</span></label><input name="related_repair_id" type="number" min="1" value="' + csEsc(inq.related_repair_id || '') + '" class="input" placeholder="예: 12"></div>' +
     '</form>' +
 
@@ -2260,11 +2261,9 @@ async function _csInqSaveFromPanel(id) {
   if (f.customer_id === '') delete f.customer_id;
   if (f.assignee_id === '') delete f.assignee_id;
   if (f.related_repair_id === '') delete f.related_repair_id;
-  if (f.duration_min === '') delete f.duration_min;
   if (f.created_by === '') delete f.created_by;
-  // datetime-local (YYYY-MM-DDTHH:MM) → SQLite DATETIME (YYYY-MM-DD HH:MM:00)
-  if (f.followup_at) f.followup_at = String(f.followup_at).replace('T', ' ') + ':00';
-  else delete f.followup_at;
+  // ⚠️ duration_min / followup_at 은 폼에서 제거되어 FormData에 아예 없습니다.
+  //    백엔드도 이 두 필드를 UPDATE 대상에서 빼서 기존 값이 보존됩니다.
 
   // 접수일시: 로컬 입력값을 UTC로 되돌려 created_at 으로 보냅니다.
   // ⚠️ created_at_local 은 화면 전용 필드이므로 반드시 지워서 서버로 보내지 않습니다.
