@@ -179,7 +179,7 @@ customers.get('/:id', async (c) => {
       ORDER BY side ASC
     `).bind(id).all(),
     c.env.DB.prepare(`
-      SELECT id, side, manufacturer, model, serial, supply_date, version, is_active, notes, created_at, updated_at
+      SELECT id, side, manufacturer, model, serial, initial, security_key, supply_date, version, is_active, notes, created_at, updated_at
       FROM customer_external_devices
       WHERE customer_id = ?
       ORDER BY is_active DESC, supply_date DESC, id DESC
@@ -370,12 +370,16 @@ customers.put('/:id/internal-devices/:did', async (c) => {
   try {
     await c.env.DB.prepare(`
       UPDATE customer_internal_devices SET
-        side=?, manufacturer=?, model=?, serial=?, implant_date=?, notes=?,
+        side=?, manufacturer=COALESCE(?, manufacturer), model=?, serial=?, implant_date=?, notes=?,
         updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND customer_id=?
     `).bind(
       newSide,
-      b.manufacturer || null, b.model || null, b.serial || null, b.implant_date || null, b.notes || null,
+      // ⚠️ 제조사 입력칸을 화면에서 제거했으므로 폼은 manufacturer 를 보내지 않습니다.
+      //    그냥 `manufacturer=?` 로 두면 편집 저장마다 기존 값이 NULL 로 조용히 지워집니다.
+      //    COALESCE 로 "안 보내면 기존 값 유지"를 보장합니다.
+      b.manufacturer || null,
+      b.model || null, b.serial || null, b.implant_date || null, b.notes || null,
       did, id
     ).run()
 
@@ -409,7 +413,7 @@ customers.delete('/:id/internal-devices/:did', async (c) => {
 customers.get('/:id/external-devices', async (c) => {
   const id = c.req.param('id')
   const r = await c.env.DB.prepare(`
-    SELECT id, side, manufacturer, model, serial, supply_date, version, is_active, notes, created_at, updated_at
+    SELECT id, side, manufacturer, model, serial, initial, security_key, supply_date, version, is_active, notes, created_at, updated_at
     FROM customer_external_devices
     WHERE customer_id = ?
     ORDER BY is_active DESC, supply_date DESC, id DESC
@@ -430,11 +434,13 @@ customers.post('/:id/external-devices', async (c) => {
   const isActive = (b.is_active === false || b.is_active === 0 || b.is_active === '0') ? 0 : 1
 
   const r = await c.env.DB.prepare(`
-    INSERT INTO customer_external_devices (customer_id, side, manufacturer, model, serial, supply_date, version, is_active, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO customer_external_devices (customer_id, side, manufacturer, model, serial, initial, security_key, supply_date, version, is_active, notes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     id, side,
-    b.manufacturer || null, b.model || null, b.serial || null, b.supply_date || null, b.version || null,
+    b.manufacturer || null, b.model || null, b.serial || null,
+    b.initial || null, b.security_key || null,
+    b.supply_date || null, b.version || null,
     isActive,
     b.notes || null
   ).run()
@@ -459,12 +465,18 @@ customers.put('/:id/external-devices/:did', async (c) => {
 
   await c.env.DB.prepare(`
     UPDATE customer_external_devices SET
-      side=?, manufacturer=?, model=?, serial=?, supply_date=?, version=?, is_active=?, notes=?,
+      side=?, manufacturer=COALESCE(?, manufacturer), model=?, serial=?,
+      initial=?, security_key=?,
+      supply_date=?, version=?, is_active=?, notes=?,
       updated_at=CURRENT_TIMESTAMP
     WHERE id=? AND customer_id=?
   `).bind(
     newSide,
-    b.manufacturer || null, b.model || null, b.serial || null, b.supply_date || null, b.version || null,
+    // ⚠️ 내부기와 동일: 폼이 manufacturer 를 보내지 않으므로 COALESCE 로 기존 값 보호.
+    b.manufacturer || null,
+    b.model || null, b.serial || null,
+    b.initial || null, b.security_key || null,
+    b.supply_date || null, b.version || null,
     isActive,
     b.notes || null,
     did, id

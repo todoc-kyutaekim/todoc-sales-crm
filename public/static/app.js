@@ -1088,6 +1088,13 @@ function filterCust() {
 async function openCustomerPanel(id) { return openCustomerModal(id); }
 
 // 제조사 옵션 (드롭다운 순서 고정: 토닥 → 코클리어 → 메델 → AB → 오티콘메디컬 → 기타)
+//
+// ⚠️ 사용자 요청으로 내부기·외부기 등록 폼에서 '제조사' 입력칸을 제거했기 때문에
+//    아래 CUST_MFR_OPTIONS / _custMfrOptions / _custMfrLabel 은 현재 어디에서도
+//    호출되지 않습니다. 그래도 삭제하지 않고 남겨둡니다:
+//      · DB 컬럼(manufacturer)과 백엔드 API 는 그대로 살아 있음
+//      · 나중에 제조사 입력칸을 되살릴 때 이 3개만 다시 참조하면 됨
+//    지우지 마세요.
 var CUST_MFR_OPTIONS = [
   { v: 'todoc',    label: '토닥 (TODOC)' },
   { v: 'cochlear', label: '코클리어 (Cochlear)' },
@@ -1172,6 +1179,23 @@ async function openCustomerModal(id) {
       // ⚠️ 필드 순서는 사용자가 지정한 순서입니다. 임의로 바꾸지 마세요.
       //    1 이름 → 2 성별 → 3 생년월일 → 4 병원 → 5 연락처1 → 6 보호자 연락처1 → 7 이메일 → 8 주소
       //    '지역'(region)은 목록 필터·컬럼에서 쓰이므로 지정 순서 뒤에 그대로 둡니다.
+      // ===== 등록일 (읽기 전용) =====
+      // ⚠️ customers.created_at 은 SQLite CURRENT_TIMESTAMP 형식('YYYY-MM-DD HH:MM:SS', UTC)입니다.
+      //    csFmtDateTime() 이 타임존 표기가 없을 때 'Z' 를 붙여 한국시간으로 변환해 줍니다.
+      //    직접 slice/replace 로 자르면 9시간 어긋나므로 반드시 이 헬퍼를 쓰세요.
+      // ⚠️ 신규 등록(id 없음)일 때는 아직 created_at 이 없으므로 표시하지 않습니다.
+      (id && cst.created_at ? (
+        '<div class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border text-[11px]" style="background:#f8fafc;border-color:#e2e8f0">' +
+          '<i class="fas fa-user-clock text-[12px]" style="color:#64748b"></i>' +
+          '<span class="text-slate-500">등록일</span>' +
+          '<span class="font-semibold text-slate-700">' + csFmtDateTime(cst.created_at) + '</span>' +
+          (cst.updated_at && cst.updated_at !== cst.created_at
+            ? '<span class="text-slate-300">|</span><span class="text-slate-500">최근 수정</span>' +
+              '<span class="font-medium text-slate-600">' + csFmtDateTime(cst.updated_at) + '</span>'
+            : '') +
+        '</div>'
+      ) : '') +
+
       /* 1 */ '<div class="col-span-full"><label class="input-label">이름 *</label><input name="name" type="text" value="' + csEsc(cst.name) + '" class="input" required></div>' +
       /* 2 */ '<div><label class="input-label">성별</label><select name="gender" class="input">' +
         ['','M','F'].map(function(g) { var l = g === 'M' ? '남' : g === 'F' ? '여' : '선택 안 함'; return '<option value="' + g + '"' + (cst.gender === g ? ' selected' : '') + '>' + l + '</option>'; }).join('') +
@@ -1398,7 +1422,7 @@ function _custRenderInternalSlot(custId, side, dev) {
       '</div>' +
     '</div>' +
     '<div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">' +
-      _custKV('제조사', _custMfrLabel(dev.manufacturer) || '—') +
+      // ⚠️ '제조사' 표시는 입력칸 제거와 함께 빼두었습니다(값이 없어 '—'만 보임).
       _custKV('모델', dev.model || '—') +
       _custKV('시리얼', dev.serial || '—') +
       _custKV('이식일', dev.implant_date || '—') +
@@ -1441,7 +1465,9 @@ function _custRenderExternalItem(custId, dev) {
       '<div class="flex items-center gap-2 flex-wrap">' +
         '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + sideBg + ';color:' + sideColor + '">' + sideLabel + '</span>' +
         statusBadge +
-        '<span class="text-[12px] font-semibold text-slate-700">' + csEsc(_custMfrLabel(dev.manufacturer) || '외부기') + '</span>' +
+        // ⚠️ 제목에 쓰던 제조사 라벨을 제거했습니다(입력칸 제거와 동일 요청).
+        //    이니셜이 있으면 제조사 대신 이니셜을 제목에 보여줍니다(현장 식별에 가장 유용).
+        '<span class="text-[12px] font-semibold text-slate-700">' + csEsc(dev.initial || '외부기') + '</span>' +
         (dev.model ? '<span class="text-[11px] text-slate-500">· ' + csEsc(dev.model) + '</span>' : '') +
       '</div>' +
       '<div class="flex items-center gap-1">' +
@@ -1451,6 +1477,10 @@ function _custRenderExternalItem(custId, dev) {
     '</div>' +
     '<div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">' +
       _custKV('시리얼', dev.serial || '—') +
+      _custKV('이니셜', dev.initial || '—') +
+      // ⚠️ 보안키는 민감정보지만 현장에서 눈으로 확인해야 하는 값이라 그대로 노출합니다.
+      //    (마스킹하면 매번 편집 모달을 열어야 해서 오히려 불편)
+      _custKV('보안키', dev.security_key || '—') +
       _custKV('버전', dev.version || '—') +
       _custKV('지급/교체일', dev.supply_date || '—') +
       _custKV('상태', active ? '사용중' : '보관') +
@@ -1477,7 +1507,11 @@ function _custEditInternal(customerId, side, deviceId) {
         '<i class="fas fa-info-circle mr-1"></i>' + sideLabel + ' 내부기' +
         '<input type="hidden" name="side" value="' + side + '">' +
       '</div>' +
-      '<div><label class="input-label">제조사</label><select name="manufacturer" class="input">' + _custMfrOptions(data.manufacturer) + '</select></div>' +
+      // ⚠️ '제조사'(manufacturer) 입력칸은 사용자 요청으로 제거했습니다.
+      //    DB 컬럼과 백엔드는 그대로 살아 있으므로, 되살릴 땐 아래 한 줄만 복원하면 됩니다.
+      //    '<div><label class="input-label">제조사</label><select name="manufacturer" class="input">' + _custMfrOptions(data.manufacturer) + '</select></div>' +
+      //    ⚠️ 단, 폼이 manufacturer 를 보내지 않으므로 백엔드 PUT 은 COALESCE 로
+      //       기존 값을 지키게 해두었습니다(그냥 두면 수정할 때마다 NULL 로 덮어써짐).
       '<div><label class="input-label">모델명</label><input name="model" type="text" value="' + csEsc(data.model || '') + '" class="input" placeholder="예: Nucleus Profile Plus"></div>' +
       '<div><label class="input-label">시리얼 번호</label><input name="serial" type="text" value="' + csEsc(data.serial || '') + '" class="input"></div>' +
       '<div><label class="input-label">이식일</label><input name="implant_date" type="date" value="' + csEsc(data.implant_date || '') + '" class="input"></div>' +
@@ -1649,7 +1683,7 @@ function _custEditExternal(customerId, deviceId) {
   var defaultSide = 'left';
   var sel = document.getElementById('cst-surgery-side');
   if (sel && sel.value === 'right') defaultSide = 'right';
-  var data = dev || { side: defaultSide, manufacturer: '', model: '', serial: '', supply_date: '', version: '', is_active: 1, notes: '' };
+  var data = dev || { side: defaultSide, manufacturer: '', model: '', serial: '', initial: '', security_key: '', supply_date: '', version: '', is_active: 1, notes: '' };
 
   var body =
     '<form id="fm-ext-dev" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
@@ -1660,11 +1694,17 @@ function _custEditExternal(customerId, deviceId) {
         '<option value="1"' + (data.is_active ? ' selected' : '') + '>사용중</option>' +
         '<option value="0"' + (!data.is_active ? ' selected' : '') + '>보관 (교체됨)</option>' +
       '</select></div>' +
-      '<div><label class="input-label">제조사</label><select name="manufacturer" class="input">' + _custMfrOptions(data.manufacturer) + '</select></div>' +
+      // ⚠️ '제조사'(manufacturer) 입력칸은 사용자 요청으로 제거했습니다. (내부기와 동일)
+      //    대신 '이니셜'(initial)·'보안키'(security_key)를 추가했습니다. (migrations/0042)
+      //    DB 의 manufacturer 컬럼은 유지되며, 백엔드 PUT 은 COALESCE 로 기존 값을 지킵니다.
       '<div><label class="input-label">모델명</label><input name="model" type="text" value="' + csEsc(data.model || '') + '" class="input" placeholder="예: Nucleus 8"></div>' +
       '<div><label class="input-label">시리얼 번호</label><input name="serial" type="text" value="' + csEsc(data.serial || '') + '" class="input"></div>' +
+      '<div><label class="input-label">이니셜</label><input name="initial" type="text" value="' + csEsc(data.initial || '') + '" class="input" placeholder="예: ABC"></div>' +
+      // ⚠️ 보안키는 민감정보이므로 type="text" 를 유지하되(현장에서 눈으로 확인·전달해야 함)
+      //    autocomplete 을 끄고 브라우저 저장/자동완성을 막습니다.
+      '<div><label class="input-label">보안키</label><input name="security_key" type="text" value="' + csEsc(data.security_key || '') + '" class="input" autocomplete="off" spellcheck="false" placeholder="기기 보안키"></div>' +
       '<div><label class="input-label">지급/교체일</label><input name="supply_date" type="date" value="' + csEsc(data.supply_date || '') + '" class="input"></div>' +
-      '<div class="col-span-full"><label class="input-label">버전 / 펌웨어</label><input name="version" type="text" value="' + csEsc(data.version || '') + '" class="input" placeholder="예: 1.5"></div>' +
+      '<div><label class="input-label">버전 / 펌웨어</label><input name="version" type="text" value="' + csEsc(data.version || '') + '" class="input" placeholder="예: 1.5"></div>' +
       '<div class="col-span-full"><label class="input-label">메모 (교체 사유 등)</label><textarea name="notes" rows="2" class="input">' + csEsc(data.notes || '') + '</textarea></div>' +
     '</form>';
 
