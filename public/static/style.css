@@ -289,6 +289,37 @@ body {
 }
 .input:focus { border-color: var(--brand-500); box-shadow: 0 0 0 3px rgba(37,99,235,.1), var(--shadow-xs) }
 .input::placeholder { color: var(--gray-400) }
+
+/* ⚠️⚠️ 매우 중요 — Tailwind 의 padding 유틸리티는 `.input` 에 듣지 않습니다.
+ *
+ * 원인: 위 `.input` 규칙이 `padding: 9px 13px` 라는 **축약(shorthand) 속성**을 쓰고,
+ *       style.css 는 tailwind.css **뒤에** 로드됩니다(index.tsx 의 <link> 순서).
+ *       `.input`(0,1,0) 과 `.pl-10`(0,1,0) 은 명시도가 같으므로 **나중에 온 쪽이 이깁니다.**
+ *       → `class="input pl-10"` 을 써도 padding-left 는 40px 이 아니라 13px 로 남습니다.
+ *
+ * 실제 사고: 로그인 화면에서 아이콘(left:14px)이 글자와 겹쳐 보였습니다.
+ *           `✉ame@to-doc.com`, `🔒밀번호` 처럼 앞글자가 가려짐. (사용자 제보)
+ *
+ * 확인된 무효 조합: pl-10 / pl-9 / pr-7 / py-1 / py-1.5 / py-2 (전부 안 먹음)
+ *
+ * 해결책 두 가지 — 둘 중 하나를 반드시 쓰세요:
+ *   (A) 아래처럼 `.input.pl-10` 복합 선택자(0,2,0)로 명시도를 높인 규칙을 여기에 둔다  ← 권장
+ *   (B) 마크업에서 `!` 접두사를 붙여 !important 로 만든다 (예: `!py-1.5`, `!pr-7`)
+ *       코드베이스 곳곳에서 이미 (B) 방식을 쓰고 있습니다. 그래서 그건 정상 동작합니다.
+ *
+ * 아래 규칙은 명시도가 (0,2,0) 이라 `@media` 안의 모바일용 `.input`(0,1,0) 도
+ * 함께 이깁니다. 미디어쿼리는 명시도를 올려주지 않기 때문입니다.
+ * → 데스크톱/모바일 모두 한 번에 해결되므로 미디어쿼리마다 중복 작성하지 마세요.
+ *
+ * 앞으로 `.input` 에 새 padding 유틸리티를 쓰려면 여기에 한 줄을 추가하세요. */
+.input.pl-10 { padding-left: 40px }   /* 왼쪽 아이콘용 (2.5rem) */
+.input.pl-9  { padding-left: 36px }   /* 왼쪽 아이콘용 (2.25rem) */
+.input.pr-7  { padding-right: 28px }  /* 오른쪽 아이콘/화살표용 (1.75rem) */
+
+/* 입력칸 위에 겹쳐 놓은 장식용 아이콘은 클릭을 통과시켜 입력칸이 포커스되게 합니다.
+   (아이콘을 눌렀는데 아무 반응 없는 문제 방지)
+   :has() 미지원 브라우저에서는 그냥 적용되지 않을 뿐이라 안전합니다. */
+.relative:has(> .input) > i { pointer-events: none }
 .input-label {
   display: block; font-size: 11px; font-weight: 700;
   color: var(--gray-500); margin-bottom: 6px;
