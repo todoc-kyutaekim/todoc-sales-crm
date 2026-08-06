@@ -192,6 +192,9 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 12. **CS → AS/수리 요청 → 새 수리 접수**: 1 접수일 및 시간·접수자 → 2 고객·연락처 →
     3 증상(필수) → 4 상태·우선순위·보증·담당자 → 5 제품정보 조회(시리얼/자산번호) →
     6 비용·일정 순서로 입력. 저장 후 상세 화면에서 7 진단·처리, 8 비고와 진행 이력을 관리
+13. **고객관리**: 고객은 **전원 '수술 환자'** 로 통일되어 있습니다. 유형·상태 선택칸이 없으므로
+    분류가 필요하면 왼쪽 **'그룹'** 패널에서 그룹을 만들고 고객을 체크해 묶으세요.
+    상단 카드는 `전체 / 그룹 지정 / 병원 연결 / 문의 이력` 4개 지표를 보여줍니다.
 
 ## ⚠️ CS 고객문의 폼 — 날짜/시간 처리 규칙 (필수 확인)
 
@@ -269,6 +272,36 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 - 수정 후에는 **컬럼 수 = 플레이스홀더 수 = 바인딩 인자 수**가 일치하는지 꼭 확인하세요.
   어긋나면 값이 엉뚱한 컬럼에 저장되며 에러도 나지 않습니다.
   (현재: POST 16/16/16, PUT SET 16 + WHERE 1 = 바인딩 17)
+
+## ⚠️ 고객관리 — `유형`(customer_type) / `상태`(status) 제거
+
+사용자 요청으로 고객의 **유형·상태 구분을 폐기**했습니다.
+고객은 **전원 `patient`(수술 환자) · `active`(활성)** 이며,
+분류는 **'고객 그룹'(`customer_groups`) 기능**이 담당합니다.
+
+- 화면에서 제거된 곳 (5군데 모두):
+  1. **입력 폼** (`openCustomerModal`) — 유형·상태 select 2개 삭제, `이름`을 `col-span-full`로 확장
+  2. **목록 테이블** (`renderCustomers`) — 그리드 9열 → 7열
+     (`'34px 1fr 160px 90px 190px 80px 80px'` = 체크박스·이름/연락처·병원·지역·그룹·문의·액션)
+  3. **필터** (`loadCustomers`) — `전체 유형`·`전체 상태` select 삭제, `지역` 필터만 유지
+  4. **통계 카드** (`renderCustomerStats`) — 유형 기준 → `전체 / 그룹 지정 / 병원 연결 / 문의 이력`
+  5. **문의 폼 고객 검색 드롭다운** — 유형 라벨 → `hospital_name`(식별에 실제로 도움이 되는 값)
+- **DB 컬럼은 삭제하지 않습니다.** SQLite `DROP COLUMN` 제약도 있지만, 무엇보다
+  과거 값(`guardian`/`dormant` 등)을 보존해 되살릴 여지를 남기기 위함입니다.
+  `migrations/0040_customer_unify_type_patient.sql`은 값만 통일합니다.
+- **백엔드 `PUT /api/customers/:id`의 `UPDATE`에서 두 컬럼을 완전히 제외**했습니다. **이게 핵심입니다** —
+  폼이 값을 보내지 않는데 `customer_type=?`를 남겨두고 `b.customer_type || 'patient'`로
+  바인딩하면 고객을 **수정할 때마다 기존 유형이 기본값으로 조용히 덮어써집니다.**
+  (`duration_min`/`followup_at` 때와 동일한 함정입니다)
+- `POST /api/customers`의 기본값은 `'prospect'` → **`'patient'`** 로 변경, 상태는 `'active'`.
+- **살아 있는 것** (되살릴 때 그대로 재사용):
+  - `GET /api/customers`의 `type=` / `status=` 쿼리 파라미터
+  - `GET /api/customers/stats`의 `by_type` / `by_status` (현재 프런트에서 소비하지 않음)
+  - `app.js`의 `CUST_TYPE_LABELS` / `CUST_TYPE_COLORS` / `CUST_STATUS_LABELS` 상수
+- `filterCust()`는 `_custFilter.type`·`status`를 **항상 `''`로 고정**합니다.
+  값이 남으면 화면에 해제 수단이 없는데 목록이 걸러져 버립니다.
+- 목록은 **헤더 셀 개수 = 행 셀 개수(7/7)** 가 반드시 일치해야 합니다. 어긋나면 열이 밀립니다.
+- 현재 `customers` SQL 개수: **POST 29/29/29, PUT SET 26 + WHERE 1 = 바인딩 27**
 
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 Database

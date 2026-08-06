@@ -456,6 +456,11 @@ function nav(p) {
 // ===== CS Main =====
 // ============================================================
 // 공용 라벨/색상 매핑
+// ⚠️ CUST_TYPE_* / CUST_STATUS_LABELS 는 현재 화면에서 사용하지 않습니다.
+//    '유형'·'상태'는 사용자 요청으로 폼·목록·필터·통계에서 모두 제거했고,
+//    고객은 전원 '수술 환자'(patient)·'활성'(active)로 통일합니다.
+//    분류가 필요하면 '고객 그룹' 기능으로 묶습니다.
+//    DB 컬럼과 백엔드 쿼리 파라미터는 살아 있으므로, 되살릴 땐 이 상수를 그대로 재사용하세요.
 var CUST_TYPE_LABELS = { prospect: '가망고객', guardian: '보호자', patient: '수술 환자' };
 var CUST_TYPE_COLORS = {
   prospect:  { bg: '#eff6ff', fg: '#1d4ed8', bd: '#bfdbfe' },
@@ -553,7 +558,9 @@ var _custSelected = {};  // 다중선택 { customerId: true }
 async function loadCustomers() {
   var c = document.getElementById('content');
   document.getElementById('page-title').textContent = '고객관리';
-  document.getElementById('page-subtitle').textContent = '가망고객 · 보호자 · 수술 환자 통합 관리';
+  // ⚠️ 부제목에서 유형 열거(가망고객·보호자·수술 환자)를 뺐습니다.
+  //    고객은 전원 '수술 환자'로 통일했고, 분류는 '고객 그룹' 기능이 담당합니다.
+  document.getElementById('page-subtitle').textContent = '수술 환자 · 그룹별 관리';
   document.getElementById('header-actions').innerHTML =
     '<button onclick="openCustomerModal()" class="btn btn-primary btn-sm"><i class="fas fa-plus mr-1"></i>새 고객</button>';
 
@@ -569,18 +576,10 @@ async function loadCustomers() {
               '<i class="fas fa-search absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i>' +
               '<input id="cust-search" oninput="filterCust()" placeholder="이름 · 전화 · 이메일 · 시리얼 검색" class="input pl-10">' +
             '</div>' +
-            '<select id="cust-type" onchange="filterCust()" class="input filter-select">' +
-              '<option value="">전체 유형</option>' +
-              '<option value="prospect">가망고객</option>' +
-              '<option value="guardian">보호자</option>' +
-              '<option value="patient">수술 환자</option>' +
-            '</select>' +
-            '<select id="cust-status" onchange="filterCust()" class="input filter-select">' +
-              '<option value="">전체 상태</option>' +
-              '<option value="active">활성</option>' +
-              '<option value="inactive">비활성</option>' +
-              '<option value="dormant">휴면</option>' +
-            '</select>' +
+            // ⚠️ '전체 유형'·'전체 상태' 필터는 사용자 요청으로 제거했습니다.
+            //    (고객은 모두 '수술 환자'로 통일 — 분류는 '그룹' 기능이 담당)
+            //    백엔드 GET /api/customers 의 type/status 쿼리 파라미터는 그대로 살아 있으므로
+            //    필요해지면 select 만 되살리면 동작합니다.
             '<select id="cust-region" onchange="filterCust()" class="input filter-select">' +
               '<option value="">전체 지역</option>' +
             '</select>' +
@@ -947,11 +946,17 @@ async function fetchCustomers() {
 function renderCustomerStats() {
   var statsDiv = document.getElementById('cust-stats');
   if (!statsDiv) return;
+  // ⚠️ 기존 통계는 '유형'(가망고객/보호자/수술환자) 기준이었습니다.
+  //    유형 구분을 폐기(전원 '수술 환자')하면서 아래 지표로 교체했습니다.
+  //    분류는 '고객 그룹' 기능이 담당하므로 그룹 관련 지표를 노출합니다.
   var total = _custList.length;
-  var byType = { prospect: 0, guardian: 0, patient: 0 };
+  var grouped = 0;      // 그룹에 하나 이상 속한 고객
+  var withHospital = 0; // 병원이 연결된 고객
+  var withInquiry = 0;  // 문의 이력이 있는 고객
   _custList.forEach(function(cst) {
-    var t = cst.customer_type || 'prospect';
-    if (byType[t] !== undefined) byType[t]++;
+    if ((cst.groups || []).length > 0) grouped++;
+    if (cst.hospital_id) withHospital++;
+    if ((cst.inquiry_count || 0) > 0) withInquiry++;
   });
   function card(label, value, color, icon) {
     return '<div class="card p-3 flex items-center gap-3">' +
@@ -964,9 +969,9 @@ function renderCustomerStats() {
   }
   statsDiv.innerHTML =
     card('전체', total, '#0f172a', 'fas fa-user-group') +
-    card('가망고객', byType.prospect, '#2563eb', 'fas fa-user-plus') +
-    card('보호자', byType.guardian, '#7c3aed', 'fas fa-user-shield') +
-    card('수술 환자', byType.patient, '#059669', 'fas fa-user-check');
+    card('그룹 지정', grouped, '#7c3aed', 'fas fa-layer-group') +
+    card('병원 연결', withHospital, '#2563eb', 'fas fa-hospital') +
+    card('문의 이력', withInquiry, '#059669', 'fas fa-headset');
 }
 
 function renderCustomers() {
@@ -977,23 +982,19 @@ function renderCustomers() {
     return;
   }
 
-  // 그리드 컬럼: [체크박스 34px | 이름 1fr | 유형 90 | 상태 100 | 병원 130 | 지역 80 | 그룹 140 | 문의 80 | 액션 80]
-  var GRID_COLS = '34px 1fr 90px 100px 130px 80px 140px 80px 80px';
+  // 그리드 컬럼: [체크박스 34px | 이름 1fr | 병원 160 | 지역 90 | 그룹 190 | 문의 80 | 액션 80]
+  // ⚠️ '유형'·'상태' 컬럼은 사용자 요청으로 제거했습니다(고객은 모두 '수술 환자'로 통일,
+  //    분류는 '그룹' 기능 사용). 남은 폭은 병원·지역·그룹에 배분했습니다.
+  //    헤더 셀 개수와 행 셀 개수는 반드시 일치해야 합니다 — 어긋나면 열이 밀립니다.
+  var GRID_COLS = '34px 1fr 160px 90px 190px 80px 80px';
 
   var html = '<div class="card overflow-hidden">' +
     '<div class="hidden md:grid gap-2 px-4 py-2.5 text-[10px] font-bold text-slate-400 tracking-wide uppercase bg-slate-50/50 border-b border-slate-100" style="grid-template-columns:' + GRID_COLS + '">' +
       '<div><input type="checkbox" id="cust-cb-all" onclick="_custToggleAll(this)" class="w-3.5 h-3.5"></div>' +
-      '<div>이름 / 연락처</div><div>유형</div><div>상태</div><div>병원</div><div>지역</div><div>그룹</div><div class="text-center">문의</div><div class="text-right">액션</div>' +
+      '<div>이름 / 연락처</div><div>병원</div><div>지역</div><div>그룹</div><div class="text-center">문의</div><div class="text-right">액션</div>' +
     '</div>';
 
   _custList.forEach(function(cst) {
-    var typeCol = CUST_TYPE_COLORS[cst.customer_type] || CUST_TYPE_COLORS.prospect;
-    var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || cst.customer_type || '-';
-    var statusLabel = CUST_STATUS_LABELS[cst.status] || cst.status || '-';
-    var statusCls = cst.status === 'active' ? 'text-emerald-600 bg-emerald-50 border-emerald-100'
-      : cst.status === 'dormant' ? 'text-amber-600 bg-amber-50 border-amber-100'
-      : 'text-slate-500 bg-slate-50 border-slate-100';
-
     // 그룹 뱃지 (최대 3개, 나머지는 +N)
     var groups = cst.groups || [];
     var groupsHtml = '';
@@ -1026,14 +1027,6 @@ function renderCustomers() {
           (cst.phone ? '<i class="fas fa-phone text-[9px] mr-1"></i>' + csEsc(cst.phone) : '') +
           (cst.email ? ' <span class="text-slate-300">·</span> ' + csEsc(cst.email) : '') +
         '</div>' +
-      '</div>' +
-      // 유형
-      '<div class="flex items-center">' +
-        '<span class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border" style="background:' + typeCol.bg + ';color:' + typeCol.fg + ';border-color:' + typeCol.bd + '">' + typeLabel + '</span>' +
-      '</div>' +
-      // 상태
-      '<div class="flex items-center">' +
-        '<span class="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-md border ' + statusCls + '">' + statusLabel + '</span>' +
       '</div>' +
       // 병원
       '<div class="text-[11px] text-slate-500 truncate flex items-center">' + (cst.hospital_name ? '<i class="fas fa-hospital text-[9px] text-slate-300 mr-1"></i>' + csEsc(cst.hospital_name) : '<span class="text-slate-300">-</span>') + '</div>' +
@@ -1081,8 +1074,11 @@ function _custToggleAll(cb) {
 
 function filterCust() {
   _custFilter.search = (document.getElementById('cust-search') || {}).value || '';
-  _custFilter.type = (document.getElementById('cust-type') || {}).value || '';
-  _custFilter.status = (document.getElementById('cust-status') || {}).value || '';
+  // ⚠️ 유형·상태 필터 select 는 제거되었습니다. 값을 항상 ''로 비워
+  //    fetchCustomers()가 type/status 쿼리 파라미터를 붙이지 않게 합니다.
+  //    (필터가 남아 있으면 화면에 조작 수단이 없는데 목록이 걸러져 버립니다)
+  _custFilter.type = '';
+  _custFilter.status = '';
   _custFilter.region = (document.getElementById('cust-region') || {}).value || '';
   clearTimeout(window._custFilterTimer);
   window._custFilterTimer = setTimeout(fetchCustomers, 250);
@@ -1127,7 +1123,7 @@ var _custDevicesState = { customerId: null, internal: [], external: [] };
 // 편집 모드에서만 CRUD 즉시 반영. 신규 등록에서는 저장 이후 devices 편집 유도.
 
 async function openCustomerModal(id) {
-  var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'prospect', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '',
+  var cst = { name: '', phone: '', email: '', birth_date: '', gender: '', customer_type: 'patient', hospital_id: '', address: '', region: '', implant_date: '', implant_side: '', device_model: '', device_serial: '', status: 'active', notes: '',
     surgery_side: '',
     internal_manufacturer: '', internal_model: '', internal_serial: '', internal_implant_date: '', internal_side: '',
     external_manufacturer: '', external_model: '', external_serial: '', external_supply_date: '', external_version: '',
@@ -1169,10 +1165,11 @@ async function openCustomerModal(id) {
 
   var body =
     '<form id="fm-customer" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-      '<div><label class="input-label">이름 *</label><input name="name" type="text" value="' + csEsc(cst.name) + '" class="input" required></div>' +
-      '<div><label class="input-label">유형</label><select name="customer_type" class="input">' +
-        ['prospect','guardian','patient'].map(function(t) { return '<option value="' + t + '"' + (cst.customer_type === t ? ' selected' : '') + '>' + CUST_TYPE_LABELS[t] + '</option>'; }).join('') +
-      '</select></div>' +
+      // ⚠️ '유형'(customer_type)·'상태'(status) 입력칸은 사용자 요청으로 제거했습니다.
+      //    신규 고객은 백엔드에서 '수술 환자'(patient)·'활성'(active)로 고정 생성되고,
+      //    수정 시에는 백엔드 UPDATE 대상에서 빠져 기존 값이 그대로 보존됩니다.
+      //    고객 분류가 필요하면 '고객 그룹' 기능으로 묶습니다.
+      '<div class="col-span-full"><label class="input-label">이름 *</label><input name="name" type="text" value="' + csEsc(cst.name) + '" class="input" required></div>' +
       '<div><label class="input-label">전화번호</label><input name="phone" type="tel" value="' + csEsc(cst.phone) + '" class="input" placeholder="010-1234-5678"></div>' +
       '<div><label class="input-label">이메일</label><input name="email" type="email" value="' + csEsc(cst.email) + '" class="input"></div>' +
       '<div><label class="input-label">생년월일</label><input name="birth_date" type="date" value="' + csEsc(cst.birth_date) + '" class="input"></div>' +
@@ -1182,9 +1179,6 @@ async function openCustomerModal(id) {
       '<div><label class="input-label">병원</label><select name="hospital_id" class="input">' + hospOpts + '</select></div>' +
       '<div><label class="input-label">지역</label><select name="region" class="input">' + regionOpts + '</select></div>' +
       '<div class="col-span-full"><label class="input-label">주소</label><input name="address" type="text" value="' + csEsc(cst.address) + '" class="input"></div>' +
-      '<div><label class="input-label">상태</label><select name="status" class="input">' +
-        ['active','inactive','dormant'].map(function(s) { return '<option value="' + s + '"' + (cst.status === s ? ' selected' : '') + '>' + CUST_STATUS_LABELS[s] + '</option>'; }).join('') +
-      '</select></div>' +
 
       // ===== 수술 부위 =====
 
@@ -2224,9 +2218,11 @@ async function openCsInquiryModal(id, prefillCustomerId) {
               var list = res.data.data || [];
               if (list.length === 0) { dd.classList.add('hidden'); return; }
               dd.innerHTML = list.map(function(cst) {
-                var typeLabel = CUST_TYPE_LABELS[cst.customer_type] || '';
+                // ⚠️ 유형 라벨은 제거했습니다(고객 전원 '수술 환자'로 통일 — 표시 가치 없음).
+                //    대신 식별에 실제로 도움이 되는 병원명을 보여줍니다.
+                var subLabel = cst.hospital_name ? csEsc(cst.hospital_name) : '';
                 return '<div class="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-gray-50 last:border-0" data-id="' + cst.id + '" data-name="' + csEsc(cst.name) + '" data-phone="' + csEsc(cst.phone || '') + '" data-email="' + csEsc(cst.email || '') + '">' +
-                  '<div class="text-[12px] font-medium text-slate-700">' + csEsc(cst.name) + ' <span class="text-[10px] text-slate-400 font-normal">' + typeLabel + '</span></div>' +
+                  '<div class="text-[12px] font-medium text-slate-700">' + csEsc(cst.name) + (subLabel ? ' <span class="text-[10px] text-slate-400 font-normal">' + subLabel + '</span>' : '') + '</div>' +
                   '<div class="text-[10px] text-slate-400">' + csEsc(cst.phone || '') + (cst.email ? ' · ' + csEsc(cst.email) : '') + '</div>' +
                 '</div>';
               }).join('');

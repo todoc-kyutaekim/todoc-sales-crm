@@ -224,7 +224,10 @@ customers.post('/', async (c) => {
   `).bind(
     b.name.trim(),
     b.phone || '', b.email || '', b.birth_date || '', b.gender || '',
-    b.customer_type || 'prospect',
+    // ⚠️ 유형·상태 입력칸은 폼에서 제거되었습니다(사용자 요청).
+    //    신규 고객은 모두 '수술 환자'(patient) · '활성'(active)로 고정 생성합니다.
+    //    분류가 필요하면 유형이 아니라 '고객 그룹' 기능으로 묶습니다.
+    b.customer_type || 'patient',
     b.hospital_id ? safeInt(String(b.hospital_id)) : null,
     b.address || '', b.region || '',
     b.implant_date || '', b.implant_side || '',
@@ -249,12 +252,18 @@ customers.put('/:id', async (c) => {
   if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) {
     return apiError(c, 400, '이름을 입력하세요', ErrorCodes.VALIDATION)
   }
+  // ⚠️ customer_type / status 는 UPDATE 대상에서 제외했습니다. 이게 핵심입니다 —
+  //    두 입력칸을 폼에서 없앴으므로 요청 본문에 값이 오지 않는데,
+  //    `customer_type=?` 를 남겨두고 `b.customer_type || 'patient'` 로 바인딩하면
+  //    고객을 수정할 때마다 기존 유형이 기본값으로 덮어써집니다.
+  //    (예: 'guardian'(보호자)으로 저장된 과거 데이터가 조용히 'patient'로 바뀜)
+  //    DB 컬럼은 유지되므로 기존 값은 그대로 보존됩니다.
   await c.env.DB.prepare(`
     UPDATE customers SET
-      name=?, phone=?, email=?, birth_date=?, gender=?, customer_type=?,
+      name=?, phone=?, email=?, birth_date=?, gender=?,
       hospital_id=?, address=?, region=?,
       implant_date=?, implant_side=?, device_model=?, device_serial=?,
-      guardian_of=?, status=?, tags=?, notes=?,
+      guardian_of=?, tags=?, notes=?,
       internal_manufacturer=?, internal_model=?, internal_serial=?, internal_implant_date=?, internal_side=?,
       external_manufacturer=?, external_model=?, external_serial=?, external_supply_date=?, external_version=?,
       surgery_side=?,
@@ -263,13 +272,11 @@ customers.put('/:id', async (c) => {
   `).bind(
     b.name.trim(),
     b.phone || '', b.email || '', b.birth_date || '', b.gender || '',
-    b.customer_type || 'prospect',
     b.hospital_id ? safeInt(String(b.hospital_id)) : null,
     b.address || '', b.region || '',
     b.implant_date || '', b.implant_side || '',
     b.device_model || '', b.device_serial || '',
     b.guardian_of ? safeInt(String(b.guardian_of)) : null,
-    b.status || 'active',
     b.tags || '', b.notes || '',
     b.internal_manufacturer || null, b.internal_model || null, b.internal_serial || null, b.internal_implant_date || null, b.internal_side || null,
     b.external_manufacturer || null, b.external_model || null, b.external_serial || null, b.external_supply_date || null, b.external_version || null,
