@@ -5,6 +5,27 @@ type Bindings = { DB: D1Database }
 type Variables = { userId: number }
 const cs = new Hono<{ Bindings: Bindings, Variables: Variables }>()
 
+// ────────────────────────────────────────────────────────────────
+// 접수일시(created_at) 정규화
+//
+// ⚠️ DB의 DATETIME은 모두 UTC 기준입니다(CURRENT_TIMESTAMP가 UTC).
+// 프런트는 사용자의 로컬 시각을 UTC로 변환해 'YYYY-MM-DD HH:MM:SS'로 보냅니다.
+// 여기서는 그 형식만 검증하고, 형식이 어긋나면 null을 돌려 "변경하지 않음"으로 처리합니다.
+// (잘못된 값으로 접수일시를 덮어써서 통계·추이 그래프가 깨지는 것을 막습니다)
+// ────────────────────────────────────────────────────────────────
+function normalizeDateTime(v: any): string | null {
+  if (v == null || v === '') return null
+  const s = String(v).trim().replace('T', ' ')
+  // 'YYYY-MM-DD HH:MM' 또는 'YYYY-MM-DD HH:MM:SS' 허용
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2})(?::(\d{2}))?$/)
+  if (!m) return null
+  const [, y, mo, d, h, mi, sec] = m
+  // 실제로 존재하는 날짜인지 확인 (2026-02-30 같은 값 차단)
+  const dt = new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +(sec || 0)))
+  if (dt.getUTCFullYear() !== +y || dt.getUTCMonth() !== +mo - 1 || dt.getUTCDate() !== +d) return null
+  return `${y}-${mo}-${d} ${h}:${mi}:${sec || '00'}`
+}
+
 // GET /api/cs/inquiries?search=&status=&category=&priority=&assignee_id=&customer_id=&channel=&limit=
 cs.get('/', async (c) => {
   const { search, status, category, priority, assignee_id, customer_id, channel, direction, limit } = c.req.query()
@@ -130,13 +151,20 @@ cs.post('/', async (c) => {
     return apiError(c, 400, '제목(문의 요약)을 입력하세요', ErrorCodes.VALIDATION)
   }
   const uid = c.get('userId')
+
+  // 접수일시: 사용자가 지정하면 그 값, 없거나 형식이 잘못되면 현재시각(UTC)
+  const createdAt = normalizeDateTime(b.created_at)
+  // 접수자: 사용자가 지정하면 그 값, 없으면 요청한 본인
+  const createdBy = b.created_by ? safeInt(String(b.created_by)) : (uid || null)
+
   const r = await c.env.DB.prepare(`
     INSERT INTO cs_inquiries (
       customer_id, contact_name, contact_phone, contact_email,
       subject, category, channel, priority, status,
       assignee_id, first_message, hospital_id, created_by,
-      direction, duration_min, followup_at, related_repair_id
-    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      direction, duration_min, followup_at, related_repair_id,
+      created_at
+    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, COALESCE(?, CURRENT_TIMESTAMP))
   `).bind(
     b.customer_id ? safeInt(String(b.customer_id)) : null,
     b.contact_name || '', b.contact_phone || '', b.contact_email || '',
@@ -148,21 +176,23 @@ cs.post('/', async (c) => {
     b.assignee_id ? safeInt(String(b.assignee_id)) : null,
     b.first_message || '',
     b.hospital_id ? safeInt(String(b.hospital_id)) : null,
-    uid || null,
+    createdBy,
     b.direction === 'outbound' ? 'outbound' : 'inbound',
     b.duration_min != null && b.duration_min !== '' ? safeInt(String(b.duration_min)) : null,
     b.followup_at || null,
-    b.related_repair_id ? safeInt(String(b.related_repair_id)) : null
+    b.related_repair_id ? safeInt(String(b.related_repair_id)) : null,
+    createdAt
   ).run()
 
   const newId = r.meta.last_row_id as number
 
   // 최초 메시지가 있으면 응답 이력에도 초기 항목으로 남김 (타임라인 완결성)
+  // 접수일시를 지정했다면 이 항목도 같은 시각으로 맞춥니다(타임라인 순서 보존).
   if (b.first_message && b.first_message.trim()) {
     await c.env.DB.prepare(`
-      INSERT INTO cs_inquiry_responses (inquiry_id, user_id, response_type, channel, content)
-      VALUES (?,?,?,?,?)
-    `).bind(newId, uid || null, 'reply', b.channel || 'phone', b.first_message.trim()).run()
+      INSERT INTO cs_inquiry_responses (inquiry_id, user_id, response_type, channel, content, created_at)
+      VALUES (?,?,?,?,?, COALESCE(?, CURRENT_TIMESTAMP))
+    `).bind(newId, createdBy, 'reply', b.channel || 'phone', b.first_message.trim(), createdAt).run()
   }
 
   await logActivity(c.env.DB, 'create', 'cs_inquiry', newId, b.subject.trim())
@@ -192,68 +222,40 @@ cs.put('/:id', async (c) => {
   const nowFollowupAt = b.followup_at || null
   const nowRelatedRepair = b.related_repair_id ? safeInt(String(b.related_repair_id)) : null
 
-  // resolved_at은 상태 전환 시에만 갱신
-  if (nowResolvedAt === "datetime('now')") {
-    await c.env.DB.prepare(`
-      UPDATE cs_inquiries SET
-        customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
-        subject=?, category=?, channel=?, priority=?, status=?,
-        assignee_id=?, first_message=?, hospital_id=?,
-        direction=?, duration_min=?, followup_at=?, related_repair_id=?,
-        updated_at=CURRENT_TIMESTAMP, resolved_at=datetime('now')
-      WHERE id=?
-    `).bind(
-      b.customer_id ? safeInt(String(b.customer_id)) : null,
-      b.contact_name || '', b.contact_phone || '', b.contact_email || '',
-      b.subject.trim(),
-      b.category || 'general', b.channel || 'phone',
-      b.priority || 'mid', nowStatus,
-      nowAssignee, b.first_message || '',
-      b.hospital_id ? safeInt(String(b.hospital_id)) : null,
-      nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
-      id
-    ).run()
-  } else if (nowResolvedAt === 'NULL') {
-    await c.env.DB.prepare(`
-      UPDATE cs_inquiries SET
-        customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
-        subject=?, category=?, channel=?, priority=?, status=?,
-        assignee_id=?, first_message=?, hospital_id=?,
-        direction=?, duration_min=?, followup_at=?, related_repair_id=?,
-        updated_at=CURRENT_TIMESTAMP, resolved_at=NULL
-      WHERE id=?
-    `).bind(
-      b.customer_id ? safeInt(String(b.customer_id)) : null,
-      b.contact_name || '', b.contact_phone || '', b.contact_email || '',
-      b.subject.trim(),
-      b.category || 'general', b.channel || 'phone',
-      b.priority || 'mid', nowStatus,
-      nowAssignee, b.first_message || '',
-      b.hospital_id ? safeInt(String(b.hospital_id)) : null,
-      nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
-      id
-    ).run()
-  } else {
-    await c.env.DB.prepare(`
-      UPDATE cs_inquiries SET
-        customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
-        subject=?, category=?, channel=?, priority=?, status=?,
-        assignee_id=?, first_message=?, hospital_id=?,
-        direction=?, duration_min=?, followup_at=?, related_repair_id=?,
-        updated_at=CURRENT_TIMESTAMP
-      WHERE id=?
-    `).bind(
-      b.customer_id ? safeInt(String(b.customer_id)) : null,
-      b.contact_name || '', b.contact_phone || '', b.contact_email || '',
-      b.subject.trim(),
-      b.category || 'general', b.channel || 'phone',
-      b.priority || 'mid', nowStatus,
-      nowAssignee, b.first_message || '',
-      b.hospital_id ? safeInt(String(b.hospital_id)) : null,
-      nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
-      id
-    ).run()
-  }
+  // ⚠️ 이전에는 resolved_at 처리 방식(설정/해제/유지) 때문에 거의 동일한
+  //    UPDATE 문을 3벌 복사해 두었습니다. 필드를 하나 추가할 때 3곳을 모두
+  //    고쳐야 해서 누락이 나기 쉬웠으므로, SQL 조각만 분기해 1벌로 합쳤습니다.
+  const resolvedAtSql =
+    nowResolvedAt === "datetime('now')" ? ", resolved_at=datetime('now')"
+    : nowResolvedAt === 'NULL' ? ', resolved_at=NULL'
+    : ''  // 유지
+
+  // 접수일시/접수자: 값이 오면 갱신, 없으면 기존 값 유지(COALESCE로 보호)
+  const createdAt = normalizeDateTime(b.created_at)
+  const createdBy = b.created_by ? safeInt(String(b.created_by)) : null
+
+  await c.env.DB.prepare(`
+    UPDATE cs_inquiries SET
+      customer_id=?, contact_name=?, contact_phone=?, contact_email=?,
+      subject=?, category=?, channel=?, priority=?, status=?,
+      assignee_id=?, first_message=?, hospital_id=?,
+      direction=?, duration_min=?, followup_at=?, related_repair_id=?,
+      created_at=COALESCE(?, created_at),
+      created_by=COALESCE(?, created_by),
+      updated_at=CURRENT_TIMESTAMP${resolvedAtSql}
+    WHERE id=?
+  `).bind(
+    b.customer_id ? safeInt(String(b.customer_id)) : null,
+    b.contact_name || '', b.contact_phone || '', b.contact_email || '',
+    b.subject.trim(),
+    b.category || 'general', b.channel || 'phone',
+    b.priority || 'mid', nowStatus,
+    nowAssignee, b.first_message || '',
+    b.hospital_id ? safeInt(String(b.hospital_id)) : null,
+    nowDirection, nowDuration, nowFollowupAt, nowRelatedRepair,
+    createdAt, createdBy,
+    id
+  ).run()
 
   // 상태 변경 이력 기록
   if (prev && prev.status !== nowStatus) {
@@ -331,10 +333,59 @@ cs.post('/:id/responses', async (c) => {
   return c.json({ data: { id: r.meta.last_row_id } }, 201)
 })
 
+// PUT /api/cs/inquiries/:id/responses/:rid — 응답/메모 수정
+//
+// ⚠️ response_type이 'status_change'/'assignee_change'인 항목은 시스템이 자동 기록한
+//    감사(audit) 이력이므로 수정을 막습니다. 사람이 쓴 'reply'/'note'만 수정 가능합니다.
+cs.put('/:id/responses/:rid', async (c) => {
+  const id = c.req.param('id')
+  const rid = c.req.param('rid')
+  const b = await c.req.json()
+  if (!b.content || typeof b.content !== 'string' || b.content.trim().length === 0) {
+    return apiError(c, 400, '내용을 입력하세요', ErrorCodes.VALIDATION)
+  }
+
+  // 해당 문의에 속한 항목인지 확인 (다른 문의의 응답을 수정하는 것 차단)
+  const row = await c.env.DB.prepare(
+    'SELECT id, response_type FROM cs_inquiry_responses WHERE id=? AND inquiry_id=?'
+  ).bind(rid, id).first() as any
+  if (!row) return apiError(c, 404, '응답을 찾을 수 없습니다', ErrorCodes.NOT_FOUND)
+  if (row.response_type === 'status_change' || row.response_type === 'assignee_change') {
+    return apiError(c, 400, '시스템이 기록한 변경 이력은 수정할 수 없습니다', ErrorCodes.VALIDATION)
+  }
+
+  // response_type은 reply ↔ note 사이에서만 변경 허용
+  const nextType = (b.response_type === 'note' || b.response_type === 'reply')
+    ? b.response_type : row.response_type
+
+  await c.env.DB.prepare(`
+    UPDATE cs_inquiry_responses
+    SET content=?, response_type=?, channel=?
+    WHERE id=?
+  `).bind(b.content.trim(), nextType, b.channel || '', rid).run()
+
+  await c.env.DB.prepare('UPDATE cs_inquiries SET updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(id).run()
+  await logActivity(c.env.DB, 'update', 'cs_inquiry', Number(id), '', 'response edited')
+  return c.json({ data: { id: Number(rid) } })
+})
+
 // DELETE /api/cs/inquiries/:id/responses/:rid
 cs.delete('/:id/responses/:rid', async (c) => {
+  const id = c.req.param('id')
   const rid = c.req.param('rid')
+
+  // 소속 확인 + 시스템 이력 보호 (수정과 동일한 규칙)
+  const row = await c.env.DB.prepare(
+    'SELECT id, response_type FROM cs_inquiry_responses WHERE id=? AND inquiry_id=?'
+  ).bind(rid, id).first() as any
+  if (!row) return apiError(c, 404, '응답을 찾을 수 없습니다', ErrorCodes.NOT_FOUND)
+  if (row.response_type === 'status_change' || row.response_type === 'assignee_change') {
+    return apiError(c, 400, '시스템이 기록한 변경 이력은 삭제할 수 없습니다', ErrorCodes.VALIDATION)
+  }
+
   await c.env.DB.prepare('DELETE FROM cs_inquiry_responses WHERE id=?').bind(rid).run()
+  await c.env.DB.prepare('UPDATE cs_inquiries SET updated_at=CURRENT_TIMESTAMP WHERE id=?').bind(id).run()
+  await logActivity(c.env.DB, 'update', 'cs_inquiry', Number(id), '', 'response deleted')
   return c.json({ data: { id: Number(rid) } })
 })
 

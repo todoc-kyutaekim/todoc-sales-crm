@@ -508,6 +508,39 @@ function csFmtDateTime(s) {
   return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
 }
 
+// ────────────────────────────────────────────────────────────────
+// UTC ↔ 로컬 변환 (datetime-local 입력 전용)
+//
+// ⚠️ DB의 DATETIME 컬럼은 모두 UTC입니다(CURRENT_TIMESTAMP가 UTC).
+//    반면 <input type="datetime-local">은 항상 "사용자 로컬 시각"을 다룹니다.
+//    따라서 값을 화면에 넣을 때 UTC→로컬, 저장할 때 로컬→UTC로 되돌려야 합니다.
+//    이 변환을 빼먹으면 접수일시가 9시간(KST)씩 밀립니다.
+// ────────────────────────────────────────────────────────────────
+
+// 'YYYY-MM-DD HH:MM:SS'(UTC) 또는 ISO 문자열 → 'YYYY-MM-DDTHH:MM'(로컬)
+function _csInqUtcToLocalInput(s) {
+  if (!s) return '';
+  var str = String(s);
+  var d = new Date(str.replace(' ', 'T') + (str.endsWith('Z') || str.includes('+') ? '' : 'Z'));
+  if (isNaN(d.getTime())) return '';
+  var pad = function(n) { return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) +
+         'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+
+// 'YYYY-MM-DDTHH:MM'(로컬) → 'YYYY-MM-DD HH:MM:SS'(UTC)
+// 형식이 어긋나면 '' 를 돌려주고, 호출측에서 "변경하지 않음"으로 처리합니다.
+function _csInqLocalInputToUtc(s) {
+  if (!s) return '';
+  var m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!m) return '';
+  var d = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], 0);
+  if (isNaN(d.getTime())) return '';
+  var pad = function(n) { return String(n).padStart(2, '0'); };
+  return d.getUTCFullYear() + '-' + pad(d.getUTCMonth()+1) + '-' + pad(d.getUTCDate()) +
+         ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+}
+
 // ============================================================
 // ===== 고객관리 =====
 // ============================================================
@@ -1962,6 +1995,41 @@ async function openCsInquiryModal(id, prefillCustomerId) {
       };
       var cfg = typeCfg[r.response_type] || typeCfg.reply;
       var chLabel = r.channel ? ' · ' + (CS_INQ_CHANNEL_LABELS[r.channel] || r.channel) : '';
+
+      // ⚠️ status_change / assignee_change 는 시스템이 자동 기록한 감사(audit) 이력입니다.
+      //    백엔드도 이 두 타입의 수정·삭제를 400으로 막고 있으므로(cs_inquiries.ts),
+      //    UI에서도 버튼을 아예 노출하지 않아 사용자가 헛클릭하지 않게 합니다.
+      var isSystem = (r.response_type === 'status_change' || r.response_type === 'assignee_change');
+      var tools = isSystem ? '' : (
+        '<span class="flex items-center gap-1 ml-1" id="cs-resp-tools-' + r.id + '">' +
+          '<button type="button" onclick="_csRespEditStart(' + inq.id + ',' + r.id + ')" class="text-[10px] text-slate-400 hover:text-blue-600 px-1" title="수정"><i class="fas fa-pen"></i></button>' +
+          '<button type="button" onclick="_csRespDelete(' + inq.id + ',' + r.id + ')" class="text-[10px] text-slate-400 hover:text-red-500 px-1" title="삭제"><i class="fas fa-trash"></i></button>' +
+        '</span>'
+      );
+
+      // 인라인 편집 폼은 처음엔 숨겨두고, 수정 버튼을 누르면 본문과 교체합니다.
+      var editForm = isSystem ? '' : (
+        '<div id="cs-resp-edit-' + r.id + '" class="hidden mt-1">' +
+          '<div class="grid grid-cols-2 gap-2 mb-1.5">' +
+            '<select id="cs-resp-etype-' + r.id + '" class="input text-[11px] py-1">' +
+              '<option value="reply"' + (r.response_type === 'reply' ? ' selected' : '') + '>응답</option>' +
+              '<option value="note"' + (r.response_type === 'note' ? ' selected' : '') + '>내부 메모</option>' +
+            '</select>' +
+            '<select id="cs-resp-echannel-' + r.id + '" class="input text-[11px] py-1">' +
+              '<option value="">채널 선택 안 함</option>' +
+              Object.keys(CS_INQ_CHANNEL_LABELS).map(function(k) {
+                return '<option value="' + k + '"' + (r.channel === k ? ' selected' : '') + '>' + CS_INQ_CHANNEL_LABELS[k] + '</option>';
+              }).join('') +
+            '</select>' +
+          '</div>' +
+          '<textarea id="cs-resp-econtent-' + r.id + '" rows="3" class="input text-[12px] mb-1.5">' + csEsc(r.content) + '</textarea>' +
+          '<div class="flex justify-end gap-1.5">' +
+            '<button type="button" onclick="_csRespEditCancel(' + r.id + ')" class="btn btn-outline btn-sm text-[11px]">취소</button>' +
+            '<button type="button" onclick="_csRespEditSave(' + inq.id + ',' + r.id + ')" class="btn btn-primary btn-sm text-[11px]"><i class="fas fa-check mr-1"></i>저장</button>' +
+          '</div>' +
+        '</div>'
+      );
+
       return '<div class="flex gap-2 py-2.5 border-b border-slate-100 last:border-0">' +
         '<div class="flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center" style="background:' + cfg.color + '15">' +
           '<i class="fas ' + cfg.icon + ' text-[10px]" style="color:' + cfg.color + '"></i>' +
@@ -1971,8 +2039,10 @@ async function openCsInquiryModal(id, prefillCustomerId) {
             '<span class="text-[11px] font-bold" style="color:' + cfg.color + '">' + cfg.label + '</span>' +
             '<span class="text-[10px] text-slate-400">' + csEsc(r.user_name || '시스템') + chLabel + '</span>' +
             '<span class="text-[10px] text-slate-300 ml-auto">' + csFmtDateTime(r.created_at) + '</span>' +
+            tools +
           '</div>' +
-          '<div class="text-[12px] text-slate-700 whitespace-pre-wrap leading-relaxed">' + csEsc(r.content).replace(/\n/g, '<br>') + '</div>' +
+          '<div id="cs-resp-view-' + r.id + '" class="text-[12px] text-slate-700 whitespace-pre-wrap leading-relaxed">' + csEsc(r.content).replace(/\n/g, '<br>') + '</div>' +
+          editForm +
         '</div>' +
       '</div>';
     }).join('');
@@ -2008,10 +2078,75 @@ async function openCsInquiryModal(id, prefillCustomerId) {
       '</div>';
   }
 
+  // ─────────────────────────────────────────────────────────────
+  // 접수일시 입력값 준비
+  // ⚠️ DB의 created_at은 UTC입니다. datetime-local 입력은 로컬 시각이므로
+  //    표시할 때 UTC→로컬로 변환하고, 저장할 때 로컬→UTC로 되돌립니다.
+  //    (변환을 빼먹으면 접수일시가 9시간씩 밀립니다)
+  // ─────────────────────────────────────────────────────────────
+  var createdAtLocal = _csInqUtcToLocalInput(inq.created_at || '');
+  // 신규 접수는 "지금"을 기본값으로 넣어줍니다 (수정 가능)
+  if (!id && !createdAtLocal) createdAtLocal = _csInqUtcToLocalInput(new Date().toISOString());
+
+  // 접수자: 신규는 로그인 사용자 기본 선택
+  var createdById = inq.created_by || (!id ? ((currentUser && currentUser.id) || '') : '');
+  var creatorOpts = '<option value="">미지정</option>' + _csInqUsers.map(function(u) {
+    var sel = (String(createdById || '') === String(u.id)) ? ' selected' : '';
+    return '<option value="' + u.id + '"' + sel + '>' + csEsc(u.name) + '</option>';
+  }).join('');
+
+  // 섹션 제목 헬퍼 (번호 + 아이콘)
+  var sec = function(n, icon, title, hint) {
+    return '<div class="col-span-full mt-1 first:mt-0">' +
+      '<div class="flex items-center gap-2 pb-1.5 mb-0.5 border-b border-slate-100">' +
+        '<span class="flex-shrink-0 w-[18px] h-[18px] rounded-full bg-brand-500 text-white text-[10px] font-bold flex items-center justify-center">' + n + '</span>' +
+        '<i class="fas ' + icon + ' text-[11px] text-brand-500"></i>' +
+        '<span class="text-[12px] font-bold text-slate-700">' + title + '</span>' +
+        (hint ? '<span class="text-[10px] text-slate-400 font-normal">' + hint + '</span>' : '') +
+      '</div>' +
+    '</div>';
+  };
+
   var body =
     detailHeader +
-    '<form id="fm-inquiry" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-      '<div class="col-span-full"><label class="input-label">제목 *</label><input name="subject" type="text" value="' + csEsc(inq.subject) + '" class="input" required placeholder="문의 요약"></div>' +
+    '<form id="fm-inquiry" class="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-2.5">' +
+
+      // ── 1. 제목 ──
+      sec('1', 'fa-tag', '제목', '필수') +
+      '<div class="col-span-full"><input name="subject" type="text" value="' + csEsc(inq.subject) + '" class="input" required placeholder="문의 요약 (예: 소리가 안 들립니다)"></div>' +
+
+      // ── 2. 접수일 및 시간 / 접수자 ──
+      sec('2', 'fa-clock', '접수일 및 시간 / 접수자') +
+      '<div><label class="input-label">접수일시</label>' +
+        '<input name="created_at_local" type="datetime-local" value="' + csEsc(createdAtLocal) + '" class="input">' +
+        '<div class="text-[10px] text-slate-400 mt-0.5">비워두면 현재 시각으로 접수됩니다</div>' +
+      '</div>' +
+      '<div><label class="input-label">접수자</label><select name="created_by" class="input">' + creatorOpts + '</select></div>' +
+
+      // ── 3. 고객명 ──
+      sec('3', 'fa-user', '고객명') +
+      '<div class="col-span-full relative">' +
+        '<label class="input-label">고객 검색' + (inq.customer_id ? ' <span class="text-[10px] text-blue-500">(연결됨)</span>' : '') + '</label>' +
+        '<div class="flex gap-1">' +
+          '<input name="customer_id" type="hidden" value="' + csEsc(inq.customer_id) + '">' +
+          '<input id="cs-inq-cust-name" type="text" value="' + csEsc(custName) + '" class="input flex-1" placeholder="등록 고객 검색 (선택)" autocomplete="off">' +
+          '<button type="button" onclick="_csInqClearCustomer()" class="text-[10px] px-2 rounded bg-slate-100 hover:bg-slate-200" title="연결 해제"><i class="fas fa-times"></i></button>' +
+        '</div>' +
+        '<div id="cs-inq-cust-dd" class="hidden mt-1 border border-gray-200 rounded-xl bg-white shadow-lg max-h-[180px] overflow-y-auto absolute z-30 left-0 right-0"></div>' +
+      '</div>' +
+      '<div class="col-span-full"><label class="input-label">연락처 이름 <span class="text-[10px] text-slate-400">(미등록 고객일 때 직접 입력)</span></label><input name="contact_name" type="text" value="' + csEsc(inq.contact_name) + '" class="input" placeholder="예: 홍길동"></div>' +
+
+      // ── 4. 연락처 ──
+      sec('4', 'fa-phone', '연락처') +
+      '<div><label class="input-label">전화번호</label><input name="contact_phone" type="tel" value="' + csEsc(inq.contact_phone) + '" class="input" placeholder="010-0000-0000"></div>' +
+      '<div><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(inq.contact_email) + '" class="input" placeholder="name@example.com"></div>' +
+
+      // ── 5. 문의 내용 ──
+      sec('5', 'fa-comment-dots', '문의 내용') +
+      '<div class="col-span-full"><textarea name="first_message" rows="5" class="input" placeholder="고객이 문의한 내용을 기록하세요">' + csEsc(inq.first_message) + '</textarea></div>' +
+
+      // ── 6. 유형 / 채널 / 우선순위 / 상태 등 ──
+      sec('6', 'fa-sliders', '유형 · 채널 · 우선순위 · 상태') +
       '<div><label class="input-label">유형</label><select name="category" class="input">' + catOpts + '</select></div>' +
       '<div><label class="input-label">채널</label><select name="channel" class="input">' + chOpts + '</select></div>' +
       '<div><label class="input-label">우선순위</label><select name="priority" class="input">' + prOpts + '</select></div>' +
@@ -2020,29 +2155,22 @@ async function openCsInquiryModal(id, prefillCustomerId) {
         '<option value="inbound"' + (inq.direction === 'inbound' ? ' selected' : '') + '>수신 (고객→우리)</option>' +
         '<option value="outbound"' + (inq.direction === 'outbound' ? ' selected' : '') + '>발신 (우리→고객)</option>' +
       '</select></div>' +
+      '<div><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
       '<div><label class="input-label">통화/응대 시간 <span class="text-[10px] text-slate-400">(분)</span></label><input name="duration_min" type="number" min="0" value="' + csEsc(inq.duration_min == null ? '' : inq.duration_min) + '" class="input" placeholder="예: 5"></div>' +
       '<div><label class="input-label">후속 예정 <span class="text-[10px] text-slate-400">(선택)</span></label><input name="followup_at" type="datetime-local" value="' + csEsc(inq.followup_at ? String(inq.followup_at).slice(0,16).replace(' ','T') : '') + '" class="input"></div>' +
       '<div class="col-span-full"><label class="input-label">관련 AS/수리 <span class="text-[10px] text-slate-400">(선택 · AS ID 직접 입력)</span></label><input name="related_repair_id" type="number" min="1" value="' + csEsc(inq.related_repair_id || '') + '" class="input" placeholder="예: 12"></div>' +
-      '<div class="col-span-full"><label class="input-label">담당자</label><select name="assignee_id" class="input">' + userOpts + '</select></div>' +
-      '<div class="col-span-full relative">' +
-        '<label class="input-label">고객' + (inq.customer_id ? ' <span class="text-[10px] text-blue-500">(연결됨)</span>' : '') + '</label>' +
-        '<div class="flex gap-1">' +
-          '<input name="customer_id" type="hidden" value="' + csEsc(inq.customer_id) + '">' +
-          '<input id="cs-inq-cust-name" type="text" value="' + csEsc(custName) + '" class="input flex-1" placeholder="고객 검색 (선택)" autocomplete="off">' +
-          '<button type="button" onclick="_csInqClearCustomer()" class="text-[10px] px-2 rounded bg-slate-100 hover:bg-slate-200" title="연결 해제"><i class="fas fa-times"></i></button>' +
-        '</div>' +
-        '<div id="cs-inq-cust-dd" class="hidden mt-1 border border-gray-200 rounded-xl bg-white shadow-lg max-h-[180px] overflow-y-auto absolute z-30 left-0 right-0"></div>' +
-      '</div>' +
-      '<div><label class="input-label">연락처 이름 <span class="text-[10px] text-slate-400">(고객 미연결 시)</span></label><input name="contact_name" type="text" value="' + csEsc(inq.contact_name) + '" class="input"></div>' +
-      '<div><label class="input-label">전화번호</label><input name="contact_phone" type="tel" value="' + csEsc(inq.contact_phone) + '" class="input"></div>' +
-      '<div class="col-span-full"><label class="input-label">이메일</label><input name="contact_email" type="email" value="' + csEsc(inq.contact_email) + '" class="input"></div>' +
-      '<div class="col-span-full"><label class="input-label">문의 내용</label><textarea name="first_message" rows="4" class="input" placeholder="최초 문의 내용">' + csEsc(inq.first_message) + '</textarea></div>' +
     '</form>' +
-    // 응답 이력 + 응답 추가 (편집 모드)
+
+    // ── 7. 응답/메모 (편집 모드에서만) ──
     (id ? (
       '<div class="mt-5 pt-4 border-t border-slate-100">' +
-        '<div class="text-[11px] font-bold text-slate-500 mb-2 flex items-center gap-2"><i class="fas fa-comments text-blue-500"></i>응답 이력 <span class="text-slate-300">(' + (inq.responses || []).length + ')</span></div>' +
-        '<div class="border border-slate-100 rounded-lg px-3 max-h-[280px] overflow-y-auto">' + timeline + '</div>' +
+        '<div class="flex items-center gap-2 pb-1.5 mb-3 border-b border-slate-100">' +
+          '<span class="flex-shrink-0 w-[18px] h-[18px] rounded-full bg-brand-500 text-white text-[10px] font-bold flex items-center justify-center">7</span>' +
+          '<i class="fas fa-comments text-[11px] text-brand-500"></i>' +
+          '<span class="text-[12px] font-bold text-slate-700">응답 / 메모</span>' +
+          '<span class="text-[10px] text-slate-400 font-normal">(' + (inq.responses || []).length + '건 · 내가 쓴 항목은 수정·삭제 가능)</span>' +
+        '</div>' +
+        '<div class="border border-slate-100 rounded-lg px-3 max-h-[320px] overflow-y-auto">' + timeline + '</div>' +
         '<div class="mt-3 pt-3 border-t border-slate-50">' +
           '<div class="text-[11px] font-bold text-slate-500 mb-2"><i class="fas fa-plus text-blue-500 mr-1"></i>응답/메모 추가</div>' +
           '<div class="grid grid-cols-2 gap-2 mb-2">' +
@@ -2133,9 +2261,18 @@ async function _csInqSaveFromPanel(id) {
   if (f.assignee_id === '') delete f.assignee_id;
   if (f.related_repair_id === '') delete f.related_repair_id;
   if (f.duration_min === '') delete f.duration_min;
+  if (f.created_by === '') delete f.created_by;
   // datetime-local (YYYY-MM-DDTHH:MM) → SQLite DATETIME (YYYY-MM-DD HH:MM:00)
   if (f.followup_at) f.followup_at = String(f.followup_at).replace('T', ' ') + ':00';
   else delete f.followup_at;
+
+  // 접수일시: 로컬 입력값을 UTC로 되돌려 created_at 으로 보냅니다.
+  // ⚠️ created_at_local 은 화면 전용 필드이므로 반드시 지워서 서버로 보내지 않습니다.
+  //    값이 비었거나 형식이 어긋나면 아예 보내지 않아 서버가 기존값(수정) 또는
+  //    현재시각(신규)을 유지하도록 합니다.
+  var utc = _csInqLocalInputToUtc(f.created_at_local);
+  delete f.created_at_local;
+  if (utc) f.created_at = utc;
   try {
     if (id) await API.put('/cs/inquiries/' + id, f);
     else await API.post('/cs/inquiries', f);
@@ -2185,6 +2322,74 @@ async function _csInqAddResponse(inqId) {
     openCsInquiryModal(inqId);
     if (typeof fetchCsInquiries === 'function') fetchCsInquiries();
   } catch(e) { toast('응답 추가 실패', 'err'); }
+}
+
+// ────────────────────────────────────────────────────────────────
+// 응답/메모 수정 · 삭제 (인라인 편집)
+//
+// ⚠️ 시스템이 자동 기록한 status_change / assignee_change 는 애초에 버튼을
+//    렌더하지 않습니다(타임라인의 isSystem 분기 참고). 백엔드도 400으로 막습니다.
+// ────────────────────────────────────────────────────────────────
+function _csRespEditStart(inqId, rid) {
+  // 다른 항목이 편집 중이면 먼저 닫아 한 번에 하나만 편집하도록 합니다.
+  var opened = document.querySelectorAll('[id^="cs-resp-edit-"]:not(.hidden)');
+  for (var i = 0; i < opened.length; i++) {
+    var oid = opened[i].id.replace('cs-resp-edit-', '');
+    if (oid !== String(rid)) _csRespEditCancel(oid);
+  }
+  var view = document.getElementById('cs-resp-view-' + rid);
+  var edit = document.getElementById('cs-resp-edit-' + rid);
+  var tools = document.getElementById('cs-resp-tools-' + rid);
+  if (!view || !edit) return;
+  view.classList.add('hidden');
+  edit.classList.remove('hidden');
+  if (tools) tools.classList.add('hidden');
+  var ta = document.getElementById('cs-resp-econtent-' + rid);
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+function _csRespEditCancel(rid) {
+  var view = document.getElementById('cs-resp-view-' + rid);
+  var edit = document.getElementById('cs-resp-edit-' + rid);
+  var tools = document.getElementById('cs-resp-tools-' + rid);
+  if (view) view.classList.remove('hidden');
+  if (edit) edit.classList.add('hidden');
+  if (tools) tools.classList.remove('hidden');
+}
+
+async function _csRespEditSave(inqId, rid) {
+  var content = (document.getElementById('cs-resp-econtent-' + rid) || {}).value || '';
+  var type = (document.getElementById('cs-resp-etype-' + rid) || {}).value || 'reply';
+  var channel = (document.getElementById('cs-resp-echannel-' + rid) || {}).value || '';
+  if (!content.trim()) { toast('내용을 입력하세요', 'warn'); return; }
+  try {
+    await API.put('/cs/inquiries/' + inqId + '/responses/' + rid, {
+      content: content.trim(), response_type: type, channel: channel
+    });
+    toast('수정되었습니다');
+    openCsInquiryModal(inqId);   // 패널 새로고침
+    if (typeof fetchCsInquiries === 'function') fetchCsInquiries();
+  } catch(e) {
+    var msg = (e.response && e.response.data && e.response.data.error) || '수정 실패';
+    toast(msg, 'err');
+  }
+}
+
+function _csRespDelete(inqId, rid) {
+  showConfirm('응답/메모 삭제',
+    '이 항목을 삭제하시겠습니까?<br><span class="text-[11px] text-red-500">삭제 후 되돌릴 수 없습니다.</span>',
+    async function() {
+      try {
+        await API.delete('/cs/inquiries/' + inqId + '/responses/' + rid);
+        toast('삭제되었습니다');
+        openCsInquiryModal(inqId);
+        if (typeof fetchCsInquiries === 'function') fetchCsInquiries();
+      } catch(e) {
+        var msg = (e.response && e.response.data && e.response.data.error) || '삭제 실패';
+        toast(msg, 'err');
+      }
+    },
+    { type: 'delete', yesLabel: '삭제' });
 }
 
 // ============================================================

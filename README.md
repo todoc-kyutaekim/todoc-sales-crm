@@ -186,12 +186,47 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 8. 🏷 **태그**로 기관/의료진 분류 (CI 관심, 핵심 거래처 등)
 9. **인공와우 통계** 메뉴에서 시장 데이터 확인
 10. **Excel/CSV 내보내기**로 데이터 다운로드
+11. **CS → 고객 문의 → 문의 접수**: 1 제목 → 2 접수일시/접수자 → 3 고객명 → 4 연락처 →
+    5 문의 내용 → 6 유형·채널·우선순위·상태 순서로 입력. 저장 후 상세 화면에서
+    7 응답/메모를 추가하고, 사람이 쓴 항목은 연필(수정)·휴지통(삭제) 버튼으로 관리
+
+## ⚠️ CS 고객문의 폼 — 날짜/시간 처리 규칙 (필수 확인)
+
+`접수일시`(`created_at`)와 `후속 예정`(`followup_at`)은 `<input type="datetime-local">`로
+입력받습니다. 여기에 **시간대 함정**이 있으므로 아래 규칙을 반드시 지켜주세요.
+
+- **DB의 모든 `DATETIME`은 UTC**입니다 (SQLite `CURRENT_TIMESTAMP`가 UTC).
+- **`datetime-local`은 항상 "사용자 로컬 시각"** 을 다룹니다. 변환 없이 그대로 주고받으면
+  한국(KST)에서는 접수일시가 **9시간씩 밀립니다.**
+- 따라서 `app.js`의 전용 헬퍼 한 쌍을 **반드시** 통과시켜야 합니다.
+  | 방향 | 함수 | 예시 (KST) |
+  |------|------|-----------|
+  | DB→화면 | `_csInqUtcToLocalInput(utc)` | `'2026-05-20 05:35:00'` → `'2026-05-20T14:35'` |
+  | 화면→DB | `_csInqLocalInputToUtc(local)` | `'2026-05-20T14:35'` → `'2026-05-20 05:35:00'` |
+- 두 함수는 형식이 어긋나면 `''`을 돌려줍니다. 저장 로직(`_csInqSaveFromPanel`)은 이때
+  `created_at`을 **아예 보내지 않아** 서버가 기존 값(수정) 또는 현재 시각(신규)을 유지합니다.
+- 백엔드도 `normalizeDateTime()`으로 형식·실존 날짜(예: `2026-02-30` 거부)를 재검증하고,
+  `created_at=COALESCE(?, created_at)` 패턴으로 잘못된 값이 기존 데이터를 덮어쓰지 못하게 막습니다.
+- `created_at_local`은 **화면 전용 필드**입니다. 전송 전에 반드시 `delete`하세요.
+
+## ⚠️ 응답/메모 수정·삭제 — 시스템 이력 보호
+
+`cs_inquiry_responses`에는 사람이 쓴 항목과 시스템이 자동 기록한 감사(audit) 이력이 섞여 있습니다.
+
+- 수정·삭제 **가능**: `reply`(응답), `note`(내부 메모)
+- 수정·삭제 **불가**: `status_change`(상태 변경), `assignee_change`(담당자 변경)
+- 이 규칙은 **양쪽에서 이중으로** 강제됩니다.
+  - 백엔드 `PUT/DELETE /api/cs/inquiries/:id/responses/:rid` → 해당 타입이면 **HTTP 400**
+  - 프런트 타임라인 → `isSystem` 분기로 버튼 자체를 렌더하지 않음 (헛클릭 방지)
+- 두 엔드포인트는 `WHERE id=? AND inquiry_id=?`로 **소유권도 검증**합니다.
+  다른 문의의 응답 ID를 넣으면 404가 납니다. 이 조건을 절대 제거하지 마세요.
+- 응답 타입 변경은 `reply ↔ note` 사이에서만 허용됩니다(시스템 타입으로 승격 불가).
 
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-07-30
+- **Last Updated**: 2026-08-06
 
 ## 프론트엔드 빌드 (⚠️ 필수 확인)
 
