@@ -335,6 +335,53 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
 - 필드를 추가·이동할 때는 **컬럼 수 = 플레이스홀더 수 = 바인딩 인자 수**를 반드시 재확인하세요.
   어긋나면 값이 엉뚱한 컬럼에 저장되며 **에러도 나지 않습니다.**
 
+### 등록일 표시 (`created_at`)
+
+고객 편집 모달 **최상단**(이름 필드 위)에 `등록일` / `최근 수정` 배지를 읽기 전용으로 표시합니다.
+
+- **신규 등록 모달에서는 표시하지 않습니다** (`id && cst.created_at` 조건). 아직 값이 없습니다.
+- **반드시 `csFmtDateTime()` 을 통과시키세요.** `customers.created_at` 은 SQLite
+  `CURRENT_TIMESTAMP` 형식(`'YYYY-MM-DD HH:MM:SS'`, **UTC**)입니다.
+  `slice(0,10)` 이나 `replace` 로 직접 자르면 **한국시간과 9시간 어긋납니다.**
+  `csFmtDateTime()` 은 타임존 표기가 없으면 `'Z'` 를 붙여 로컬(KST)로 변환합니다.
+  - 검증: 프로덕션 `2026-07-29 05:52:48`(UTC) → 화면 `2026-07-29 14:52`(KST) ✅
+- `updated_at` 이 `created_at` 과 같으면 `최근 수정`은 생략합니다(중복 노출 방지).
+- 읽기는 `GET /api/customers/:id` 의 `SELECT c.*` 로 자동 전달되므로 라우트 수정이 필요 없습니다.
+
+## ⚠️ 내부기 / 외부기 폼 — 제조사 제거 & 외부기 이니셜·보안키
+
+사용자 요청으로 **내부기·외부기 등록 폼에서 `제조사`(manufacturer) 입력칸을 제거**했고,
+**외부기에는 `이니셜`(`initial`)·`보안키`(`security_key`)** 를 추가했습니다(`migrations/0042`).
+
+| 폼 | 현재 필드 순서 |
+|----|----------------|
+| 내부기 | 방향 · 모델명 · 시리얼 번호 · 이식일 · 메모 |
+| 외부기 | 방향 · 상태 · 모델명 · 시리얼 번호 · **이니셜** · **보안키** · 지급/교체일 · 버전 · 메모 |
+
+- **`manufacturer` 컬럼은 삭제하지 않았습니다.** DB·API 는 그대로 살아 있습니다.
+  `app.js` 의 `CUST_MFR_OPTIONS` / `_custMfrOptions()` / `_custMfrLabel()` 도
+  **호출되지 않지만 지우지 마세요.** 제조사를 되살릴 때 다시 참조합니다.
+  각 폼 블록에 복원용 한 줄을 주석으로 남겨두었습니다.
+- **🚨 데이터 손실 방어(반드시 유지):** 폼이 `manufacturer` 를 더 이상 전송하지 않으므로
+  두 PUT 라우트를 **`manufacturer=COALESCE(?, manufacturer)`** 로 바꿨습니다.
+  그냥 `manufacturer=?` 로 두면 **편집 저장마다 기존 제조사 값이 조용히 `NULL` 로 덮어써집니다.**
+  (이 프로젝트에서 같은 패턴의 사고가 반복됐습니다 — `customer_type`·`status`·`guardian_phone` 참고)
+  - 검증: 로컬에서 `cochlear`·`medel` 을 심어두고 `manufacturer` 없이 PUT → **보존 확인 ✅**
+- `initial` / `security_key` 는 **`DEFAULT ''` 없이 NULL 허용**입니다.
+  device 테이블의 다른 텍스트 컬럼(`model`/`serial`/`version`)이 모두 `b.x || null` 패턴이라
+  일관성을 맞췄고, 표시 로직은 `dev.initial || '—'` 로 NULL/`''` 를 동일 취급합니다.
+- **외부기 카드 제목**은 기존 `제조사 라벨` → **`이니셜`** 로 바뀌었습니다
+  (`dev.initial || '외부기'`). 이니셜이 현장 식별에 가장 유용하기 때문입니다.
+- `보안키`는 민감정보지만 현장에서 눈으로 확인·전달해야 하는 값이라 **마스킹하지 않습니다.**
+  대신 입력칸에 `autocomplete="off" spellcheck="false"` 를 걸어 브라우저 저장을 막습니다.
+- 현재 SQL 개수(검증 완료):
+  - 외부기 INSERT **컬럼 11 / 플레이스홀더 11**
+  - 외부기 PUT **SET 10 + WHERE 2 = 바인딩 12**
+  - 내부기 PUT **SET 6 + WHERE 2 = 바인딩 8**
+- `initial`/`security_key` 는 `SELECT` 목록에 **명시적으로 나열**되어 있습니다
+  (`GET /api/customers/:id` 내부 조회 + `GET /api/customers/:id/external-devices` 2곳).
+  컬럼을 더 추가하면 **이 두 곳을 모두** 고쳐야 합니다. 빠뜨리면 화면에 값이 안 나옵니다.
+
 ## Deployment
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
