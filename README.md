@@ -197,6 +197,53 @@ npx wrangler pages secret put OPENAI_BASE_URL --project-name todoc-crm
     상단 카드는 `전체 / 그룹 지정 / 병원 연결 / 문의 이력` 4개 지표를 보여줍니다.
 14. **고객 등록/편집 폼** 입력 순서: 1 이름 → 2 성별 → 3 생년월일 → 4 병원 →
     5 연락처1 → 6 보호자 연락처1 → 7 이메일 → 8 주소 (이후 지역·수술 부위·내부기/외부기·그룹)
+15. **비밀번호 변경**: 두 곳 중 아무 곳에서나 가능합니다.
+    (a) 헤더 우측 **사용자 이름 클릭 → 비밀번호 변경**
+    (b) **마이페이지 → 활성 로그인 세션 카드 하단 '계정 보안' → 비밀번호 변경**
+    현재 비밀번호를 입력해야 하며, 변경하면 **현재 기기를 제외한 모든 기기가 자동 로그아웃**됩니다.
+
+## ⚠️ 계정 보안 — 비밀번호 변경 / 재설정 미지원
+
+**비밀번호 변경**(`POST /api/auth/change-password`)은 지원합니다.
+UI 진입점은 **헤더 사용자 드롭다운**과 **마이페이지 '계정 보안' 카드** 두 곳입니다
+(같은 `showChangePassword()` 모달을 공유하므로 한쪽만 고치면 안 됩니다).
+
+서버 검증: 세션 필수 → 현재 비밀번호 일치 → 새 비밀번호 6자 이상 →
+`password_hash` 갱신 후 **`DELETE FROM sessions WHERE user_id=? AND id!=?`** 로
+다른 기기 세션을 전부 무효화합니다.
+그래서 프론트는 성공 후 `curPage === 'mypage'` 이면 `loadMypage()` 로 세션 목록을 다시 불러옵니다.
+(안 하면 이미 죽은 세션이 화면에 남습니다.)
+
+**비밀번호 재설정(찾기)은 의도적으로 미구현입니다.** 전제 조건이 없습니다:
+- 이메일 발송 수단 없음 (`.dev.vars` 에 `SLACK_WEBHOOK_URL` 만 존재)
+- 관리자 권한 없음 (`users` 테이블에 `role` 컬럼 자체가 없음)
+
+→ 비밀번호를 완전히 잊은 경우 **운영자가 D1 의 `password_hash` 를 직접 교체**해야 합니다.
+해시는 PBKDF2(Web Crypto)라 수동 생성이 불가능하며, 앱의 `hashPassword()` 를 거쳐야 합니다.
+
+### ⚠️ 모달 폼의 제출 버튼을 직접 disabled 하지 마세요
+
+`#modal-body` 안의 모든 `<form>` 은 **캡처 단계 전역 submit 래퍼**(`_setModalSubmitting`)가
+가로채서 스피너·중복 제출 차단·버튼 `disabled` 를 **이미** 처리합니다.
+
+그래서 핸들러 안에서 이런 코드를 쓰면 **모든 제출이 영구 차단됩니다**:
+```js
+if (btn.disabled) return;   // ❌ 래퍼가 먼저 disabled 를 걸어둠 → 항상 return
+btn.disabled = true;        // ❌ 불필요 (래퍼가 함)
+```
+실제 사고: 비밀번호 변경 버튼이 첫 클릭 이후 영구 비활성화되어 변경 자체가 불가능했습니다.
+
+검증 실패로 **조기 return** 할 때는 래퍼가 걸어둔 상태를 반드시 풀어주세요:
+```js
+const release = () => { try { fm._releaseSubmitting && fm._releaseSubmitting() } catch (_) {} };
+if (!f.currentPassword) { toast('...', 'warn'); release(); return }
+```
+
+### ⚠️ `toggleUserDropdown()` 을 '닫기' 목적으로 쓰지 마세요
+
+토글이라서 **이미 닫힌 상태에서 호출하면 반대로 열립니다.**
+마이페이지 버튼처럼 드롭다운 밖에서 호출하는 경우 오작동합니다.
+닫기 전용 `closeUserDropdown()` 을 쓰세요.
 
 ## ⚠️ CS 고객문의 폼 — 날짜/시간 처리 규칙 (필수 확인)
 

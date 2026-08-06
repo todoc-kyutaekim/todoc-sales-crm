@@ -172,7 +172,7 @@ function updateUserUI() {
       '<div id="user-dropdown" class="absolute right-0 top-full mt-2 w-56 bg-white z-50 hidden py-1" style="border-radius:14px;border:1px solid #eef0f5;box-shadow:0 12px 32px -4px rgba(16,24,40,.12),0 0 0 1px rgba(0,0,0,.03)">' +
       '<div class="px-4 py-3" style="border-bottom:1px solid #eef0f5"><div class="text-[13px] font-bold text-slate-800">' + currentUser.name + '</div><div class="text-[11px] text-slate-400 mt-0.5">' + currentUser.email + '</div></div>' +
       '<div class="py-1">' +
-      '<div class="px-4 py-2.5 text-[13px] text-slate-600 hover:bg-gray-50 cursor-pointer flex items-center gap-2.5 transition" onclick="toggleUserDropdown();nav(\'mypage\')"><i class="fas fa-user-circle text-slate-400 text-xs w-4"></i>마이페이지</div>' +
+      '<div class="px-4 py-2.5 text-[13px] text-slate-600 hover:bg-gray-50 cursor-pointer flex items-center gap-2.5 transition" onclick="closeUserDropdown();nav(\'mypage\')"><i class="fas fa-user-circle text-slate-400 text-xs w-4"></i>마이페이지</div>' +
       '<div class="px-4 py-2.5 text-[13px] text-slate-600 hover:bg-gray-50 cursor-pointer flex items-center gap-2.5 transition" onclick="showChangePassword()"><i class="fas fa-key text-slate-400 text-xs w-4"></i>비밀번호 변경</div>' +
       '<div class="px-4 py-2.5 text-[13px] text-red-500 hover:bg-red-50 cursor-pointer flex items-center gap-2.5 transition" onclick="doLogout()"><i class="fas fa-sign-out-alt text-xs w-4"></i>로그아웃</div>' +
       '</div></div>';
@@ -181,6 +181,12 @@ function updateUserUI() {
 function toggleUserDropdown() {
   const dd = document.getElementById('user-dropdown');
   if (dd) dd.classList.toggle('hidden');
+}
+// ⚠️ 항상 "닫기"만 합니다. toggleUserDropdown() 을 닫기 목적으로 쓰면
+//    드롭다운이 이미 닫힌 상태(예: 마이페이지 버튼)에서 반대로 열려버립니다.
+function closeUserDropdown() {
+  const dd = document.getElementById('user-dropdown');
+  if (dd) dd.classList.add('hidden');
 }
 // Close dropdown on outside click
 document.addEventListener('click', e => {
@@ -269,24 +275,38 @@ async function doLogout() {
 }
 
 function showChangePassword() {
-  toggleUserDropdown();
+  closeUserDropdown();
   openModal('비밀번호 변경',
     '<form id="fm" class="space-y-4">' +
     '<div><label class="input-label">현재 비밀번호</label><div class="relative"><i class="fas fa-lock absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="currentPassword" type="password" class="input pl-10 w-full" placeholder="현재 비밀번호" autocomplete="current-password"></div></div>' +
     '<div><label class="input-label">새 비밀번호</label><div class="relative"><i class="fas fa-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="newPassword" type="password" class="input pl-10 w-full" placeholder="6자 이상" autocomplete="new-password"></div></div>' +
     '<div><label class="input-label">새 비밀번호 확인</label><div class="relative"><i class="fas fa-key absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-300 text-xs"></i><input name="confirmPassword" type="password" class="input pl-10 w-full" placeholder="새 비밀번호 다시 입력" autocomplete="new-password"></div></div>' +
+    '<div class="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-100 text-[11px] text-amber-700 leading-relaxed"><i class="fas fa-triangle-exclamation mt-0.5"></i><span>변경하면 <b>현재 기기를 제외한 모든 기기에서 자동 로그아웃</b>됩니다.</span></div>' +
     '<div class="flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">변경</button></div></form>');
   document.getElementById('fm').onsubmit = async e => {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
-    if (!f.currentPassword) { toast('현재 비밀번호를 입력하세요', 'warn'); return }
-    if (!f.newPassword || f.newPassword.length < 6) { toast('새 비밀번호는 6자 이상이어야 합니다', 'warn'); return }
-    if (f.newPassword !== f.confirmPassword) { toast('새 비밀번호가 일치하지 않습니다', 'warn'); return }
+    const fm = e.target;
+    const f = Object.fromEntries(new FormData(fm));
+    // ⚠️ 스피너/중복제출 차단/버튼 disabled 는 modal-body 전역 submit 래퍼가
+    //    캡처 단계에서 이미 처리합니다(_setModalSubmitting, app.js 하단 참고).
+    //    여기서 btn.disabled 를 직접 만지면 안 됩니다 — 래퍼가 먼저 disabled 를
+    //    걸어두기 때문에 `if (btn.disabled) return` 같은 가드는 모든 제출을 막습니다.
+    //    검증 실패로 조기 return 할 때는 반드시 release 를 호출해 버튼을 풀어줍니다.
+    const release = () => { try { fm._releaseSubmitting && fm._releaseSubmitting() } catch (_) {} };
+    if (!f.currentPassword) { toast('현재 비밀번호를 입력하세요', 'warn'); release(); return }
+    if (!f.newPassword || f.newPassword.length < 6) { toast('새 비밀번호는 6자 이상이어야 합니다', 'warn'); release(); return }
+    if (f.newPassword !== f.confirmPassword) { toast('새 비밀번호가 일치하지 않습니다', 'warn'); release(); return }
+    if (f.currentPassword === f.newPassword) { toast('현재 비밀번호와 다른 비밀번호를 입력하세요', 'warn'); release(); return }
     try {
       await API.post('/auth/change-password', { currentPassword: f.currentPassword, newPassword: f.newPassword });
       toast('비밀번호가 변경되었습니다');
       closeModal();
-    } catch (err) { toast(err.response?.data?.error || '변경 실패', 'err') }
+      // 백엔드가 다른 기기 세션을 모두 삭제하므로 마이페이지의 세션 목록을 갱신합니다.
+      if (typeof curPage !== 'undefined' && curPage === 'mypage') loadMypage();
+    } catch (err) {
+      toast(err.response?.data?.error || '변경 실패', 'err');
+      release();
+    }
   };
   setTimeout(() => document.querySelector('#fm input[name="currentPassword"]')?.focus(), 100);
 }
@@ -8163,6 +8183,20 @@ function renderMypage() {
           '</div>' +
           '<div class="space-y-1.5">' + sessionsHtml + '</div>' +
           '<div class="text-[10px] text-slate-400 mt-3 flex items-center gap-1"><i class="fas fa-info-circle"></i>세션 ID는 앞 8자리만 표시됩니다.</div>' +
+
+          // 계정 보안 — 비밀번호 변경 진입점
+          // (헤더 우측 사용자 드롭다운에도 같은 showChangePassword() 항목이 있습니다.
+          //  드롭다운을 못 찾는 사용자를 위해 마이페이지에도 노출합니다.)
+          '<div class="mt-4 pt-4 border-t border-slate-100">' +
+            '<h4 class="text-[12px] font-bold text-slate-700 mb-2 flex items-center gap-2"><i class="fas fa-key text-brand-500"></i>계정 보안</h4>' +
+            '<div class="flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-slate-50/70 border border-slate-100">' +
+              '<div class="min-w-0">' +
+                '<div class="text-[12px] font-semibold text-slate-700">비밀번호</div>' +
+                '<div class="text-[10px] text-slate-400 mt-0.5">변경하면 다른 기기는 모두 자동 로그아웃됩니다</div>' +
+              '</div>' +
+              '<button id="myp-change-pw" onclick="showChangePassword()" class="btn btn-outline btn-sm flex-shrink-0 whitespace-nowrap"><i class="fas fa-key mr-1"></i>비밀번호 변경</button>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
 
       '</div>' +
