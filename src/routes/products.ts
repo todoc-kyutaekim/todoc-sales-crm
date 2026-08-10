@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { logActivity, safeLike } from '../helpers'
+import { logActivity, safeLike, queryByIds } from '../helpers'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number }
@@ -1029,12 +1029,14 @@ products.post('/sets', async (c) => {
   if (!unitIds.length) return c.json({ error: 'unit_ids must contain at least one unit' }, 400)
 
   // 이미 다른 활성 세트에 속한 유닛은 거부
-  const placeholders = unitIds.map(() => '?').join(',')
-  const conflictR = await c.env.DB.prepare(
-    `SELECT product_unit_id FROM product_set_items
-     WHERE product_unit_id IN (${placeholders}) AND removed_at IS NULL`
-  ).bind(...unitIds).all()
-  const conflicts: number[] = (conflictR.results as any[]).map(r => Number(r.product_unit_id))
+  // ⚠️ ID 100개 초과 시 D1 'too many SQL variables' — queryByIds 로 분할 질의
+  const conflictRows = await queryByIds<any>(
+    c.env.DB,
+    ph => `SELECT product_unit_id FROM product_set_items
+     WHERE product_unit_id IN (${ph}) AND removed_at IS NULL`,
+    unitIds
+  )
+  const conflicts: number[] = conflictRows.map(r => Number(r.product_unit_id))
   if (conflicts.length > 0) {
     return c.json({ error: '일부 유닛이 이미 다른 세트에 속해 있습니다', conflicts }, 409)
   }
@@ -1084,12 +1086,16 @@ products.put('/sets/:id', async (c) => {
 
     // 추가 대상이 다른 활성 세트에 속해있으면 거부
     if (toAdd.length > 0) {
-      const placeholders = toAdd.map(() => '?').join(',')
-      const conflictR = await c.env.DB.prepare(
-        `SELECT product_unit_id FROM product_set_items
-         WHERE product_unit_id IN (${placeholders}) AND removed_at IS NULL AND set_id != ?`
-      ).bind(...toAdd, id).all()
-      const conflicts: number[] = (conflictR.results as any[]).map(r => Number(r.product_unit_id))
+      // ⚠️ ID 100개 초과 시 D1 'too many SQL variables' — queryByIds 로 분할 질의.
+      //    IN 절 뒤의 추가 바인딩(set_id != ?)은 extra 인자로 전달합니다.
+      const conflictRows = await queryByIds<any>(
+        c.env.DB,
+        ph => `SELECT product_unit_id FROM product_set_items
+         WHERE product_unit_id IN (${ph}) AND removed_at IS NULL AND set_id != ?`,
+        toAdd,
+        [id]
+      )
+      const conflicts: number[] = conflictRows.map(r => Number(r.product_unit_id))
       if (conflicts.length > 0) {
         return c.json({ error: '일부 유닛이 이미 다른 세트에 속해 있습니다', conflicts }, 409)
       }

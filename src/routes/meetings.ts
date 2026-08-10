@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { logActivity, safeInt, safeLimit, safeLike } from '../helpers'
+import { logActivity, safeInt, safeLimit, safeLike, queryByIds } from '../helpers'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number }
@@ -9,15 +9,18 @@ const meetings = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 async function getMeetingUsers(db: D1Database, meetingIds: number[]): Promise<Map<number, any[]>> {
   const map = new Map<number, any[]>()
   if (!meetingIds.length) return map
-  const placeholders = meetingIds.map(() => '?').join(',')
-  const r = await db.prepare(
-    `SELECT mu.meeting_id, u.id as user_id, u.name as user_name, u.email as user_email
+  // ⚠️ ID 개수가 100 을 넘으면 D1 이 'too many SQL variables' 로 실패합니다.
+  //    queryByIds 가 90개씩 쪼개서 질의합니다. placeholder 를 직접 만들지 마세요.
+  const rows = await queryByIds<any>(
+    db,
+    ph => `SELECT mu.meeting_id, u.id as user_id, u.name as user_name, u.email as user_email
      FROM meeting_users mu
      LEFT JOIN users u ON mu.user_id = u.id
-     WHERE mu.meeting_id IN (${placeholders})
-     ORDER BY mu.meeting_id, u.name`
-  ).bind(...meetingIds).all()
-  for (const row of r.results as any[]) {
+     WHERE mu.meeting_id IN (${ph})
+     ORDER BY mu.meeting_id, u.name`,
+    meetingIds
+  )
+  for (const row of rows) {
     if (!map.has(row.meeting_id)) map.set(row.meeting_id, [])
     map.get(row.meeting_id)!.push({
       id: row.user_id,
@@ -55,16 +58,17 @@ function extractUserIds(body: any, sessionUserId?: number | null): number[] {
 async function getMeetingDoctors(db: D1Database, meetingIds: number[]): Promise<Map<number, any[]>> {
   const map = new Map<number, any[]>()
   if (!meetingIds.length) return map
-  // Batch query meeting_doctors join doctors
-  const placeholders = meetingIds.map(() => '?').join(',')
-  const r = await db.prepare(
-    `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo, d.position as doctor_position
+  // ⚠️ 위 getMeetingUsers 와 동일 — ID 100개 초과 시 D1 실패. queryByIds 로 분할 질의.
+  const rows = await queryByIds<any>(
+    db,
+    ph => `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo, d.position as doctor_position
      FROM meeting_doctors md
      LEFT JOIN doctors d ON md.doctor_id = d.id
-     WHERE md.meeting_id IN (${placeholders})
-     ORDER BY md.meeting_id, d.name`
-  ).bind(...meetingIds).all()
-  for (const row of r.results as any[]) {
+     WHERE md.meeting_id IN (${ph})
+     ORDER BY md.meeting_id, d.name`,
+    meetingIds
+  )
+  for (const row of rows) {
     if (!map.has(row.meeting_id)) map.set(row.meeting_id, [])
     map.get(row.meeting_id)!.push({
       id: row.doctor_id,

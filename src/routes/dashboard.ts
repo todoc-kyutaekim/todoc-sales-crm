@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { queryByIds } from '../helpers'
 
 type Bindings = { DB: D1Database }
 const dashboard = new Hono<{ Bindings: Bindings }>()
@@ -170,26 +171,30 @@ dashboard.get('/', async (c) => {
   async function enrichMeetings(meetingsList: any[]): Promise<any[]> {
     if (!meetingsList.length) return meetingsList
     const ids = meetingsList.map(m => m.id)
-    const placeholders = ids.map(() => '?').join(',')
-    const [dr, ur] = await Promise.all([
-      c.env.DB.prepare(
-        `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo
+    // ⚠️ ID 100개 초과 시 D1 'too many SQL variables' — queryByIds 로 분할 질의
+    const [dRows, uRows] = await Promise.all([
+      queryByIds<any>(
+        c.env.DB,
+        ph => `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo
          FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id
-         WHERE md.meeting_id IN (${placeholders}) ORDER BY md.meeting_id, d.name`
-      ).bind(...ids).all(),
-      c.env.DB.prepare(
-        `SELECT mu.meeting_id, u.id as user_id, u.name as user_name
+         WHERE md.meeting_id IN (${ph}) ORDER BY md.meeting_id, d.name`,
+        ids
+      ),
+      queryByIds<any>(
+        c.env.DB,
+        ph => `SELECT mu.meeting_id, u.id as user_id, u.name as user_name
          FROM meeting_users mu LEFT JOIN users u ON mu.user_id=u.id
-         WHERE mu.meeting_id IN (${placeholders}) ORDER BY mu.meeting_id, u.name`
-      ).bind(...ids).all(),
+         WHERE mu.meeting_id IN (${ph}) ORDER BY mu.meeting_id, u.name`,
+        ids
+      ),
     ])
     const dMap = new Map<number, any[]>()
-    for (const row of dr.results as any[]) {
+    for (const row of dRows) {
       if (!dMap.has(row.meeting_id)) dMap.set(row.meeting_id, [])
       dMap.get(row.meeting_id)!.push(row)
     }
     const uMap = new Map<number, any[]>()
-    for (const row of ur.results as any[]) {
+    for (const row of uRows) {
       if (!uMap.has(row.meeting_id)) uMap.set(row.meeting_id, [])
       uMap.get(row.meeting_id)!.push(row)
     }

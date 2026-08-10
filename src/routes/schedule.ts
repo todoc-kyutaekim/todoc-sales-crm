@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { queryByIds } from '../helpers'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number }
@@ -114,12 +115,13 @@ schedule.get('/suggest', async (c) => {
 
   // 모든 의사 정보를 한번에 가져오기 (clinic_hours 포함)
   const allHospIds = hospitals.map(h => h.id)
-  const docPlaceholders = allHospIds.map(() => '?').join(',')
-  const allDocsResult = await c.env.DB.prepare(
-    `SELECT d.id, d.name, d.hospital_id, d.position, d.department, d.phone, d.specialty, d.influence_level, d.photo, d.clinic_hours
-     FROM doctors d WHERE d.hospital_id IN (${docPlaceholders}) ORDER BY d.name`
-  ).bind(...allHospIds).all()
-  const allDocs = allDocsResult.results as any[]
+  // ⚠️ 기관이 100개를 넘으면 D1 'too many SQL variables' — queryByIds 로 분할 질의
+  const allDocs = await queryByIds<any>(
+    c.env.DB,
+    ph => `SELECT d.id, d.name, d.hospital_id, d.position, d.department, d.phone, d.specialty, d.influence_level, d.photo, d.clinic_hours
+     FROM doctors d WHERE d.hospital_id IN (${ph}) ORDER BY d.name`,
+    allHospIds
+  )
 
   // 의료진을 기관별로 그룹핑
   const doctorsByHospital = new Map<number, any[]>()
@@ -540,11 +542,13 @@ schedule.post('/optimize-route', async (c) => {
   const ids = stops.map((s: any) => s.hospital_id).filter(Boolean)
   let hospMap: Map<number, any> = new Map()
   if (ids.length > 0) {
-    const placeholders = ids.map(() => '?').join(',')
-    const r = await c.env.DB.prepare(
-      `SELECT id, name, region, address, phone FROM hospitals WHERE id IN (${placeholders})`
-    ).bind(...ids).all()
-    for (const row of (r.results as any[])) hospMap.set(row.id, row)
+    // ⚠️ ID 100개 초과 시 D1 'too many SQL variables' — queryByIds 로 분할 질의
+    const rows = await queryByIds<any>(
+      c.env.DB,
+      ph => `SELECT id, name, region, address, phone FROM hospitals WHERE id IN (${ph})`,
+      ids
+    )
+    for (const row of rows) hospMap.set(row.id, row)
   }
 
   const enriched = stops.map((s: any) => {

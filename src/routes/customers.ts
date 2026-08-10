@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { logActivity, safeLike, safeInt, safeLimit, apiError, ErrorCodes } from '../helpers'
+import { logActivity, safeLike, safeInt, safeLimit, apiError, ErrorCodes, queryByIds } from '../helpers'
 
 type Bindings = { DB: D1Database }
 type Variables = { userId: number }
@@ -77,50 +77,48 @@ customers.get('/', async (c) => {
 
   if (rows.length > 0) {
     const ids = rows.map(r => r.id as number)
-    // SQLite IN 절 위해 placeholder 생성
-    const inPh = ids.map(() => '?').join(',')
-
-    // 4개 집계 병렬 (customer_id 별 count/max/groups)
+    // ⚠️ ID 100개 초과 시 D1 'too many SQL variables' → queryByIds 로 90개씩 분할 질의.
+    //    집계는 customer_id 로 GROUP BY 하므로 청크로 나눠도 결과 병합이 안전합니다.
     const [inqAgg, intAgg, extAgg, grpAgg] = await Promise.all([
-      c.env.DB.prepare(`
+      queryByIds<any>(c.env.DB, ph => `
         SELECT customer_id AS cid, COUNT(*) AS n, MAX(created_at) AS last_at
-        FROM cs_inquiries WHERE customer_id IN (${inPh})
+        FROM cs_inquiries WHERE customer_id IN (${ph})
         GROUP BY customer_id
-      `).bind(...ids).all(),
-      c.env.DB.prepare(`
+      `, ids),
+      queryByIds<any>(c.env.DB, ph => `
         SELECT customer_id AS cid, COUNT(*) AS n
-        FROM customer_internal_devices WHERE customer_id IN (${inPh})
+        FROM customer_internal_devices WHERE customer_id IN (${ph})
         GROUP BY customer_id
-      `).bind(...ids).all(),
-      c.env.DB.prepare(`
+      `, ids),
+      queryByIds<any>(c.env.DB, ph => `
         SELECT customer_id AS cid, COUNT(*) AS n
-        FROM customer_external_devices WHERE customer_id IN (${inPh})
+        FROM customer_external_devices WHERE customer_id IN (${ph})
         GROUP BY customer_id
-      `).bind(...ids).all(),
-      c.env.DB.prepare(`
+      `, ids),
+      queryByIds<any>(c.env.DB, ph => `
         SELECT m.customer_id AS cid, cg.id AS gid, cg.name, cg.color
         FROM customer_group_members m
         JOIN customer_groups cg ON cg.id = m.group_id
-        WHERE m.customer_id IN (${inPh})
+        WHERE m.customer_id IN (${ph})
         ORDER BY cg.sort_order, cg.name
-      `).bind(...ids).all(),
+      `, ids),
     ])
 
     // 인덱스 맵으로 O(1) 병합
     const byId: Record<number, any> = {}
     for (const row of rows) byId[row.id] = row
 
-    for (const r0 of (inqAgg.results || []) as any[]) {
+    for (const r0 of inqAgg) {
       const row = byId[r0.cid]
       if (row) { row.inquiry_count = r0.n || 0; row.last_inquiry_at = r0.last_at || null }
     }
-    for (const r0 of (intAgg.results || []) as any[]) {
+    for (const r0 of intAgg) {
       const row = byId[r0.cid]; if (row) row.internal_devices_count = r0.n || 0
     }
-    for (const r0 of (extAgg.results || []) as any[]) {
+    for (const r0 of extAgg) {
       const row = byId[r0.cid]; if (row) row.external_devices_count = r0.n || 0
     }
-    for (const r0 of (grpAgg.results || []) as any[]) {
+    for (const r0 of grpAgg) {
       const row = byId[r0.cid]
       if (row) row.groups.push({ id: r0.gid, name: r0.name, color: r0.color })
     }

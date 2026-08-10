@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { logActivity, safeLike } from '../helpers'
+import { logActivity, safeLike, queryByIds } from '../helpers'
 
 type Bindings = { DB: D1Database }
 const doctors = new Hono<{ Bindings: Bindings }>()
@@ -64,14 +64,16 @@ doctors.get('/doctors/:id', async (c) => {
   const meetingsList = meetingsR.results as any[]
   if (meetingsList.length > 0) {
     const mIds = meetingsList.map(m => m.id)
-    const ph = mIds.map(() => '?').join(',')
-    const mdR = await c.env.DB.prepare(
-      `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo
+    // ⚠️ ID 100개 초과 시 D1 'too many SQL variables' — queryByIds 로 분할 질의
+    const mdRows = await queryByIds<any>(
+      c.env.DB,
+      ph => `SELECT md.meeting_id, d.id as doctor_id, d.name as doctor_name, d.photo as doctor_photo
        FROM meeting_doctors md LEFT JOIN doctors d ON md.doctor_id=d.id
-       WHERE md.meeting_id IN (${ph}) ORDER BY md.meeting_id, d.name`
-    ).bind(...mIds).all()
+       WHERE md.meeting_id IN (${ph}) ORDER BY md.meeting_id, d.name`,
+      mIds
+    )
     const dMap = new Map<number, any[]>()
-    for (const row of mdR.results as any[]) {
+    for (const row of mdRows) {
       if (!dMap.has(row.meeting_id)) dMap.set(row.meeting_id, [])
       dMap.get(row.meeting_id)!.push(row)
     }

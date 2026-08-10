@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { buildReportData } from './dashboard'
+import { queryByIds } from '../helpers'
 
 type Bindings = { DB: D1Database }
 const exports = new Hono<{ Bindings: Bindings }>()
@@ -533,9 +534,11 @@ exports.get('/report/sales', async (c) => {
   const meetingIds = meetings.map(m => m.id)
   let attendees: any[] = []
   if (meetingIds.length > 0) {
-    const ph = meetingIds.map(() => '?').join(',')
-    const attR = await c.env.DB.prepare(
-      `SELECT md.meeting_id, m.meeting_date, m.meeting_type, m.visit_time, m.start_time, m.end_time,
+    // ⚠️ ID 100개 초과 시 D1 'too many SQL variables' — queryByIds 로 분할 질의.
+    //    단, 청크로 나누면 전역 정렬이 깨지므로 밑에서 다시 정렬합니다(내보내기 행 순서 유지).
+    attendees = await queryByIds<any>(
+      c.env.DB,
+      ph => `SELECT md.meeting_id, m.id as _mid, m.meeting_date, m.meeting_type, m.visit_time, m.start_time, m.end_time,
               m.purpose, m.content, m.result, m.next_action, m.next_meeting_date,
               h.name as hospital_name, h.region as hospital_region,
               h.status as hospital_status, h.pipeline_stage as hospital_pipeline,
@@ -549,9 +552,18 @@ exports.get('/report/sales', async (c) => {
        LEFT JOIN doctors d ON md.doctor_id = d.id
        LEFT JOIN users u ON m.user_id = u.id
        WHERE md.meeting_id IN (${ph})
-       ORDER BY m.meeting_date DESC, m.id DESC, d.name ASC`
-    ).bind(...meetingIds).all()
-    attendees = (attR.results || []) as any[]
+       ORDER BY m.meeting_date DESC, m.id DESC, d.name ASC`,
+      meetingIds
+    )
+    // 원본 SQL 의 ORDER BY m.meeting_date DESC, m.id DESC, d.name ASC 재현
+    attendees.sort((a, b) => {
+      const ad = String(a.meeting_date || ''), bd = String(b.meeting_date || '')
+      if (ad !== bd) return ad < bd ? 1 : -1
+      const ai = Number(a._mid || 0), bi = Number(b._mid || 0)
+      if (ai !== bi) return bi - ai
+      return String(a.doctor_name || '').localeCompare(String(b.doctor_name || ''))
+    })
+    for (const r of attendees) delete r._mid
   }
 
   // 3) Hospital-level summary aggregation

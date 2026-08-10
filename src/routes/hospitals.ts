@@ -355,6 +355,10 @@ hospitals.post('/geocode-batch', async (c) => {
   // Pick candidates
   let candidates: any[]
   if (ids.length) {
+    // ⚠️ D1 은 한 문장의 바인딩 변수 개수가 제한됩니다(실측 100 초과 시 실패).
+    //    어차피 아래 LIMIT ${max}(최대 50)로 잘리므로, IN 절에 넣을 ID 자체를 90개로 제한합니다.
+    //    (여기서는 queryByIds 로 청크 분할하면 LIMIT 이 청크마다 적용돼 의미가 달라집니다.)
+    if (ids.length > 90) ids.length = 90
     const placeholders = ids.map(() => '?').join(',')
     const sql = onlyMissing
       ? `SELECT id, name, address, lat, lng, geocoded_address FROM hospitals WHERE id IN (${placeholders}) AND address IS NOT NULL AND address != '' AND (lat IS NULL OR lng IS NULL OR geocoded_address IS NULL OR geocoded_address != address) LIMIT ${max}`

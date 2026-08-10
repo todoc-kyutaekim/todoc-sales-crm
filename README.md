@@ -489,6 +489,83 @@ npm run verify:css   # 클래스 누락 검증
 
 **앞으로 `.input`에 새 padding 유틸리티를 쓰려면 `style.css`에 한 줄을 추가하세요.**
 
+## ⚠️ D1 SQL 변수 개수 상한 — `IN (?,?,?...)` 을 직접 만들지 마세요 (2026-08-10)
+
+### 실제 사고
+미팅이 **101건**이 되는 순간 `GET /api/meetings` 가 500 으로 죽었습니다.
+
+```
+D1_ERROR: too many SQL variables at offset 425: SQLITE_ERROR
+```
+
+실측 임계값: **ID 100개까지 성공, 101개부터 실패.**
+`limit=100 → 200 OK` / `limit=101 → 500`.
+
+### 원인
+행 수만큼 placeholder 를 만드는 코드입니다.
+
+```ts
+// ❌ 절대 금지 — 데이터가 늘면 반드시 터지는 시한폭탄
+WHERE mu.meeting_id IN (${meetingIds.map(() => '?').join(',')})
+```
+
+개발 초기에는 데이터가 적어 정상 동작하므로 **테스트로 잡히지 않습니다.**
+전수 조사 결과 동일 패턴이 **8개 파일 12곳**에 있었고, 데이터가 늘면 순차적으로
+터지는 구조였습니다. 실제로 미팅 120건 / 고객 130건 상태에서 재현해 보니
+`/api/meetings`, `/api/customers`, `/api/doctors/:id`,
+`/api/export/report/sales` 가 **모두 500** 이었습니다.
+
+### 규칙 — `src/helpers.ts` 의 헬퍼만 사용하세요
+
+```ts
+import { queryByIds, chunk, SQL_VARS_CHUNK } from '../helpers'
+
+// ✅ ID 개수에 상관없이 안전 (90개씩 분할 → 병렬 질의 → 결과 병합)
+const rows = await queryByIds<any>(
+  db,
+  ph => `SELECT mu.meeting_id, u.id as user_id, u.name as user_name
+         FROM meeting_users mu LEFT JOIN users u ON mu.user_id = u.id
+         WHERE mu.meeting_id IN (${ph})`,
+  meetingIds
+)
+
+// IN 절 뒤에 추가 바인딩이 있으면 4번째 인자(extra)로 전달
+const conflicts = await queryByIds<any>(
+  db,
+  ph => `SELECT product_unit_id FROM product_set_items
+         WHERE product_unit_id IN (${ph}) AND removed_at IS NULL AND set_id != ?`,
+  toAdd,
+  [id]
+)
+```
+
+- `SQL_VARS_CHUNK = 90` — 실측 상한 100 보다 낮게 잡은 안전값입니다.
+  다른 바인딩 파라미터가 함께 있으면 그만큼 여유가 줄어들기 때문입니다.
+- 청크 분할이 안전한 이유: 대상 쿼리들이 모두 `GROUP BY <id>` 집계이거나
+  id 기준 join 조회여서 결과를 병합해도 값이 달라지지 않습니다.
+
+### 청크 분할이 안전하지 않은 2가지 예외
+
+| 상황 | 처리 방법 | 위치 |
+|---|---|---|
+| 전역 `ORDER BY` 가 필요 | 청크 병합 후 **JS 에서 재정렬** | `exports.ts` 참석자 확장 |
+| `LIMIT n` 이 붙어 있음 | 청크마다 LIMIT 이 적용돼 의미가 달라지므로 **ID 자체를 90개로 사전 절단** | `hospitals.ts` 지오코딩 배치 |
+
+`exports.ts` 는 `m.id as _mid` 를 임시로 SELECT 해서
+`ORDER BY m.meeting_date DESC, m.id DESC, d.name ASC` 를 JS 로 재현한 뒤
+`delete r._mid` 합니다. 수정 전/후 출력을 바이트 비교해 **생성 타임스탬프 1줄을
+제외하고 완전히 동일**함을 검증했습니다.
+
+### 의도적으로 raw 패턴을 남긴 곳
+- `schedule.ts` 지역(region) placeholder — 사용자가 고르는 지역명이라 100개 초과가 비현실적
+- `helpers.ts` 내부 — `queryByIds` 구현체 자체
+
+### ⚠️ 스키마 드리프트 발견 (미해결 이슈)
+프로덕션 `meetings` 테이블에는 `user_id INTEGER REFERENCES users(id)` 컬럼이
+있으나 **대응하는 migration 파일이 없습니다.** 마이그레이션을 거치지 않고 원격에
+직접 추가된 것으로 보이며, 그 결과 로컬 D1 을 마이그레이션만으로 재구성하면
+`no such column: m.user_id` 로 실패합니다. 향후 정리가 필요합니다.
+
 ## 백엔드 성능 규칙 (⚠️ 필수 확인)
 
 ### D1 왕복 횟수가 성능을 지배합니다
