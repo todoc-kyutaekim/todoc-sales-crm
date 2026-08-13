@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import { buildReportData } from './dashboard'
 import { queryByIds } from '../helpers'
+import { buildDailyRoutes, settleAmount } from './travel'
 
-type Bindings = { DB: D1Database }
+type Bindings = { DB: D1Database; KAKAO_REST_API_KEY?: string }
 const exports = new Hono<{ Bindings: Bindings }>()
 
 function escHtml(s: any): string {
@@ -1557,6 +1558,224 @@ ${body}
     c.header('Content-Disposition', `attachment; filename="${fn}"`)
   }
   return c.body(html)
+})
+
+// ============================================================================
+// 출장 거리 정산 보고서 (유류비 / 톨게이트비 증빙)
+// GET /api/export/report/travel?from=&to=&user_id=&format=csv|xlsx&refresh=1
+//
+// 재무팀 제출용. 3개 섹션으로 구성합니다.
+//   ① 일자별 운행 내역   — 국세청 별지 제65호(업무용승용차 운행기록부) 항목 포함
+//   ② 구간별 이동 상세   — 어디서 어디로 몇 km 를 이동했는지 (거리 증빙의 근거)
+//   ③ 방문 기관 좌표     — 거리 산출에 쓴 좌표를 그대로 노출 (검증 가능성 확보)
+//
+// 거리는 카카오모빌리티 길찾기 API 의 실제 도로 주행거리입니다. 직선거리가 아닙니다.
+// 통행료는 카카오 추정치이며, 실제 증빙은 하이패스 내역(직접 입력값)이 우선합니다.
+// ============================================================================
+exports.get('/report/travel', async (c) => {
+  const from = c.req.query('from') || ''
+  const to = c.req.query('to') || ''
+  const userId = Number(c.req.query('user_id') || 0) || undefined
+  const format = (c.req.query('format') || 'xlsx').toLowerCase()
+  const noCache = c.req.query('refresh') === '1'
+
+  if (!c.env.KAKAO_REST_API_KEY) {
+    return c.json({
+      error: '카카오 REST API 키가 서버에 설정되지 않았습니다.',
+      message: '카카오 REST API 키가 서버에 설정되지 않았습니다. 거리 계산을 할 수 없습니다.',
+    }, 503)
+  }
+
+  const { days, settings } = await buildDailyRoutes(c.env.DB, c.env.KAKAO_REST_API_KEY, {
+    from, to, userId, noCache,
+  })
+
+  const periodLabel = (from || '전체') + ' ~ ' + (to || '전체')
+  const generatedAt = new Date().toISOString().substring(0, 19).replace('T', ' ')
+
+  const modeLabel = settings.settlement_mode === 'mileage'
+    ? `km 단가 정산 (${settings.rate_per_km.toLocaleString()}원/km)`
+    : (settings.settlement_mode === 'fuel'
+      ? `실비 정산 (연비 ${settings.fuel_efficiency}km/L, 유가 ${settings.fuel_price.toLocaleString()}원/L)`
+      : '거리 증빙만 (금액 미산출)')
+
+  const showAmount = settings.settlement_mode !== 'none'
+
+  // ── ① 일자별 운행 내역 ────────────────────────────────────────────────────
+  // 계기판 주행거리(사용자 입력)와 API 산출 거리를 나란히 두어 재무팀이 대조할 수 있게 합니다.
+  const dailyHeaders = [
+    'No', '사용일자', '운전자', '차종', '자동차등록번호',
+    '주행전 계기판(km)', '주행후 계기판(km)', '계기판 주행거리(km)',
+    '방문 기관수', '행선지(방문 순서)', '방문 목적',
+    'API 산출 주행거리(km)', '예상 소요시간(분)',
+    '카카오 추정 통행료(원)', '실제 통행료(원)', '주유 금액(원)',
+    ...(showAmount ? ['정산 금액(원)'] : []),
+    '업무용 사용거리(km)', '업무사용비율(%)', '비고',
+  ]
+  const dailyRows: any[][] = []
+
+  // ── ② 구간별 이동 상세 ────────────────────────────────────────────────────
+  const legHeaders = ['No', '사용일자', '운전자', '구간순서', '출발지', '도착지', '거리(km)', '소요시간(분)']
+  const legRows: any[][] = []
+
+  // ── ③ 방문 기관 좌표 ──────────────────────────────────────────────────────
+  const coordMap = new Map<string, any[]>()
+
+  let no = 0
+  let legNo = 0
+  let totalKm = 0
+  let totalTollEst = 0
+  let totalTollActual = 0
+  let totalFuel = 0
+  let totalAmount = 0
+  const failedDays: string[] = []
+  const missingAll = new Set<string>()
+
+  for (const d of days) {
+    no++
+    const log = d.log || {}
+    const odoStart = log.odo_start ?? ''
+    const odoEnd = log.odo_end ?? ''
+    const odoDist = (odoStart !== '' && odoEnd !== '' && Number(odoEnd) >= Number(odoStart))
+      ? Number(odoEnd) - Number(odoStart) : ''
+
+    // 실제 방문 기관만 (출발지/복귀 제외)
+    const visits = d.stops.filter(s => !s.is_origin && !s.is_return)
+    const routeLabel = d.stops.map(s => s.name).join(' → ')
+    const purposes = Array.from(new Set(visits.map(s => s.purpose).filter(Boolean))).join(' / ')
+
+    const amount = settleAmount(d.distance_km, settings)
+
+    // 업무용 사용거리: 영업 방문이므로 전 구간 업무용으로 봅니다.
+    // 계기판 값이 있으면 계기판 거리를, 없으면 API 거리를 기준으로 표기합니다.
+    const baseDist = odoDist !== '' ? Number(odoDist) : d.distance_km
+    const bizDist = d.distance_km || ''
+    const bizRatio = (baseDist && d.distance_km) ? Math.round((d.distance_km / baseDist) * 1000) / 10 : ''
+
+    const noteParts: string[] = []
+    if (d.error) noteParts.push(`거리 계산 실패: ${d.error}`)
+    if (d.missing_coords.length) noteParts.push(`좌표 미등록: ${d.missing_coords.join(', ')}`)
+    if (log.note) noteParts.push(String(log.note))
+
+    dailyRows.push([
+      no,
+      d.date,
+      d.user_name || '',
+      log.vehicle_model || '',
+      log.vehicle_plate || '',
+      odoStart,
+      odoEnd,
+      odoDist,
+      visits.length,
+      routeLabel,
+      purposes,
+      d.distance_km || '',
+      d.duration_min || '',
+      d.toll || '',
+      log.toll_amount ?? '',
+      log.fuel_amount ?? '',
+      ...(showAmount ? [amount || ''] : []),
+      bizDist,
+      bizRatio,
+      noteParts.join(' / '),
+    ])
+
+    for (let i = 0; i < d.legs.length; i++) {
+      const l = d.legs[i]
+      legNo++
+      legRows.push([legNo, d.date, d.user_name || '', i + 1, l.from, l.to, l.distance_km, l.duration_min])
+    }
+
+    for (const s of visits) {
+      if (!s.name) continue
+      if (!coordMap.has(s.name)) {
+        coordMap.set(s.name, [s.name, s.region || '', s.address || '', s.lat ?? '', s.lng ?? '', 0])
+      }
+      const row = coordMap.get(s.name)!
+      row[5] = Number(row[5]) + 1
+    }
+
+    totalKm += d.distance_km
+    totalTollEst += d.toll
+    totalTollActual += Number(log.toll_amount) || 0
+    totalFuel += Number(log.fuel_amount) || 0
+    totalAmount += amount
+    if (d.error) failedDays.push(d.date)
+    for (const m of d.missing_coords) missingAll.add(m)
+  }
+
+  totalKm = Math.round(totalKm * 10) / 10
+
+  const coordHeaders = ['No', '기관명', '지역', '주소', '위도', '경도', '방문횟수']
+  const coordRows: any[][] = Array.from(coordMap.values())
+    .sort((a, b) => Number(b[5]) - Number(a[5]))
+    .map((r, i) => [i + 1, ...r])
+
+  // ── 요약 ──────────────────────────────────────────────────────────────────
+  const summaryRows: any[][] = [
+    ['보고서 기간', periodLabel],
+    ['생성 일시', generatedAt],
+    ['거리 산출 방식', '카카오모빌리티 길찾기 API — 실제 도로 주행거리 (직선거리 아님)'],
+    ['통행료 산출 방식', '카카오 추정치 (실제 증빙은 하이패스 이용내역 기준)'],
+    ['정산 방식', modeLabel],
+    ['출발지', settings.origin_lat !== null
+      ? `${settings.origin_name || '(이름 미설정)'} ${settings.origin_address || ''}`.trim()
+      : '미설정 — 그 날의 첫 방문지부터 계산했습니다'],
+    ['복귀 구간 포함', settings.include_return && settings.origin_lat !== null ? '포함' : '미포함'],
+    ['운행 일수', days.length],
+    ['총 주행거리(km)', totalKm],
+    ['카카오 추정 통행료 합계(원)', totalTollEst],
+    ['실제 통행료 합계(원)', totalTollActual],
+    ['주유 금액 합계(원)', totalFuel],
+    ...(showAmount ? [['정산 금액 합계(원)', totalAmount]] : []),
+    ['거리 계산 실패 일자', failedDays.length ? failedDays.join(', ') : '없음'],
+    ['좌표 미등록 기관', missingAll.size ? Array.from(missingAll).join(', ') : '없음'],
+  ]
+
+  const fnBase = `todoc_travel_report_${ts()}`
+
+  if (format === 'csv') {
+    const lines: string[] = []
+    lines.push('# TODOC CRM 출장 거리 정산 보고서 (' + periodLabel + ')')
+    lines.push('# 생성 일시: ' + generatedAt)
+    lines.push('# 거리 산출: 카카오모빌리티 길찾기 API 실제 도로 주행거리')
+    lines.push('')
+    lines.push(toCsvRow(dailyHeaders))
+    for (const r of dailyRows) lines.push(toCsvRow(r))
+    lines.push('')
+    lines.push('# ── 구간별 이동 상세 ──')
+    lines.push(toCsvRow(legHeaders))
+    for (const r of legRows) lines.push(toCsvRow(r))
+    lines.push('')
+    lines.push('# ── 방문 기관 좌표 ──')
+    lines.push(toCsvRow(coordHeaders))
+    for (const r of coordRows) lines.push(toCsvRow(r))
+    lines.push('')
+    lines.push('# ── 요약 ──')
+    lines.push(toCsvRow(['항목', '값']))
+    for (const r of summaryRows) lines.push(toCsvRow(r))
+    const bom = '\uFEFF'
+    c.header('Content-Type', 'text/csv; charset=utf-8')
+    c.header('Content-Disposition', `attachment; filename="${fnBase}.csv"`)
+    return c.body(bom + lines.join('\n'))
+  }
+
+  // XLSX (XML Spreadsheet)
+  const sheets = [
+    { name: '요약', headers: ['항목', '값'], rows: summaryRows },
+    { name: '일자별 운행기록', headers: dailyHeaders, rows: dailyRows },
+    { name: '구간별 이동상세', headers: legHeaders, rows: legRows },
+    { name: '방문기관 좌표', headers: coordHeaders, rows: coordRows },
+  ]
+  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<?mso-application progid="Excel.Sheet"?>\n'
+  xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n'
+  xml += '<Styles><Style ss:ID="header"><Font ss:Bold="1" ss:Size="11" ss:Color="#FFFFFF"/><Interior ss:Color="#2563EB" ss:Pattern="Solid"/></Style></Styles>\n'
+  for (const s of sheets) xml += buildSheet(s.name, s.headers, s.rows)
+  xml += '</Workbook>'
+
+  c.header('Content-Type', 'application/vnd.ms-excel; charset=utf-8')
+  c.header('Content-Disposition', `attachment; filename="${fnBase}.xls"`)
+  return c.body('\uFEFF' + xml)
 })
 
 export default exports

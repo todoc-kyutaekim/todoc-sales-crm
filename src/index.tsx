@@ -23,8 +23,9 @@ import csRepairs from './routes/cs_repairs'
 import csKb from './routes/cs_kb'
 import csDashboard from './routes/cs_dashboard'
 import mypage from './routes/mypage'
+import travel from './routes/travel'
 
-type Bindings = { DB: D1Database }
+type Bindings = { DB: D1Database; KAKAO_REST_API_KEY?: string }
 type Variables = { userId: number; user?: { id: number, name: string, email: string } }
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 app.use('/api/*', cors())
@@ -87,6 +88,7 @@ app.route('/api/cs/repairs', csRepairs)
 app.route('/api/cs/kb', csKb)
 app.route('/api/cs/dashboard', csDashboard)
 app.route('/api/mypage', mypage)
+app.route('/api/travel', travel)
 app.get('/api/regions', async (c) => {
   const r = await c.env.DB.prepare('SELECT DISTINCT region FROM hospitals WHERE region!="" ORDER BY region').all()
   return c.json({ data: r.results.map((x:any) => x.region) })
