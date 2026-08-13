@@ -1,7 +1,10 @@
 import { Hono } from 'hono'
 import { logActivity, safeLike, safeInt } from '../helpers'
+import { geocodePlace } from '../geocode'
 
-type Bindings = { DB: D1Database }
+// KAKAO_REST_API_KEY 는 Cloudflare secret / .dev.vars 에만 있으며 코드에 하드코딩하지 않습니다.
+// 미설정이어도 Nominatim 폴백으로 동작하및로 optional 입니다.
+type Bindings = { DB: D1Database; KAKAO_REST_API_KEY?: string }
 type Variables = { userId: number }
 const hospitals = new Hono<{ Bindings: Bindings, Variables: Variables }>()
 
@@ -305,30 +308,10 @@ hospitals.delete('/:id', async (c) => {
 })
 
 // ===== Geocoding =====
-// Geocode a single hospital using OpenStreetMap Nominatim (free, no API key).
-// Caches the lat/lng + geocoded_address; re-geocodes only when address changes.
-async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-  if (!address || !address.trim()) return null
-  try {
-    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=kr&q=' + encodeURIComponent(address)
-    const resp = await fetch(url, {
-      headers: {
-        'User-Agent': 'todoc-crm/1.0 (hospital-map)',
-        'Accept-Language': 'ko,en'
-      }
-    })
-    if (!resp.ok) return null
-    const data = await resp.json() as any[]
-    if (!Array.isArray(data) || data.length === 0) return null
-    const lat = parseFloat(data[0].lat)
-    const lng = parseFloat(data[0].lon)
-    if (isNaN(lat) || isNaN(lng)) return null
-    return { lat, lng }
-  } catch (e) {
-    console.error('[geocode] failed for address:', address, e)
-    return null
-  }
-}
+// 실제 지오코딩 로직은 src/geocode.ts (geocodePlace) 로 옮겼습니다.
+//   - 카카오 주소검색/키워드검색을 우선 시도하고, 실패 시 Nominatim 으로 폴백
+//   - ⚠️ 어떤 경로로 얻은 좌표든 주소의 시/도 범위 검증을 통과해야 저장됩니다.
+//     (동명 병원 때문에 서울 병원이 울산으로 잡히는 사고를 막기 위한 장치)
 
 // POST /:id/geocode — force re-geocode a single hospital
 hospitals.post('/:id/geocode', async (c) => {
@@ -336,11 +319,11 @@ hospitals.post('/:id/geocode', async (c) => {
   const h = await c.env.DB.prepare('SELECT id, name, address FROM hospitals WHERE id=?').bind(id).first() as any
   if (!h) return c.json({ error: 'Not found' }, 404)
   if (!h.address) return c.json({ error: 'no_address', message: '주소가 없어 좌표 변환 불가' }, 400)
-  const result = await geocodeAddress(h.address)
+  const result = await geocodePlace(h.address, h.name, c.env.KAKAO_REST_API_KEY)
   if (!result) return c.json({ error: 'geocode_failed', message: '좌표 변환 실패 (주소 형식을 확인하세요)' }, 422)
   await c.env.DB.prepare('UPDATE hospitals SET lat=?, lng=?, geocoded_at=CURRENT_TIMESTAMP, geocoded_address=? WHERE id=?')
     .bind(result.lat, result.lng, h.address, id).run()
-  return c.json({ data: { id: Number(id), lat: result.lat, lng: result.lng } })
+  return c.json({ data: { id: Number(id), lat: result.lat, lng: result.lng, source: result.source, matched: result.matched } })
 })
 
 // POST /geocode-batch — geocode hospitals that need it (no lat/lng OR address changed)
@@ -373,18 +356,18 @@ hospitals.post('/geocode-batch', async (c) => {
 
   const results: any[] = []
   for (const h of candidates) {
-    const g = await geocodeAddress(h.address)
+    // geocodePlace 내부에서 Nominatim 호출 시 ~1 req/sec 대기를 처리합니다.
+    const g = await geocodePlace(h.address, h.name, c.env.KAKAO_REST_API_KEY)
     if (g) {
       await c.env.DB.prepare('UPDATE hospitals SET lat=?, lng=?, geocoded_at=CURRENT_TIMESTAMP, geocoded_address=? WHERE id=?')
         .bind(g.lat, g.lng, h.address, h.id).run()
-      results.push({ id: h.id, name: h.name, lat: g.lat, lng: g.lng, ok: true })
+      results.push({ id: h.id, name: h.name, lat: g.lat, lng: g.lng, ok: true, source: g.source })
     } else {
       results.push({ id: h.id, name: h.name, ok: false })
     }
-    // Respect Nominatim usage policy: ~1 req/sec
-    await new Promise(r => setTimeout(r, 1100))
   }
-  return c.json({ data: { processed: results.length, results } })
+  const okCount = results.filter(r => r.ok).length
+  return c.json({ data: { processed: results.length, succeeded: okCount, failed: results.length - okCount, results } })
 })
 
 export default hospitals
