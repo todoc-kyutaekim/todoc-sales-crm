@@ -32,12 +32,42 @@ hospitals.get('/:id', async (c) => {
   return h ? c.json({ data: h }) : c.json({ error: 'Not found' }, 404)
 })
 
+// 사용자가 폼에 직접 입력한 위도/경도를 검사합니다.
+// ⚠️ 이 좌표는 유류비/톨게이트 증빙 거리 계산의 기초가 되므로, 오입력을 반드시 걸러냅니다.
+//   - 좌표가 1km만 틀려도 방문 105건 누적 시 총 거리가 수십~수백 km 어긋납니다.
+//   - 위도/경도를 서로 바꿔 쓴 경우(가장 흔한 오입력)를 따로 감지해 안내합니다.
+function parseLatLng(b: any): { ok: true; lat: number | null; lng: number | null } | { ok: false; message: string } {
+  const rawLat = b.lat, rawLng = b.lng
+  const emptyLat = rawLat === undefined || rawLat === null || String(rawLat).trim() === ''
+  const emptyLng = rawLng === undefined || rawLng === null || String(rawLng).trim() === ''
+  if (emptyLat && emptyLng) return { ok: true, lat: null, lng: null }
+  if (emptyLat !== emptyLng) return { ok: false, message: '위도와 경도는 둘 다 입력하거나 둘 다 비워둬야 합니다.' }
+  const lat = Number(rawLat), lng = Number(rawLng)
+  if (!isFinite(lat) || !isFinite(lng)) return { ok: false, message: '위도/경도는 숫자로 입력해주세요. (예: 37.48825, 127.08505)' }
+  // 한반도 대략 범위: 위도 33~38.7 / 경도 124.5~131.9
+  const latOk = lat >= 33.0 && lat <= 38.7
+  const lngOk = lng >= 124.5 && lng <= 131.9
+  if (!latOk || !lngOk) {
+    const swapped = lng >= 33.0 && lng <= 38.7 && lat >= 124.5 && lat <= 131.9
+    return {
+      ok: false,
+      message: swapped
+        ? '위도와 경도가 반대로 입력된 것 같습니다. 한국은 위도 33~38, 경도 124~132 범위입니다.'
+        : '한국 범위를 벗어난 좌표입니다. 위도는 33~38.7, 경도는 124.5~131.9 사이여야 합니다.'
+    }
+  }
+  // 소수점 7자리까지만 보관 (약 1cm 정밀도 — 그 이상은 불필요)
+  return { ok: true, lat: Math.round(lat * 1e7) / 1e7, lng: Math.round(lng * 1e7) / 1e7 }
+}
+
 hospitals.post('/', async (c) => {
   const b = await c.req.json()
   if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
+  const coord = parseLatLng(b)
+  if (!coord.ok) return c.json({ error: 'invalid_coord', message: coord.message }, 400)
   // grade 컬럼은 DB 호환성을 위해 기본값 'A'로 자동 채움 (UI에서는 더 이상 표시/입력하지 않음)
   const r = await c.env.DB.prepare(
-    'INSERT INTO hospitals (name,region,address,phone,grade,notes,status,type,priority,todoc_contact,patient_count,hearing_aid_sales,ci_referrals,pipeline_stage,audiology_room,mapping_room) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+    'INSERT INTO hospitals (name,region,address,phone,grade,notes,status,type,priority,todoc_contact,patient_count,hearing_aid_sales,ci_referrals,pipeline_stage,audiology_room,mapping_room,lat,lng,geocoded_at,geocoded_address) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
   ).bind(
     b.name.trim(), b.region || '', b.address || '', b.phone || '',
     'A',
@@ -46,7 +76,12 @@ hospitals.post('/', async (c) => {
     b.priority || '3', b.todoc_contact || '', 
     safeInt(b.patient_count + ''), safeInt(b.hearing_aid_sales + ''), safeInt(b.ci_referrals + ''),
     b.pipeline_stage || 'contact',
-    b.audiology_room || '', b.mapping_room || ''
+    b.audiology_room || '', b.mapping_room || '',
+    coord.lat, coord.lng,
+    // 직접 입력한 좌표는 자동 지오코딩이 다시 덮어쓰지 않도록 geocoded_address 를 현재 주소로 맞춰둡니다.
+    // (geocode-batch 는 geocoded_address != address 인 행만 대상으로 하므로)
+    coord.lat !== null ? new Date().toISOString().replace('T', ' ').substring(0, 19) : null,
+    coord.lat !== null ? (b.address || '') : null
   ).run()
   await logActivity(c.env.DB, 'create', 'hospital', r.meta.last_row_id as number, b.name.trim())
   return c.json({ data: { id: r.meta.last_row_id, ...b } }, 201)
@@ -55,13 +90,27 @@ hospitals.post('/', async (c) => {
 hospitals.put('/:id', async (c) => {
   const b = await c.req.json(); const id = c.req.param('id')
   if (!b.name || typeof b.name !== 'string' || b.name.trim().length === 0) return c.json({ error: 'name is required' }, 400)
+  const coord = parseLatLng(b)
+  if (!coord.ok) return c.json({ error: 'invalid_coord', message: coord.message }, 400)
 
   // grade 컬럼 보존 (UI에서 제거되었지만 DB 스키마와 과거 데이터 호환성 유지)
-  const prev = await c.env.DB.prepare('SELECT grade FROM hospitals WHERE id=?').bind(id).first() as any
+  const prev = await c.env.DB.prepare('SELECT grade, lat, lng, geocoded_address FROM hospitals WHERE id=?').bind(id).first() as any
   const keepGrade = prev?.grade || 'A'
 
+  // ⚠️ 좌표 보존 정책 (중요)
+  //   이 앱에는 기관의 일부 필드만 담아 PUT 하는 호출부가 있습니다.
+  //   (예: editRoomInfo() 는 청각검사실/맵핑룸 정보만 갱신하려고 기존 객체에 덮어쓴 뒤 전송)
+  //   요청 본문에 lat/lng 키 자체가 없는데도 좌표를 NULL 로 지워버리면 증빙 거리 계산이 깨집니다.
+  //   → lat/lng 키가 아예 없으면 기존 좌표를 그대로 유지하고,
+  //     키가 명시적으로 전달된 경우(빈 문자열 포함)에만 새 값/NULL 을 반영합니다.
+  const hasCoordKey = Object.prototype.hasOwnProperty.call(b, 'lat') || Object.prototype.hasOwnProperty.call(b, 'lng')
+  const newLat = hasCoordKey ? coord.lat : (prev?.lat ?? null)
+  const newLng = hasCoordKey ? coord.lng : (prev?.lng ?? null)
+  // 좌표가 살아있는 동안에는 geocoded_address 를 현재 주소로 맞춰, 자동 지오코딩이 덮어쓰지 않게 합니다.
+  const newGeoAddr = newLat !== null ? (b.address || '') : null
+
   await c.env.DB.prepare(
-    'UPDATE hospitals SET name=?,region=?,address=?,phone=?,grade=?,notes=?,status=?,type=?,priority=?,todoc_contact=?,patient_count=?,hearing_aid_sales=?,ci_referrals=?,pipeline_stage=?,audiology_room=?,mapping_room=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'
+    'UPDATE hospitals SET name=?,region=?,address=?,phone=?,grade=?,notes=?,status=?,type=?,priority=?,todoc_contact=?,patient_count=?,hearing_aid_sales=?,ci_referrals=?,pipeline_stage=?,audiology_room=?,mapping_room=?,lat=?,lng=?,geocoded_at=CASE WHEN ? IS NULL THEN NULL ELSE CURRENT_TIMESTAMP END,geocoded_address=?,updated_at=CURRENT_TIMESTAMP WHERE id=?'
   ).bind(
     b.name.trim(), b.region || '', b.address || '', b.phone || '',
     keepGrade, b.notes || '', b.status || 'active',
@@ -70,11 +119,12 @@ hospitals.put('/:id', async (c) => {
     safeInt(b.patient_count + ''), safeInt(b.hearing_aid_sales + ''), safeInt(b.ci_referrals + ''),
     b.pipeline_stage || 'contact',
     b.audiology_room || '', b.mapping_room || '',
+    newLat, newLng, newLat, newGeoAddr,
     id
   ).run()
 
   await logActivity(c.env.DB, 'update', 'hospital', Number(id), b.name.trim())
-  return c.json({ data: { id: Number(id), ...b } })
+  return c.json({ data: { id: Number(id), ...b, lat: newLat, lng: newLng } })
 })
 
 // ===== Hospital Score History =====

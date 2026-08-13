@@ -8530,6 +8530,26 @@ async function showHospForm(id) {
     '<div><label class="input-label">보청기 판매량</label><input type="number" name="hearing_aid_sales" value="' + (h.hearing_aid_sales || 0) + '" class="input" min="0"></div>' +
     '<div><label class="input-label">CI 의뢰 실적</label><input type="number" name="ci_referrals" value="' + (h.ci_referrals || 0) + '" class="input" min="0"></div>' +
     field('메모', 'notes', 'textarea', h.notes) +
+    // ── 좌표(위도/경도) ─────────────────────────────────────────────
+    // 유류비/톨게이트 증빙용 거리 계산의 기준점입니다. 자동 지오코딩은 한국 주소 정확도가
+    // 떨어지므로(도로 중간점을 찍어 최대 7km 오차 발생), 카카오맵에서 정확한 값을 직접 넣을 수 있게 합니다.
+    '<div class="col-span-full mt-1 pt-3 border-t border-gray-100">' +
+      '<div class="flex items-center justify-between mb-2 flex-wrap gap-2">' +
+        '<label class="input-label !mb-0"><i class="fas fa-location-crosshairs text-brand-400 mr-1"></i>좌표 (거리 증빙용)</label>' +
+        '<a href="https://map.kakao.com" target="_blank" rel="noopener" class="text-[11px] text-brand-500 hover:underline"><i class="fas fa-external-link-alt mr-1"></i>카카오맵에서 좌표 찾기</a>' +
+      '</div>' +
+      '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+        '<div><label class="input-label text-[11px] text-slate-400">위도 (latitude)</label><input type="text" inputmode="decimal" name="lat" id="hosp-lat" value="' + (h.lat != null ? h.lat : '') + '" class="input" placeholder="37.48825"></div>' +
+        '<div><label class="input-label text-[11px] text-slate-400">경도 (longitude)</label><input type="text" inputmode="decimal" name="lng" id="hosp-lng" value="' + (h.lng != null ? h.lng : '') + '" class="input" placeholder="127.08505"></div>' +
+      '</div>' +
+      '<div class="mt-2 flex items-start gap-2 flex-wrap">' +
+        '<input type="text" id="hosp-coord-paste" class="input flex-1 min-w-[200px] text-sm" placeholder="좌표 한 번에 붙여넣기 (예: 37.48825, 127.08505)">' +
+        '<button type="button" id="hosp-coord-apply" class="btn btn-outline text-sm whitespace-nowrap"><i class="fas fa-wand-magic-sparkles mr-1"></i>적용</button>' +
+      '</div>' +
+      '<p id="hosp-coord-msg" class="text-[11px] text-slate-400 mt-2 leading-relaxed">' +
+        '카카오맵에서 기관을 검색 → 지도 우클릭 → <b>“이 위치의 좌표”</b> 로 확인할 수 있습니다. 비워두면 주소로 자동 변환을 시도합니다.' +
+      '</p>' +
+    '</div>' +
     '<div class="col-span-full flex justify-end gap-2 pt-3 border-t border-gray-50 mt-2"><button type="button" onclick="closeModal()" class="btn btn-outline">취소</button><button type="submit" class="btn btn-primary">' + (id ? '저장' : '추가') + '</button></div></form>');
   // Hospital name autocomplete — instant local + async AI supplement
   var hospSuggestTimer = null;
@@ -8598,7 +8618,74 @@ async function showHospForm(id) {
       if (dd && !dd.contains(e.target) && e.target !== nameInput) dd.classList.add('hidden');
     });
   }
-  document.getElementById('fm').onsubmit = async e => { e.preventDefault(); const f = Object.fromEntries(new FormData(e.target)); if (!f.name) { toast('이름을 입력하세요', 'warn'); return } try { if (id) { await API.put('/hospitals/' + id, f); toast('정보 수정됨') } else { await API.post('/hospitals', f); toast('새 항목 추가됨') } closeModal(); if (id) viewHosp(id); else loadHosp() } catch (e) { toast('저장 실패', 'err') } };
+  // ── 좌표 붙여넣기 파서 ──────────────────────────────────────────────
+  // 카카오맵/구글맵에서 복사한 문자열을 그대로 받아 위도·경도 칸에 나눠 넣습니다.
+  // "37.48825, 127.08505" / "37.48825 127.08505" / 괄호·공백 섞인 형태 모두 허용.
+  (function setupCoordPaste() {
+    var pasteEl = document.getElementById('hosp-coord-paste');
+    var applyEl = document.getElementById('hosp-coord-apply');
+    var latEl = document.getElementById('hosp-lat');
+    var lngEl = document.getElementById('hosp-lng');
+    var msgEl = document.getElementById('hosp-coord-msg');
+    if (!pasteEl || !applyEl || !latEl || !lngEl) return;
+
+    function setMsg(text, kind) {
+      if (!msgEl) return;
+      msgEl.innerHTML = text;
+      msgEl.className = 'text-[11px] mt-2 leading-relaxed ' +
+        (kind === 'err' ? 'text-rose-500' : (kind === 'ok' ? 'text-emerald-600' : 'text-slate-400'));
+    }
+
+    function apply() {
+      var raw = (pasteEl.value || '').trim();
+      if (!raw) { setMsg('붙여넣을 좌표를 입력해주세요.', 'err'); return; }
+      var nums = raw.match(/-?\d+(?:\.\d+)?/g);
+      if (!nums || nums.length < 2) { setMsg('좌표 두 개를 찾지 못했습니다. 예: 37.48825, 127.08505', 'err'); return; }
+      var a = parseFloat(nums[0]), b2 = parseFloat(nums[1]);
+      // 한국은 경도(127 근처)가 위도(37 근처)보다 큽니다. 순서가 뒤바뀌어 있으면 자동으로 바로잡습니다.
+      var lat = a, lng = b2;
+      if (a > 100 && b2 < 45) { lat = b2; lng = a; }
+      if (!(lat >= 33 && lat <= 38.7 && lng >= 124.5 && lng <= 131.9)) {
+        setMsg('한국 범위를 벗어난 좌표입니다. (위도 33~38.7 / 경도 124.5~131.9)', 'err'); return;
+      }
+      latEl.value = lat;
+      lngEl.value = lng;
+      pasteEl.value = '';
+      setMsg('<i class="fas fa-check mr-1"></i>위도 ' + lat + ' / 경도 ' + lng + ' 적용됨', 'ok');
+    }
+
+    applyEl.addEventListener('click', apply);
+    // Enter 로도 적용 (폼 제출로 새지 않도록 기본동작 차단)
+    pasteEl.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); apply(); }
+    });
+    // 붙여넣기 즉시 자동 적용
+    pasteEl.addEventListener('paste', function () { setTimeout(apply, 0); });
+  })();
+
+  document.getElementById('fm').onsubmit = async e => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    if (!f.name) { toast('이름을 입력하세요', 'warn'); return }
+    // 좌표는 둘 다 입력하거나 둘 다 비워야 합니다 (한쪽만 있으면 거리 계산에 쓸 수 없음)
+    var latS = (f.lat || '').toString().trim(), lngS = (f.lng || '').toString().trim();
+    if ((latS && !lngS) || (!latS && lngS)) { toast('위도와 경도를 둘 다 입력해주세요', 'warn'); return }
+    if (latS && lngS) {
+      var latN = parseFloat(latS), lngN = parseFloat(lngS);
+      if (!isFinite(latN) || !isFinite(lngN)) { toast('좌표는 숫자로 입력해주세요', 'warn'); return }
+      if (!(latN >= 33 && latN <= 38.7 && lngN >= 124.5 && lngN <= 131.9)) {
+        toast('한국 범위를 벗어난 좌표입니다 (위도 33~38.7 / 경도 124.5~131.9)', 'warn'); return
+      }
+    }
+    try {
+      if (id) { await API.put('/hospitals/' + id, f); toast('정보 수정됨') } else { await API.post('/hospitals', f); toast('새 항목 추가됨') }
+      closeModal(); if (id) viewHosp(id); else loadHosp()
+    } catch (e) {
+      // 서버가 좌표 오류 메시지를 돌려주면 그대로 보여줍니다 (예: 위·경도 반대 입력)
+      var m = e && e.response && e.response.data && e.response.data.message;
+      toast(m || '저장 실패', 'err')
+    }
+  };
   setTimeout(() => document.querySelector('#fm input[name="name"]')?.focus(), 100);
 }
 async function editRoomInfo(hospId) {
