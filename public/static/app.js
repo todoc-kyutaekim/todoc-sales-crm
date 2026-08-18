@@ -13878,8 +13878,39 @@ var _trvState = {
   days: null, summary: null, settings: null,
   users: [], loading: false,
   // 자주 쓰는 장소(집/사무실) — 일자별 출발지·복귀지 선택지
-  places: [], myUserId: null
+  places: [], myUserId: null,
+  // 출발/복귀 변경 대기분. 셀렉트를 바꿔도 바로 저장하지 않고 여기에 모아두었다가
+  // '적용' 을 눌렀을 때 한 번에 저장 + 거리 재계산합니다.
+  // { '2026-08-03|3': { origin: '5', return: '' } } 형태 (값이 없는 쪽은 키가 없음)
+  pending: {}, applying: false
 };
+
+/** 일자별 대기분 키 (같은 날 담당자가 여러 명일 수 있어 user_id 까지 포함) */
+function _trvPendKey(d) {
+  return d.date + '|' + (d.user_id === null || d.user_id === undefined ? '' : d.user_id);
+}
+/** 대기 중인 변경 건수 */
+function _trvPendCount() {
+  var n = 0;
+  for (var k in _trvState.pending) {
+    if (!Object.prototype.hasOwnProperty.call(_trvState.pending, k)) continue;
+    var p = _trvState.pending[k];
+    if (p && (p.origin !== undefined || p.return !== undefined)) n++;
+  }
+  return n;
+}
+/**
+ * 그 날 화면에 표시할 값 — 대기분이 있으면 대기분을, 없으면 저장된 값을 씁니다.
+ * kind: 'origin' | 'return'
+ */
+function _trvEffectiveEndpoint(d, kind) {
+  var key = _trvPendKey(d);
+  var p = _trvState.pending[key];
+  if (p && p[kind] !== undefined) return p[kind];
+  var log = d.log || {};
+  var v = kind === 'origin' ? log.origin_place_id : log.return_place_id;
+  return (v === null || v === undefined) ? '' : String(v);
+}
 
 function _trvFmtDate(d) {
   var pad = function(n) { return String(n).padStart(2, '0'); };
@@ -13983,7 +14014,7 @@ function renderTravel() {
         '<select id="trv-user" class="input w-full">' + userOpts + '</select>' +
       '</div>' +
       '<div class="flex items-end gap-2">' +
-        '<button onclick="trvFetch()" class="btn btn-primary whitespace-nowrap h-[42px]"><i class="fas fa-calculator mr-1.5"></i>거리 산출</button>' +
+        '<button onclick="trvRecalc()" class="btn btn-primary whitespace-nowrap h-[42px]"><i class="fas fa-calculator mr-1.5"></i>거리 산출</button>' +
       '</div>' +
     '</div>' +
     // 기본 출발지·복귀지 / 내 정산 방식 요약
@@ -14000,6 +14031,14 @@ function renderTravel() {
   html += '<div id="trv-result">' + _trvRenderResult() + '</div>';
   html += '</div>';
   c.innerHTML = html;
+}
+
+/** 결과 영역을 다시 그리고 '적용' 바 상태까지 맞춥니다. */
+function _trvPaintResult() {
+  var el = document.getElementById('trv-result');
+  if (!el) return;
+  el.innerHTML = _trvRenderResult();
+  _trvRefreshApplyBar();
 }
 
 function _trvRenderResult() {
@@ -14072,6 +14111,9 @@ function _trvRenderResult() {
     '<span class="text-[10px] text-slate-400 ml-auto">국세청 업무용승용차 운행기록부 항목 포함</span>' +
   '</div>';
 
+  // ── 출발/복귀 변경 적용 바 (대기분이 있을 때만 노출) ──
+  h += '<div id="trv-apply-bar" class="hidden"></div>';
+
   // ── 일자별 표 ──
   h += '<div class="card overflow-hidden mb-4">' +
     '<div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">' +
@@ -14095,7 +14137,7 @@ function _trvRenderResult() {
   '</div>';
 
   h += '<div class="text-[10px] text-slate-400 leading-relaxed px-1">' +
-    '· <b>출발 → 복귀</b>를 바꾸면 그 날 경로와 주행거리가 즉시 다시 계산됩니다. 장소는 <b>장소 관리</b>에서 등록합니다.<br>' +
+    '· <b>출발 → 복귀</b>를 바꾼 뒤 <b>적용</b>을 누르면 저장되고 주행거리가 다시 계산됩니다. 여러 날을 함께 바꿔도 됩니다. 장소는 <b>장소 관리</b>에서 등록합니다.<br>' +
     '· 주행거리는 카카오모빌리티 길찾기 API 의 <b>실제 도로 경로</b> 기준입니다 (직선거리 아님).<br>' +
     '· 통행료는 카카오 <b>추정치</b>입니다. 재무팀 증빙은 하이패스 이용내역을 기준으로 하고, 실제 금액은 <b>입력</b> 버튼으로 채워주세요.<br>' +
     '· 좌표가 없는 기관은 경로에서 제외되므로 실제보다 거리가 짧게 나올 수 있습니다.' +
@@ -14109,7 +14151,6 @@ function _trvRenderResult() {
  * "기본값 사용"을 골랐을 때 어디가 쓰였는지 바로 알 수 있게 합니다.
  */
 function _trvEndpointCell(d, i) {
-  var log = d.log || {};
   var stops = d.stops || [];
   var o = null, r = null;
   for (var k = 0; k < stops.length; k++) {
@@ -14122,51 +14163,171 @@ function _trvEndpointCell(d, i) {
     return '<span class="inline-flex items-center gap-1 text-slate-600">' +
       '<i class="fas ' + m.icon + ' text-slate-400 text-[9px]"></i>' + csEsc(s.name) + '</span>';
   };
+  // 대기 중인 변경이 있으면 현재 표시된 경로는 아직 반영 전임을 알려줍니다.
+  var pend = _trvState.pending[_trvPendKey(d)];
+  var changed = !!(pend && (pend.origin !== undefined || pend.return !== undefined));
+  var selCls = 'text-[10px] border rounded-md px-1 py-0.5 max-w-[104px] truncate ' +
+    (changed ? 'border-amber-300 bg-amber-50 text-amber-900 font-semibold' : 'border-slate-200 bg-white');
+
   return '<div class="text-[10px] mb-1">' + badge(o, '첫 방문지') +
       '<i class="fas fa-arrow-right text-slate-300 mx-1 text-[8px]"></i>' + badge(r, '복귀 없음') +
+      '<span class="trv-pend-tag ml-1 text-amber-600 font-semibold"' + (changed ? '' : ' style="display:none"') + '>· 변경 대기</span>' +
     '</div>' +
     '<div class="flex gap-1">' +
-      '<select onchange="trvSetEndpoint(' + i + ', \'origin\', this.value)" ' +
-        'class="text-[10px] border border-slate-200 rounded-md px-1 py-0.5 bg-white max-w-[104px] truncate" title="출발지">' +
-        _trvPlaceOptions(log.origin_place_id, 'origin') + '</select>' +
-      '<select onchange="trvSetEndpoint(' + i + ', \'return\', this.value)" ' +
-        'class="text-[10px] border border-slate-200 rounded-md px-1 py-0.5 bg-white max-w-[104px] truncate" title="복귀지">' +
-        _trvPlaceOptions(log.return_place_id, 'return') + '</select>' +
+      '<select onchange="trvStageEndpoint(' + i + ', \'origin\', this.value)" ' +
+        'class="' + selCls + '" title="출발지">' +
+        _trvPlaceOptions(_trvEffectiveEndpoint(d, 'origin'), 'origin') + '</select>' +
+      '<select onchange="trvStageEndpoint(' + i + ', \'return\', this.value)" ' +
+        'class="' + selCls + '" title="복귀지">' +
+        _trvPlaceOptions(_trvEffectiveEndpoint(d, 'return'), 'return') + '</select>' +
     '</div>';
 }
 
 /**
- * 표에서 출발지/복귀지를 바꾸면 그 날 운행기록에 저장하고 거리를 다시 계산합니다.
- * 경로가 바뀌면 주행거리·통행료·정산액이 모두 달라지므로 재조회가 필요합니다.
+ * 표에서 출발지/복귀지를 바꾸면 곧바로 저장하지 않고 '대기분'으로만 담아둡니다.
+ * 여러 날을 연달아 고친 뒤 '적용' 을 한 번 누르면 함께 저장 + 거리 재계산됩니다.
+ * (선택할 때마다 저장·재계산하면 카카오 길찾기를 불필요하게 여러 번 호출하게 됩니다.)
  */
-async function trvSetEndpoint(i, kind, value) {
+function trvStageEndpoint(i, kind, value) {
   var d = _trvState.days[i];
   if (!d) return;
+  var key = _trvPendKey(d);
   var log = d.log || {};
-  var payload = {
-    log_date: d.date,
-    user_id: d.user_id,
-    // 기존 입력값을 지우지 않도록 함께 넘깁니다 (upsert 라 누락 시 NULL 로 덮어씀).
-    vehicle_model: log.vehicle_model || '',
-    vehicle_plate: log.vehicle_plate || '',
-    odo_start: log.odo_start,
-    odo_end: log.odo_end,
-    toll_amount: log.toll_amount,
-    fuel_amount: log.fuel_amount,
-    note: log.note || '',
-    origin_place_id: kind === 'origin' ? value : (log.origin_place_id === null || log.origin_place_id === undefined ? '' : log.origin_place_id),
-    return_place_id: kind === 'return' ? value : (log.return_place_id === null || log.return_place_id === undefined ? '' : log.return_place_id)
-  };
-  try {
-    await API.put('/travel/logs', payload);
-    toast(kind === 'origin' ? '출발지를 변경했습니다' : '복귀지를 변경했습니다', 'success');
-    // 경로가 바뀌었으므로 거리를 다시 산출합니다.
-    await trvFetch();
-  } catch (err) {
-    var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '변경 실패';
-    toast(msg, 'error');
-    renderTravel();
+  var saved = kind === 'origin' ? log.origin_place_id : log.return_place_id;
+  saved = (saved === null || saved === undefined) ? '' : String(saved);
+
+  var p = _trvState.pending[key] || {};
+  if (String(value) === saved) delete p[kind];   // 원래 값으로 되돌렸으면 대기분에서 제거
+  else p[kind] = String(value);
+
+  if (p.origin === undefined && p.return === undefined) delete _trvState.pending[key];
+  else _trvState.pending[key] = p;
+
+  // 셀렉트 값은 이미 사용자가 바꿔둔 상태이므로 표시 갱신만 합니다.
+  _trvRefreshApplyBar();
+  _trvMarkPendingRows();
+}
+
+/** 대기 중인 행에 강조 표시를 다시 입힙니다 (표 전체를 다시 그리지 않아 셀렉트 포커스가 유지됩니다). */
+function _trvMarkPendingRows() {
+  var days = _trvState.days || [];
+  for (var i = 0; i < days.length; i++) {
+    var cell = document.getElementById('trv-ep-' + i);
+    if (!cell) continue;
+    var pend = _trvState.pending[_trvPendKey(days[i])];
+    var changed = !!(pend && (pend.origin !== undefined || pend.return !== undefined));
+    var sels = cell.querySelectorAll('select');
+    for (var s = 0; s < sels.length; s++) {
+      sels[s].className = 'text-[10px] border rounded-md px-1 py-0.5 max-w-[104px] truncate ' +
+        (changed ? 'border-amber-300 bg-amber-50 text-amber-900 font-semibold' : 'border-slate-200 bg-white');
+    }
+    var tag = cell.querySelector('.trv-pend-tag');
+    if (tag) tag.style.display = changed ? '' : 'none';
   }
+}
+
+/** 화면 상단/하단의 '적용' 바를 대기 건수에 맞춰 갱신합니다. */
+function _trvRefreshApplyBar() {
+  var bar = document.getElementById('trv-apply-bar');
+  if (!bar) return;
+  var n = _trvPendCount();
+  if (!n) { bar.innerHTML = ''; bar.classList.add('hidden'); return; }
+  bar.classList.remove('hidden');
+  bar.innerHTML =
+    '<div class="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 mb-4">' +
+      '<i class="fas fa-triangle-exclamation text-amber-500"></i>' +
+      '<span class="text-[12px] text-amber-800 font-semibold">출발지·복귀지 변경 ' + n + '건이 아직 반영되지 않았습니다.</span>' +
+      '<span class="text-[11px] text-amber-700">적용을 누르면 저장하고 주행거리를 다시 계산합니다.</span>' +
+      '<div class="ml-auto flex gap-2">' +
+        '<button onclick="trvDiscardEndpoints()" class="btn btn-outline btn-sm"' + (_trvState.applying ? ' disabled' : '') + '>' +
+          '<i class="fas fa-rotate-left mr-1"></i>되돌리기</button>' +
+        '<button onclick="trvApplyEndpoints()" class="btn btn-primary btn-sm"' + (_trvState.applying ? ' disabled' : '') + '>' +
+          (_trvState.applying
+            ? '<i class="fas fa-spinner fa-spin mr-1"></i>적용 중...'
+            : '<i class="fas fa-check mr-1"></i>적용 (' + n + ')') +
+        '</button>' +
+      '</div>' +
+    '</div>';
+}
+
+/** 대기분을 버리고 저장된 값으로 되돌립니다. */
+function trvDiscardEndpoints() {
+  if (_trvState.applying) return;
+  if (!_trvPendCount()) return;
+  _trvState.pending = {};
+  toast('변경을 되돌렸습니다', 'ok');
+  _trvPaintResult();
+}
+
+/**
+ * 대기 중인 출발/복귀 변경을 모두 저장한 뒤 거리를 한 번만 다시 산출합니다.
+ */
+async function trvApplyEndpoints() {
+  if (_trvState.applying) return;
+  var keys = Object.keys(_trvState.pending);
+  if (!keys.length) return;
+
+  var days = _trvState.days || [];
+  var jobs = [];
+  for (var i = 0; i < days.length; i++) {
+    var d = days[i];
+    var p = _trvState.pending[_trvPendKey(d)];
+    if (!p || (p.origin === undefined && p.return === undefined)) continue;
+    var log = d.log || {};
+    var cur = function(kind) {
+      var v = kind === 'origin' ? log.origin_place_id : log.return_place_id;
+      return (v === null || v === undefined) ? '' : String(v);
+    };
+    jobs.push({
+      date: d.date,
+      payload: {
+        log_date: d.date,
+        user_id: d.user_id,
+        // 기존 입력값을 지우지 않도록 함께 넘깁니다 (upsert 라 누락 시 NULL 로 덮어씀).
+        vehicle_model: log.vehicle_model || '',
+        vehicle_plate: log.vehicle_plate || '',
+        odo_start: log.odo_start,
+        odo_end: log.odo_end,
+        toll_amount: log.toll_amount,
+        fuel_amount: log.fuel_amount,
+        note: log.note || '',
+        origin_place_id: p.origin !== undefined ? p.origin : cur('origin'),
+        return_place_id: p.return !== undefined ? p.return : cur('return')
+      }
+    });
+  }
+  if (!jobs.length) { _trvState.pending = {}; _trvRefreshApplyBar(); return; }
+
+  _trvState.applying = true;
+  _trvRefreshApplyBar();
+
+  var failed = [];
+  for (var j = 0; j < jobs.length; j++) {
+    try {
+      await API.put('/travel/logs', jobs[j].payload);
+    } catch (err) {
+      failed.push(jobs[j].date);
+    }
+  }
+
+  _trvState.applying = false;
+
+  if (failed.length) {
+    // 실패한 날짜는 대기분을 남겨두어 다시 시도할 수 있게 합니다.
+    var keep = {};
+    for (var k = 0; k < days.length; k++) {
+      var kk = _trvPendKey(days[k]);
+      if (failed.indexOf(days[k].date) >= 0 && _trvState.pending[kk]) keep[kk] = _trvState.pending[kk];
+    }
+    _trvState.pending = keep;
+    toast(failed.length + '건 저장 실패 (' + failed.join(', ') + ')', 'err');
+  } else {
+    _trvState.pending = {};
+    toast(jobs.length + '건을 적용했습니다', 'ok');
+  }
+
+  // 경로가 바뀌었으므로 거리를 다시 산출합니다 (여러 건이어도 한 번만 호출).
+  await trvFetch();
 }
 
 function _trvRow(d, i) {
@@ -14192,8 +14353,8 @@ function _trvRow(d, i) {
       '<div class="text-slate-700">' + csEsc(d.user_name || '-') + '</div>' +
       (d.vehicle && d.vehicle.vehicle_model ? '<div class="text-[10px] text-slate-400">' + csEsc(d.vehicle.vehicle_model) + '</div>' : '') +
     '</td>' +
-    // 출발지·복귀지는 날마다 다릅니다 (집→병원→사무실 등). 표에서 바로 바꿉니다.
-    '<td class="px-3 py-2.5 whitespace-nowrap">' + _trvEndpointCell(d, i) + '</td>' +
+    // 출발지·복귀지는 날마다 다릅니다 (집→병원→사무실 등). 고른 뒤 '적용'을 눌러 반영합니다.
+    '<td class="px-3 py-2.5 whitespace-nowrap" id="trv-ep-' + i + '">' + _trvEndpointCell(d, i) + '</td>' +
     '<td class="px-3 py-2.5 min-w-[240px]">' + stops +
       (d.error ? '<div class="text-[10px] text-red-600 mt-1"><i class="fas fa-circle-exclamation mr-1"></i>' + csEsc(d.error) + '</div>' : '') +
       (d.missing_coords && d.missing_coords.length ? '<div class="text-[10px] text-orange-600 mt-1"><i class="fas fa-location-crosshairs mr-1"></i>좌표 없어 제외: ' + d.missing_coords.map(csEsc).join(', ') + '</div>' : '') +
@@ -14215,15 +14376,30 @@ function _trvRow(d, i) {
   '</tr>';
 }
 
+/**
+ * '거리 산출' 버튼 전용. 반영하지 않은 출발/복귀 변경이 있으면 먼저 알려줍니다.
+ * (재산출하면 대기분이 사라지므로 사용자가 모르고 잃어버리지 않도록 확인합니다.)
+ */
+function trvRecalc() {
+  var n = _trvPendCount();
+  if (n && !confirm('반영하지 않은 출발지·복귀지 변경 ' + n + '건이 있습니다.\n다시 산출하면 변경 내용이 사라집니다. 계속하시겠습니까?')) return;
+  _trvState.pending = {};
+  return trvFetch();
+}
+
 async function trvFetch() {
   var from = document.getElementById('trv-from').value;
   var to = document.getElementById('trv-to').value;
   var uid = document.getElementById('trv-user').value;
   if (!from || !to) { toast('정산 기간을 선택해주세요', 'error'); return; }
   if (from > to) { toast('시작일이 종료일보다 늦습니다', 'error'); return; }
+  // 기간·담당자가 바뀌면 이전 대기분은 대상 행이 사라지므로 함께 정리합니다.
+  if (from !== _trvState.from || to !== _trvState.to || String(uid) !== String(_trvState.userId)) {
+    _trvState.pending = {};
+  }
   _trvState.from = from; _trvState.to = to; _trvState.userId = uid;
   _trvState.loading = true;
-  document.getElementById('trv-result').innerHTML = _trvRenderResult();
+  _trvPaintResult();
   try {
     var qs = 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + (uid ? '&user_id=' + encodeURIComponent(uid) : '');
     var r = await API.get('/travel/daily?' + qs);
@@ -14237,7 +14413,7 @@ async function trvFetch() {
     _trvState.days = null;
   }
   _trvState.loading = false;
-  document.getElementById('trv-result').innerHTML = _trvRenderResult();
+  _trvPaintResult();
 }
 
 function trvDownload(format) {
@@ -14298,7 +14474,7 @@ async function trvSaveLog(e, i) {
     _trvState.days[i].log = r.data.data;
     closeModal();
     toast('운행기록이 저장되었습니다', 'success');
-    document.getElementById('trv-result').innerHTML = _trvRenderResult();
+    _trvPaintResult();
   } catch (err) {
     var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '저장 실패';
     toast(msg, 'error');
