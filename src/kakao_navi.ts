@@ -66,6 +66,34 @@ function resultCodeMessage(code: number, msg?: string): string {
   }
 }
 
+/**
+ * HTTP 오류를 사람이 읽을 수 있는 메시지로 변환.
+ *
+ * ⚠️ 카카오 원문(예: `appKey(xxx) does not exist`)을 그대로 노출하지 않습니다.
+ *    이 메시지는 재무팀에 제출하는 보고서의 "비고" 칸에 그대로 찍히므로,
+ *    ① API 키 문자열이 문서에 새어나가면 안 되고
+ *    ② 담당자가 무엇을 해야 하는지 알 수 있어야 합니다.
+ */
+function httpError(status: number, body: string): NaviError {
+  if (status === 401 || status === 403) {
+    return {
+      ok: false, code: null,
+      message: '카카오 길찾기 API 인증이 거부되었습니다. API 키가 만료·정지되었을 수 있습니다. (관리자 확인 필요)',
+    }
+  }
+  if (status === 429) {
+    return {
+      ok: false, code: null,
+      message: '카카오 길찾기 API 일일 무료 한도를 초과했습니다. 다음 날 다시 시도해주세요.',
+    }
+  }
+  if (status >= 500) {
+    return { ok: false, code: null, message: `카카오 길찾기 서버 오류 (HTTP ${status}). 잠시 후 다시 시도해주세요.` }
+  }
+  // 그 외는 진단을 위해 응답 앞부분만 (키가 실릴 수 있는 401/403 은 위에서 걸러짐)
+  return { ok: false, code: null, message: `카카오 길찾기 요청 실패 (HTTP ${status}): ${body.slice(0, 120)}` }
+}
+
 /** 두 지점이 동일 좌표인지 (소수 5자리 ≈ 1m) */
 export function samePoint(a: NaviPoint, b: NaviPoint): boolean {
   return Math.abs(a.lat - b.lat) < 1e-5 && Math.abs(a.lng - b.lng) < 1e-5
@@ -116,10 +144,7 @@ export async function findRoute(points: NaviPoint[], apiKey: string): Promise<Na
       // ⚠️ x=경도, y=위도
       const url = `${SINGLE_URL}?origin=${o.lng},${o.lat}&destination=${d.lng},${d.lat}&priority=RECOMMEND&car_fuel=GASOLINE&car_hipass=true`
       const res = await fetch(url, { headers })
-      if (!res.ok) {
-        const body = await res.text()
-        return { ok: false, code: null, message: `카카오 길찾기 HTTP ${res.status}: ${body.slice(0, 200)}` }
-      }
+      if (!res.ok) return httpError(res.status, await res.text())
       return parseRoute(await res.json(), points)
     }
 
@@ -137,10 +162,7 @@ export async function findRoute(points: NaviPoint[], apiKey: string): Promise<Na
       summary: false,
     }
     const res = await fetch(WAYPOINTS_URL, { method: 'POST', headers, body: JSON.stringify(body) })
-    if (!res.ok) {
-      const text = await res.text()
-      return { ok: false, code: null, message: `카카오 길찾기 HTTP ${res.status}: ${text.slice(0, 200)}` }
-    }
+    if (!res.ok) return httpError(res.status, await res.text())
     return parseRoute(await res.json(), points)
   } catch (e: any) {
     return { ok: false, code: null, message: `카카오 길찾기 호출 실패: ${e?.message || e}` }
