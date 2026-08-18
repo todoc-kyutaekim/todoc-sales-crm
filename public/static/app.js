@@ -8290,6 +8290,26 @@ var MYP_VEHICLE_TYPES = [
   { v: 'private_allowance', label: '개인차량 + 자가운전보조금',  desc: '월 20만원 비과세 보조금 수령. 거리 증빙만 산출합니다.' },
   { v: 'private_actual',    label: '개인차량 + 실비 정산',        desc: 'km당 단가(있으면) 또는 연비·유가 기준으로 금액을 계산합니다.' }
 ];
+// 연료 종류 — 통행료 산출(카카오 car_fuel)과 연비/유가 단위 표기에 함께 쓰입니다.
+// 전기차는 고속도로 통행료가 감면되고(실측 약 -29%), 연비·유가를 kWh 단위로 해석합니다.
+var MYP_CAR_FUELS = [
+  { v: 'GASOLINE', label: '휘발유' },
+  { v: 'DIESEL',   label: '경유' },
+  { v: 'LPG',      label: 'LPG' },
+  { v: 'ELECTRIC', label: '전기' }
+];
+function _mypFuelLabel(v) {
+  var f = String(v || 'GASOLINE').toUpperCase();
+  for (var i = 0; i < MYP_CAR_FUELS.length; i++) if (MYP_CAR_FUELS[i].v === f) return MYP_CAR_FUELS[i].label;
+  return '휘발유';
+}
+function _mypIsEv(v) { return String(v || '').toUpperCase() === 'ELECTRIC'; }
+/** 연료에 따른 단위/명칭 묶음 — 전기차는 리터가 아니라 kWh 입니다. */
+function _mypFuelUnits(v) {
+  return _mypIsEv(v)
+    ? { effLabel: '전비 (km/kWh)', priceLabel: '전기요금 (원/kWh)', effPh: '예: 5.5', pricePh: '예: 350', effUnit: 'km/kWh', priceUnit: '원/kWh', effName: '전비' }
+    : { effLabel: '연비 (km/L)',   priceLabel: '유가 (원/L)',       effPh: '예: 12',  pricePh: '예: 1700', effUnit: 'km/L',   priceUnit: '원/L',   effName: '연비' };
+}
 function _mypVehicleLabel(v) {
   for (var i = 0; i < MYP_VEHICLE_TYPES.length; i++) if (MYP_VEHICLE_TYPES[i].v === (v || '')) return MYP_VEHICLE_TYPES[i].label;
   return '미설정';
@@ -8298,6 +8318,9 @@ function _mypNum(v) { return (v === null || v === undefined || v === '') ? '' : 
 
 function _mypRenderVehicleForm(p) {
   var vt = p.vehicle_type || '';
+  var fuel = String(p.vehicle_fuel || 'GASOLINE').toUpperCase();
+  if (!_mypFuelLabel(fuel) || ['GASOLINE','DIESEL','LPG','ELECTRIC'].indexOf(fuel) < 0) fuel = 'GASOLINE';
+  var units = _mypFuelUnits(fuel);
   return '<div class="mt-6 pt-5 border-t border-slate-200">' +
     '<div class="flex items-center gap-2 mb-3">' +
       '<i class="fas fa-car text-slate-400"></i>' +
@@ -8315,10 +8338,18 @@ function _mypRenderVehicleForm(p) {
       '</div>' +
       '<div><label class="input-label">차종</label><input name="vehicle_model" type="text" value="' + csEsc(p.vehicle_model || '') + '" class="input" placeholder="예: 아이오닉5" maxlength="200"></div>' +
       '<div><label class="input-label">자동차 등록번호</label><input name="vehicle_plate" type="text" value="' + csEsc(p.vehicle_plate || '') + '" class="input" placeholder="예: 12가 3456" maxlength="200"></div>' +
+      '<div class="col-span-full"><label class="input-label">연료 종류</label>' +
+        '<select name="vehicle_fuel" id="myp-vehicle-fuel" class="input" onchange="_mypFuelToggle()">' +
+          MYP_CAR_FUELS.map(function(o) {
+            return '<option value="' + csEsc(o.v) + '"' + (fuel === o.v ? ' selected' : '') + '>' + csEsc(o.label) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<div id="myp-fuel-hint" class="text-[11px] mt-1.5"></div>' +
+      '</div>' +
       '<div id="myp-veh-rate" class="col-span-full grid grid-cols-1 sm:grid-cols-3 gap-3">' +
         '<div><label class="input-label">km당 단가 (원)</label><input name="travel_rate_per_km" type="number" step="1" min="0" max="100000" value="' + csEsc(_mypNum(p.travel_rate_per_km)) + '" class="input" placeholder="예: 300"><div class="text-[10px] text-slate-400 mt-1">입력 시 이 단가로 정산</div></div>' +
-        '<div><label class="input-label">연비 (km/L)</label><input name="vehicle_fuel_efficiency" type="number" step="0.1" min="0" max="100" value="' + csEsc(_mypNum(p.vehicle_fuel_efficiency)) + '" class="input" placeholder="예: 12"><div class="text-[10px] text-slate-400 mt-1">단가 미입력 시 사용</div></div>' +
-        '<div><label class="input-label">유가 (원/L)</label><input name="vehicle_fuel_price" type="number" step="1" min="0" max="100000" value="' + csEsc(_mypNum(p.vehicle_fuel_price)) + '" class="input" placeholder="예: 1700"><div class="text-[10px] text-slate-400 mt-1">비우면 전역 설정 사용</div></div>' +
+        '<div><label class="input-label" id="myp-eff-label">' + csEsc(units.effLabel) + '</label><input name="vehicle_fuel_efficiency" type="number" step="0.1" min="0" max="100" value="' + csEsc(_mypNum(p.vehicle_fuel_efficiency)) + '" class="input" id="myp-eff-input" placeholder="' + csEsc(units.effPh) + '"><div class="text-[10px] text-slate-400 mt-1">단가 미입력 시 사용</div></div>' +
+        '<div><label class="input-label" id="myp-price-label">' + csEsc(units.priceLabel) + '</label><input name="vehicle_fuel_price" type="number" step="1" min="0" max="100000" value="' + csEsc(_mypNum(p.vehicle_fuel_price)) + '" class="input" id="myp-price-input" placeholder="' + csEsc(units.pricePh) + '"><div class="text-[10px] text-slate-400 mt-1">비우면 전역 설정 사용</div></div>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -8346,10 +8377,46 @@ function _mypVehicleToggle() {
   }
   // 실비 정산일 때만 단가/연비/유가 입력 노출
   if (rate) rate.style.display = (v === 'private_actual') ? '' : 'none';
+  // 연료 종류 안내문·단위 라벨도 함께 초기화합니다.
+  _mypFuelToggle();
+}
+
+/**
+ * 연료 종류 변경 시 연비/유가 입력의 단위 표기를 바꿉니다.
+ * 값(숫자)은 그대로 두고 해석 단위만 달라지므로, 사용자가 직접 확인할 수 있게
+ * 전기차일 때는 안내문을 함께 띄웁니다.
+ */
+function _mypFuelToggle() {
+  var sel = document.getElementById('myp-vehicle-fuel');
+  if (!sel) return;
+  var fuel = sel.value || 'GASOLINE';
+  var u = _mypFuelUnits(fuel);
+  var effL = document.getElementById('myp-eff-label');
+  var priceL = document.getElementById('myp-price-label');
+  var effI = document.getElementById('myp-eff-input');
+  var priceI = document.getElementById('myp-price-input');
+  if (effL) effL.textContent = u.effLabel;
+  if (priceL) priceL.textContent = u.priceLabel;
+  if (effI) effI.placeholder = u.effPh;
+  if (priceI) priceI.placeholder = u.pricePh;
+
+  var hint = document.getElementById('myp-fuel-hint');
+  if (!hint) return;
+  if (_mypIsEv(fuel)) {
+    hint.className = 'text-[11px] mt-1.5 text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-2.5 py-2 leading-relaxed';
+    hint.innerHTML = '<i class="fas fa-bolt mr-1"></i>전기차는 고속도로 <b>통행료가 감면</b>되어 자동 반영됩니다. ' +
+      '연비·유가 칸은 <b>전비(km/kWh)</b> 와 <b>전기요금(원/kWh)</b> 으로 해석합니다.';
+  } else {
+    hint.className = 'text-[11px] mt-1.5 text-slate-500';
+    hint.innerHTML = '<i class="fas fa-circle-info mr-1 text-slate-400"></i>통행료 산출에 반영됩니다. ' +
+      csEsc(_mypFuelLabel(fuel)) + ' 차량은 일반 통행료가 적용됩니다.';
+  }
 }
 
 function _mypRenderVehicleView(p) {
   var vt = p.vehicle_type || '';
+  var vfuel = String(p.vehicle_fuel || '').toUpperCase();
+  var vu = _mypFuelUnits(vfuel);
   var badgeCls = vt === 'corporate' ? 'bg-blue-50 text-blue-700 border-blue-200'
     : vt === 'private_allowance' ? 'bg-amber-50 text-amber-700 border-amber-200'
     : vt === 'private_actual' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -8360,9 +8427,9 @@ function _mypRenderVehicleView(p) {
     if (p.travel_rate_per_km !== null && p.travel_rate_per_km !== undefined && Number(p.travel_rate_per_km) > 0) {
       settle = 'km당 ' + money(p.travel_rate_per_km) + '원';
     } else if (p.vehicle_fuel_efficiency || p.vehicle_fuel_price) {
-      settle = '연비 기준 ' + (p.vehicle_fuel_efficiency ? p.vehicle_fuel_efficiency + 'km/L' : '전역') + ' · ' + (p.vehicle_fuel_price ? money(p.vehicle_fuel_price) + '원/L' : '전역 유가');
+      settle = vu.effName + ' 기준 ' + (p.vehicle_fuel_efficiency ? p.vehicle_fuel_efficiency + vu.effUnit : '전역') + ' · ' + (p.vehicle_fuel_price ? money(p.vehicle_fuel_price) + vu.priceUnit : '전역 단가');
     } else {
-      settle = '전역 설정(연비 기준)';
+      settle = '전역 설정(' + vu.effName + ' 기준)';
     }
   } else if (vt === '') {
     settle = '전역 설정';
@@ -8376,11 +8443,15 @@ function _mypRenderVehicleView(p) {
       '<span class="px-2 py-0.5 rounded-full border text-[11px] font-semibold ' + badgeCls + '">' + csEsc(_mypVehicleLabel(vt)) + '</span>' +
       (p.vehicle_model ? '<span class="text-slate-700 font-semibold">' + csEsc(p.vehicle_model) + '</span>' : '') +
       (p.vehicle_plate ? '<span class="font-mono text-[11px] text-slate-600 bg-white/70 border border-slate-200 rounded px-1.5 py-0.5">' + csEsc(p.vehicle_plate) + '</span>' : '') +
+      (vfuel ? '<span class="px-2 py-0.5 rounded-full border text-[11px] font-semibold ' +
+        (_mypIsEv(vfuel) ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-600 border-slate-200') + '">' +
+        (_mypIsEv(vfuel) ? '<i class="fas fa-bolt mr-1 text-[9px]"></i>' : '') + csEsc(_mypFuelLabel(vfuel)) + '</span>' : '') +
       '<span class="text-slate-400">·</span>' +
       '<span class="text-slate-600">정산: ' + csEsc(settle) + '</span>' +
     '</div>' +
     (vt === 'private_allowance' ? '<div class="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 leading-relaxed"><i class="fas fa-triangle-exclamation mr-1"></i>자가운전보조금 수령 중 — 유류비·통행료 실비를 함께 받으면 월 20만원이 과세 전환됩니다.</div>' : '') +
     (vt === '' ? '<div class="mt-2 text-[11px] text-slate-500"><i class="fas fa-circle-info mr-1 text-slate-400"></i>차량 형태를 설정하면 출장 정산 보고서에 차종·등록번호·정산 방식이 자동 반영됩니다.</div>' : '') +
+    (!vfuel ? '<div class="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 leading-relaxed"><i class="fas fa-triangle-exclamation mr-1"></i>연료 종류가 설정되지 않아 통행료를 <b>휘발유 기준</b>으로 계산합니다. 전기차라면 통행료 감면이 반영되지 않아 과대 계상됩니다.</div>' : '') +
   '</div>';
 }
 
@@ -13889,13 +13960,19 @@ var _trvState = {
 function _trvPendKey(d) {
   return d.date + '|' + (d.user_id === null || d.user_id === undefined ? '' : d.user_id);
 }
+/** 대기분 객체에 실제 변경이 담겨 있는지 */
+function _trvHasPend(p) {
+  return !!p && (p.origin !== undefined || p.return !== undefined ||
+                 p.priority !== undefined || p.waypoints !== undefined);
+}
+
 /** 대기 중인 변경 건수 */
 function _trvPendCount() {
   var n = 0;
   for (var k in _trvState.pending) {
     if (!Object.prototype.hasOwnProperty.call(_trvState.pending, k)) continue;
     var p = _trvState.pending[k];
-    if (p && (p.origin !== undefined || p.return !== undefined)) n++;
+    if (p && _trvHasPend(p)) n++;
   }
   return n;
 }
@@ -13910,6 +13987,54 @@ function _trvEffectiveEndpoint(d, kind) {
   var log = d.log || {};
   var v = kind === 'origin' ? log.origin_place_id : log.return_place_id;
   return (v === null || v === undefined) ? '' : String(v);
+}
+
+// ── 경로 방식 / 보정 경유지 ────────────────────────────────────────────────
+// 카카오 '추천경로' 만 쓰면 실제 운행한 길과 다를 수 있습니다.
+//   · 추천     : 카카오 기본 (고속도로 우선)
+//   · 최단거리 : 지방도 위주로 돌아 통행료가 낮음
+//   · 무료도로 : 유료도로 회피 (통행료 0원)
+// 세 옵션 어디에도 없는 길(정체로 국도로 빠진 경우 등)은 지도에서 지나온 지점을
+// 찍어 '보정 경유지'로 남기면 그 지점을 통과하는 경로로 다시 계산됩니다.
+var TRV_ROUTE_PRIORITIES = [
+  { v: 'RECOMMEND',  label: '추천',     desc: '카카오 추천 경로 (고속도로 우선)' },
+  { v: 'DISTANCE',   label: '최단거리', desc: '거리가 가장 짧은 경로 (지방도 위주, 통행료 낮음)' },
+  { v: 'AVOID_TOLL', label: '무료도로', desc: '유료도로를 피한 경로 (통행료 없음)' }
+];
+function _trvPriorityLabel(v) {
+  var t = String(v || 'RECOMMEND').toUpperCase();
+  for (var i = 0; i < TRV_ROUTE_PRIORITIES.length; i++) if (TRV_ROUTE_PRIORITIES[i].v === t) return TRV_ROUTE_PRIORITIES[i].label;
+  return '추천';
+}
+
+/** 그 날 화면에 표시할 경로 방식 (대기분 우선) */
+function _trvEffectivePriority(d) {
+  var p = _trvState.pending[_trvPendKey(d)];
+  if (p && p.priority !== undefined) return p.priority;
+  var saved = (d.log && d.log.route_priority) || d.route_priority || 'RECOMMEND';
+  return String(saved).toUpperCase();
+}
+
+/** 그 날 화면에 표시할 보정 경유지 배열 (대기분 우선) */
+function _trvEffectiveWaypoints(d) {
+  var p = _trvState.pending[_trvPendKey(d)];
+  if (p && p.waypoints !== undefined) return p.waypoints;
+  return (d.route_waypoints || []).slice();
+}
+
+/** 경로 방식 셀렉트 변경 → 대기분에 담기 */
+function trvStagePriority(i, value) {
+  var d = _trvState.days[i];
+  if (!d) return;
+  var key = _trvPendKey(d);
+  var saved = String((d.log && d.log.route_priority) || d.route_priority || 'RECOMMEND').toUpperCase();
+  var p = _trvState.pending[key] || {};
+  if (String(value).toUpperCase() === saved) delete p.priority;
+  else p.priority = String(value).toUpperCase();
+  if (!_trvHasPend(p)) delete _trvState.pending[key];
+  else _trvState.pending[key] = p;
+  _trvRefreshApplyBar();
+  _trvMarkPendingRows();
 }
 
 function _trvFmtDate(d) {
@@ -14125,6 +14250,7 @@ function _trvRenderResult() {
         '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">사용일자</th>' +
         '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">운전자</th>' +
         '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">출발 → 복귀</th>' +
+        '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">경로</th>' +
         '<th class="px-3 py-2 text-left font-semibold">행선지 (방문 순서)</th>' +
         '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">주행거리</th>' +
         '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">계기판</th>' +
@@ -14139,7 +14265,10 @@ function _trvRenderResult() {
   h += '<div class="text-[10px] text-slate-400 leading-relaxed px-1">' +
     '· <b>출발 → 복귀</b>를 바꾼 뒤 <b>적용</b>을 누르면 저장되고 주행거리가 다시 계산됩니다. 여러 날을 함께 바꿔도 됩니다. 장소는 <b>장소 관리</b>에서 등록합니다.<br>' +
     '· 주행거리는 카카오모빌리티 길찾기 API 의 <b>실제 도로 경로</b> 기준입니다 (직선거리 아님).<br>' +
-    '· 통행료는 카카오 <b>추정치</b>입니다. 재무팀 증빙은 하이패스 이용내역을 기준으로 하고, 실제 금액은 <b>입력</b> 버튼으로 채워주세요.<br>' +
+    '· <b>경로</b> 칸에서 그 날 실제로 탄 길에 가까운 방식을 고를 수 있습니다. <b>추천</b>은 고속도로 우선, <b>최단거리</b>는 지방도 위주(통행료 낮음), <b>무료도로</b>는 유료도로를 아예 피한 경로입니다.<br>' +
+    '· 세 방식 어디에도 없는 길로 갔다면(정체로 국도로 빠진 경우 등) <b>지도</b> 버튼을 눌러 지나온 지점을 찍어주세요. 그 지점을 통과하는 경로로 다시 계산됩니다.<br>' +
+    '· 통행료는 카카오 <b>추정치</b>이며 차량 연료 종류를 반영합니다(전기차는 감면 적용). 연료 종류는 <b>내 차량 정보</b>에서 설정합니다.<br>' +
+    '· 재무팀 증빙은 하이패스 이용내역을 기준으로 하고, 실제 금액은 <b>입력</b> 버튼으로 채워주세요.<br>' +
     '· 좌표가 없는 기관은 경로에서 제외되므로 실제보다 거리가 짧게 나올 수 있습니다.' +
   '</div>';
   return h;
@@ -14165,7 +14294,7 @@ function _trvEndpointCell(d, i) {
   };
   // 대기 중인 변경이 있으면 현재 표시된 경로는 아직 반영 전임을 알려줍니다.
   var pend = _trvState.pending[_trvPendKey(d)];
-  var changed = !!(pend && (pend.origin !== undefined || pend.return !== undefined));
+  var changed = _trvHasPend(pend);
   var selCls = 'text-[10px] border rounded-md px-1 py-0.5 max-w-[104px] truncate ' +
     (changed ? 'border-amber-300 bg-amber-50 text-amber-900 font-semibold' : 'border-slate-200 bg-white');
 
@@ -14215,7 +14344,7 @@ function _trvMarkPendingRows() {
     var cell = document.getElementById('trv-ep-' + i);
     if (!cell) continue;
     var pend = _trvState.pending[_trvPendKey(days[i])];
-    var changed = !!(pend && (pend.origin !== undefined || pend.return !== undefined));
+    var changed = _trvHasPend(pend);
     var sels = cell.querySelectorAll('select');
     for (var s = 0; s < sels.length; s++) {
       sels[s].className = 'text-[10px] border rounded-md px-1 py-0.5 max-w-[104px] truncate ' +
@@ -14223,6 +14352,10 @@ function _trvMarkPendingRows() {
     }
     var tag = cell.querySelector('.trv-pend-tag');
     if (tag) tag.style.display = changed ? '' : 'none';
+
+    // 경로 방식·경유지 셀도 대기 상태를 함께 반영합니다.
+    var rc = document.getElementById('trv-rt-' + i);
+    if (rc) rc.innerHTML = _trvRouteCell(days[i], i);
   }
 }
 
@@ -14236,7 +14369,7 @@ function _trvRefreshApplyBar() {
   bar.innerHTML =
     '<div class="flex flex-wrap items-center gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 mb-4">' +
       '<i class="fas fa-triangle-exclamation text-amber-500"></i>' +
-      '<span class="text-[12px] text-amber-800 font-semibold">출발지·복귀지 변경 ' + n + '건이 아직 반영되지 않았습니다.</span>' +
+      '<span class="text-[12px] text-amber-800 font-semibold">운행기록 변경 ' + n + '건이 아직 반영되지 않았습니다.</span>' +
       '<span class="text-[11px] text-amber-700">적용을 누르면 저장하고 주행거리를 다시 계산합니다.</span>' +
       '<div class="ml-auto flex gap-2">' +
         '<button onclick="trvDiscardEndpoints()" class="btn btn-outline btn-sm"' + (_trvState.applying ? ' disabled' : '') + '>' +
@@ -14272,7 +14405,7 @@ async function trvApplyEndpoints() {
   for (var i = 0; i < days.length; i++) {
     var d = days[i];
     var p = _trvState.pending[_trvPendKey(d)];
-    if (!p || (p.origin === undefined && p.return === undefined)) continue;
+    if (!_trvHasPend(p)) continue;
     var log = d.log || {};
     var cur = function(kind) {
       var v = kind === 'origin' ? log.origin_place_id : log.return_place_id;
@@ -14292,7 +14425,11 @@ async function trvApplyEndpoints() {
         fuel_amount: log.fuel_amount,
         note: log.note || '',
         origin_place_id: p.origin !== undefined ? p.origin : cur('origin'),
-        return_place_id: p.return !== undefined ? p.return : cur('return')
+        return_place_id: p.return !== undefined ? p.return : cur('return'),
+        // 경로 방식·보정 경유지는 바꾼 것만 실어 보냅니다.
+        // (키를 아예 넣지 않으면 서버가 기존 값을 그대로 유지합니다.)
+        route_priority: p.priority !== undefined ? p.priority : undefined,
+        route_waypoints: p.waypoints !== undefined ? p.waypoints : undefined
       }
     });
   }
@@ -14330,6 +14467,402 @@ async function trvApplyEndpoints() {
   await trvFetch();
 }
 
+/**
+ * 경로 방식 + 보정 경유지 셀.
+ *
+ * 카카오 '추천경로' 하나만 쓰면 실제 운행한 길과 어긋날 수 있어
+ *   ① 방식을 3가지 중에서 고르고
+ *   ② 그래도 안 맞으면 지도에서 지나온 지점을 찍어 보정
+ * 하는 두 단계를 제공합니다. 둘 다 '적용' 을 눌러야 저장됩니다.
+ */
+function _trvRouteCell(d, i) {
+  var pend = _trvState.pending[_trvPendKey(d)];
+  var changed = _trvHasPend(pend);
+  var cur = _trvEffectivePriority(d);
+  var wps = _trvEffectiveWaypoints(d);
+
+  var selCls = 'text-[10px] border rounded-md px-1 py-0.5 ' +
+    (changed ? 'border-amber-300 bg-amber-50 text-amber-900 font-semibold' : 'border-slate-200 bg-white');
+
+  var opts = TRV_ROUTE_PRIORITIES.map(function(p) {
+    return '<option value="' + p.v + '"' + (p.v === cur ? ' selected' : '') + ' title="' + csEsc(p.desc) + '">' +
+      csEsc(p.label) + '</option>';
+  }).join('');
+
+  // 보정 경유지가 있으면 개수를 배지로 보여줍니다 (지도를 열지 않아도 보이도록).
+  var wpBadge = wps.length
+    ? '<span class="inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded bg-violet-50 text-violet-700 font-semibold" title="지도에서 찍은 보정 경유지">' +
+        '<i class="fas fa-map-pin text-[8px]"></i>' + wps.length + '</span>'
+    : '';
+
+  // 경로 계산에 실패한 날은 그릴 형상이 없어 지도를 열어도 의미가 없습니다.
+  var canMap = !d.error && (d.stops || []).length >= 2;
+
+  return '<div class="flex items-center gap-1">' +
+      '<select onchange="trvStagePriority(' + i + ', this.value)" class="' + selCls + '" title="경로 방식">' + opts + '</select>' +
+      (canMap
+        ? '<button onclick="trvOpenMap(' + i + ')" class="text-[10px] px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200" title="지도에서 경로 확인 · 보정 경유지 찍기">' +
+            '<i class="fas fa-map-location-dot"></i></button>'
+        : '<span class="text-[9px] text-slate-300" title="경로를 계산할 수 없어 지도를 표시할 수 없습니다"><i class="fas fa-map-location-dot"></i></span>') +
+    '</div>' +
+    (wpBadge ? '<div class="mt-1">' + wpBadge + '</div>' : '');
+}
+
+// ── 지도 모달 (경로 확인 + 보정 경유지 찍기) ────────────────────────────────
+// 카카오가 돌려주는 경로 형상(도로 정점)을 Leaflet 으로 그립니다.
+// 지도를 클릭하면 그 지점을 '보정 경유지' 로 담고, 저장 없이 거리·통행료를 다시 계산해
+// 미리 보여줍니다. '적용' 을 누를 때 비로소 travel_logs 에 저장됩니다.
+var _trvMap = {
+  map: null, dayIndex: -1,
+  priority: 'RECOMMEND',
+  waypoints: [],      // [{lat,lng,name}]
+  line: null,         // L.polyline
+  stopMarkers: [],
+  wpMarkers: [],
+  preview: null,      // 마지막 미리보기 결과 (거리/통행료/형상)
+  loading: false
+};
+
+function trvOpenMap(i) {
+  var d = _trvState.days[i];
+  if (!d) return;
+  if (typeof L === 'undefined') { toast('지도 라이브러리를 불러오지 못했습니다', 'err'); return; }
+
+  _trvMap.dayIndex = i;
+  _trvMap.priority = _trvEffectivePriority(d);
+  _trvMap.waypoints = _trvEffectiveWaypoints(d).map(function(w) {
+    return { lat: Number(w.lat), lng: Number(w.lng), name: w.name || '경유지' };
+  });
+  _trvMap.preview = null;
+  _trvMap.loading = false;
+  _trvMap.map = null;
+  _trvMap.line = null;
+  _trvMap.stopMarkers = [];
+  _trvMap.wpMarkers = [];
+
+  var title = '<i class="fas fa-map-location-dot text-sky-500 mr-2"></i>' +
+    csEsc(d.date) + ' 경로 확인' + (d.user_name ? ' · ' + csEsc(d.user_name) : '');
+
+  var prOpts = TRV_ROUTE_PRIORITIES.map(function(p) {
+    return '<option value="' + p.v + '"' + (p.v === _trvMap.priority ? ' selected' : '') + '>' + csEsc(p.label) + '</option>';
+  }).join('');
+
+  openModal(title,
+    '<div class="space-y-3">' +
+      // 경로 방식 + 안내
+      '<div class="flex flex-wrap items-center gap-2">' +
+        '<label class="text-[11px] font-semibold text-slate-500">경로 방식</label>' +
+        '<select id="trv-map-priority" onchange="trvMapChangePriority(this.value)" class="input py-1 text-[12px] w-auto">' + prOpts + '</select>' +
+        '<button onclick="trvMapClearWaypoints()" class="btn btn-outline btn-sm ml-auto text-[11px]">' +
+          '<i class="fas fa-eraser mr-1"></i>경유지 비우기</button>' +
+      '</div>' +
+      '<div class="rounded-lg bg-sky-50 border border-sky-100 px-3 py-2 text-[11px] text-sky-800 leading-relaxed">' +
+        '<i class="fas fa-hand-pointer mr-1"></i>실제로 지나온 지점을 <b>지도에서 클릭</b>하면 보정 경유지로 추가되고 거리·통행료가 다시 계산됩니다. ' +
+        '방문지(파란 핀)는 미팅 기록에서 오는 값이라 지도에서 바꿀 수 없습니다.' +
+      '</div>' +
+      // 지도
+      '<div id="trv-map-canvas" style="height:min(52vh,420px);border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;background:#f8fafc"></div>' +
+      // 산출 결과
+      '<div id="trv-map-stat"></div>' +
+      // 경유지 목록
+      '<div id="trv-map-wplist"></div>' +
+      // 하단 버튼
+      '<div class="flex gap-2 pt-1">' +
+        '<button onclick="closeModal()" class="btn btn-outline flex-1">취소</button>' +
+        '<button id="trv-map-ok" onclick="trvMapConfirm()" class="btn btn-primary flex-1">' +
+          '<i class="fas fa-check mr-1"></i>이 경로로 반영</button>' +
+      '</div>' +
+      '<div class="text-[10px] text-slate-400">· 여기서 <b>반영</b>을 눌러도 아직 저장되지 않습니다. 표의 <b>적용</b> 버튼을 눌러야 저장됩니다.</div>' +
+    '</div>', 'wide');
+
+  // 모달이 화면에 붙은 뒤에 지도를 만들어야 크기가 정상 계산됩니다.
+  setTimeout(function() { _trvMapInit(d); }, 60);
+}
+
+function _trvMapInit(d) {
+  var el = document.getElementById('trv-map-canvas');
+  if (!el) return;
+  if (_trvMap.map) { try { _trvMap.map.remove(); } catch (e) {} _trvMap.map = null; }
+
+  _trvMap.map = L.map(el, { center: [36.3, 127.8], zoom: 7, scrollWheelZoom: true, zoomControl: true });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, subdomains: 'abcd',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+  }).addTo(_trvMap.map);
+
+  // 방문지·출발지·복귀지 핀
+  _trvMapDrawStops(d);
+
+  // 지도 클릭 → 보정 경유지 추가
+  _trvMap.map.on('click', function(ev) {
+    if (_trvMap.loading) return;
+    trvMapAddWaypoint(ev.latlng.lat, ev.latlng.lng);
+  });
+
+  // 저장된 값 그대로 첫 조회 (캐시가 있으면 카카오 재호출 없음)
+  _trvMapRefresh();
+}
+
+function _trvMapDrawStops(d) {
+  var stops = (d.stops || []).filter(function(s) { return s.lat != null && s.lng != null; });
+  for (var i = 0; i < stops.length; i++) {
+    var s = stops[i];
+    var isEnd = s.is_origin || s.is_return;
+    var label = s.is_origin ? '출발' : s.is_return ? '복귀' : String(i + (stops[0] && stops[0].is_origin ? 0 : 1));
+    var icon = L.divIcon({
+      className: '',
+      html: '<div style="width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+        'font-size:9px;font-weight:700;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);' +
+        'background:' + (isEnd ? '#64748b' : '#0284c7') + '">' + label + '</div>',
+      iconSize: [22, 22], iconAnchor: [11, 11]
+    });
+    var m = L.marker([s.lat, s.lng], { icon: icon }).addTo(_trvMap.map);
+    m.bindTooltip(csEsc(s.name), { direction: 'top', offset: [0, -10] });
+    _trvMap.stopMarkers.push(m);
+  }
+}
+
+/** 보정 경유지 마커를 다시 그립니다. */
+function _trvMapDrawWaypoints() {
+  for (var i = 0; i < _trvMap.wpMarkers.length; i++) {
+    try { _trvMap.map.removeLayer(_trvMap.wpMarkers[i]); } catch (e) {}
+  }
+  _trvMap.wpMarkers = [];
+  if (!_trvMap.map) return;
+  for (var k = 0; k < _trvMap.waypoints.length; k++) {
+    var w = _trvMap.waypoints[k];
+    var icon = L.divIcon({
+      className: '',
+      html: '<div style="width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+        'font-size:9px;font-weight:700;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);' +
+        'background:#7c3aed">' + (k + 1) + '</div>',
+      iconSize: [18, 18], iconAnchor: [9, 9]
+    });
+    var m = L.marker([w.lat, w.lng], { icon: icon }).addTo(_trvMap.map);
+    m.bindTooltip('보정 경유지 ' + (k + 1) + ' (클릭하면 삭제)', { direction: 'top', offset: [0, -8] });
+    (function(idx) {
+      m.on('click', function(ev) {
+        if (ev && ev.originalEvent) L.DomEvent.stopPropagation(ev);
+        trvMapRemoveWaypoint(idx);
+      });
+    })(k);
+    _trvMap.wpMarkers.push(m);
+  }
+}
+
+function trvMapAddWaypoint(lat, lng) {
+  // 대한민국 범위를 벗어난 좌표는 카카오가 거부하므로 미리 막습니다.
+  if (lat < 33 || lat > 39 || lng < 124 || lng > 132) {
+    toast('국내 좌표만 경유지로 지정할 수 있습니다', 'warn');
+    return;
+  }
+  if (_trvMap.waypoints.length >= 25) {
+    toast('보정 경유지는 최대 25개까지 지정할 수 있습니다', 'warn');
+    return;
+  }
+  _trvMap.waypoints.push({
+    lat: Math.round(lat * 1e6) / 1e6,
+    lng: Math.round(lng * 1e6) / 1e6,
+    name: '보정 경유지 ' + (_trvMap.waypoints.length + 1)
+  });
+  _trvMapDrawWaypoints();
+  _trvMapRefresh();
+}
+
+function trvMapRemoveWaypoint(idx) {
+  if (_trvMap.loading) return;
+  if (idx < 0 || idx >= _trvMap.waypoints.length) return;
+  _trvMap.waypoints.splice(idx, 1);
+  // 이름의 번호를 다시 매깁니다 (목록·마커 번호가 어긋나지 않도록).
+  for (var i = 0; i < _trvMap.waypoints.length; i++) _trvMap.waypoints[i].name = '보정 경유지 ' + (i + 1);
+  _trvMapDrawWaypoints();
+  _trvMapRefresh();
+}
+
+function trvMapClearWaypoints() {
+  if (_trvMap.loading) return;
+  if (!_trvMap.waypoints.length) { toast('지정된 보정 경유지가 없습니다', 'warn'); return; }
+  _trvMap.waypoints = [];
+  _trvMapDrawWaypoints();
+  _trvMapRefresh();
+}
+
+function trvMapChangePriority(v) {
+  if (_trvMap.loading) return;
+  _trvMap.priority = String(v || 'RECOMMEND').toUpperCase();
+  _trvMapRefresh();
+}
+
+/** 현재 조건으로 저장 없이 다시 계산해 지도·수치를 갱신합니다. */
+async function _trvMapRefresh() {
+  var d = _trvState.days[_trvMap.dayIndex];
+  if (!d || !_trvMap.map) return;
+
+  _trvMap.loading = true;
+  _trvMapPaintStat();
+  _trvMapPaintWpList();
+
+  try {
+    var r = await API.post('/travel/route-preview', {
+      log_date: d.date,
+      user_id: d.user_id,
+      route_priority: _trvMap.priority,
+      route_waypoints: _trvMap.waypoints
+    });
+    _trvMap.preview = r.data.data || null;
+  } catch (e) {
+    var msg = (e && e.response && e.response.data && (e.response.data.message || e.response.data.error)) || '경로를 계산하지 못했습니다';
+    _trvMap.preview = { error: msg, distance_km: 0, duration_min: 0, toll: 0, polyline: [] };
+  }
+
+  _trvMap.loading = false;
+  _trvMapDrawLine();
+  _trvMapPaintStat();
+  _trvMapPaintWpList();
+}
+
+function _trvMapDrawLine() {
+  if (!_trvMap.map) return;
+  if (_trvMap.line) { try { _trvMap.map.removeLayer(_trvMap.line); } catch (e) {} _trvMap.line = null; }
+  var pv = _trvMap.preview;
+  var pts = (pv && pv.polyline) || [];
+  if (!pts.length) {
+    // 형상이 없으면 최소한 방문지 핀에는 맞춰줍니다.
+    _trvMapFitStops();
+    return;
+  }
+  _trvMap.line = L.polyline(pts, { color: '#0284c7', weight: 4, opacity: 0.85 }).addTo(_trvMap.map);
+  try {
+    _trvMap.map.invalidateSize();
+    _trvMap.map.fitBounds(_trvMap.line.getBounds(), { padding: [24, 24] });
+  } catch (e) {}
+}
+
+function _trvMapFitStops() {
+  if (!_trvMap.map || !_trvMap.stopMarkers.length) return;
+  try {
+    _trvMap.map.invalidateSize();
+    if (_trvMap.stopMarkers.length === 1) _trvMap.map.setView(_trvMap.stopMarkers[0].getLatLng(), 13);
+    else _trvMap.map.fitBounds(L.featureGroup(_trvMap.stopMarkers).getBounds(), { padding: [24, 24], maxZoom: 14 });
+  } catch (e) {}
+}
+
+/** 거리·소요시간·통행료 요약 (저장된 값과 비교해 증감을 함께 보여줍니다). */
+function _trvMapPaintStat() {
+  var el = document.getElementById('trv-map-stat');
+  if (!el) return;
+  var d = _trvState.days[_trvMap.dayIndex] || {};
+
+  if (_trvMap.loading) {
+    el.innerHTML = '<div class="rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 text-[12px] text-slate-500">' +
+      '<i class="fas fa-spinner fa-spin mr-1.5"></i>카카오 길찾기로 다시 계산하고 있습니다...</div>';
+    return;
+  }
+  var pv = _trvMap.preview;
+  if (!pv) { el.innerHTML = ''; return; }
+  if (pv.error) {
+    el.innerHTML = '<div class="rounded-lg bg-red-50 border border-red-200 px-3 py-2.5 text-[12px] text-red-700">' +
+      '<i class="fas fa-circle-exclamation mr-1.5"></i>' + csEsc(pv.error) + '</div>';
+    return;
+  }
+
+  var diff = function(now, was, unit, digits) {
+    var dv = (Number(now) || 0) - (Number(was) || 0);
+    if (Math.abs(dv) < (digits ? 0.05 : 1)) return '';
+    var t = (dv > 0 ? '+' : '') + (digits ? (Math.round(dv * 10) / 10) : fmtNum(Math.round(dv)));
+    return '<span class="text-[9px] ml-1 ' + (dv > 0 ? 'text-rose-600' : 'text-emerald-600') + '">' + t + unit + '</span>';
+  };
+
+  var cells = [
+    { label: '주행거리', val: (pv.distance_km || 0) + ' km', d: diff(pv.distance_km, d.distance_km, 'km', 1) },
+    { label: '소요시간', val: (pv.duration_min || 0) + ' 분', d: diff(pv.duration_min, d.duration_min, '분', 0) },
+    { label: '통행료', val: fmtNum(pv.toll || 0) + '원', d: diff(pv.toll, d.toll, '원', 0) }
+  ];
+  if (pv.rule && pv.rule.mode !== 'none') {
+    cells.push({ label: '정산액', val: fmtNum(pv.amount || 0) + '원', d: diff(pv.amount, d.amount, '원', 0) });
+  }
+
+  var roads = (pv.road_names || []).slice(0, 8);
+  el.innerHTML =
+    '<div class="grid grid-cols-3 ' + (cells.length === 4 ? 'sm:grid-cols-4' : '') + ' gap-2">' +
+      cells.map(function(c) {
+        return '<div class="rounded-lg border border-slate-100 bg-white px-2.5 py-2">' +
+          '<div class="text-[10px] text-slate-400 font-medium">' + c.label + '</div>' +
+          '<div class="text-[13px] font-bold text-slate-800">' + c.val + c.d + '</div>' +
+        '</div>';
+      }).join('') +
+    '</div>' +
+    // 연료 종류에 따라 통행료가 달라지므로 어떤 기준으로 계산했는지 밝혀둡니다.
+    '<div class="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[10px] text-slate-500">' +
+      '<span><i class="fas fa-gas-pump text-slate-400 mr-1"></i>통행료 기준 <b>' + csEsc(pv.fuel_label || '휘발유') + '</b>' +
+        (String(pv.fuel || '').toUpperCase() === 'ELECTRIC' ? ' <span class="text-emerald-600 font-semibold">(감면 적용)</span>' : '') + '</span>' +
+      '<span><i class="fas fa-route text-slate-400 mr-1"></i>방식 <b>' + csEsc(pv.route_priority_label || _trvPriorityLabel(_trvMap.priority)) + '</b></span>' +
+      (pv.cached ? '<span class="text-slate-400"><i class="fas fa-database mr-1"></i>캐시 사용</span>' : '') +
+    '</div>' +
+    (roads.length
+      ? '<div class="mt-1.5 text-[10px] text-slate-500 leading-relaxed"><i class="fas fa-road text-slate-400 mr-1"></i>' +
+          roads.map(csEsc).join(' → ') + ((pv.road_names || []).length > roads.length ? ' …' : '') + '</div>'
+      : '');
+}
+
+/** 찍은 보정 경유지 목록 (삭제 가능) */
+function _trvMapPaintWpList() {
+  var el = document.getElementById('trv-map-wplist');
+  if (!el) return;
+  if (!_trvMap.waypoints.length) {
+    el.innerHTML = '<div class="text-[10px] text-slate-400"><i class="fas fa-map-pin mr-1"></i>보정 경유지 없음 — 지도를 클릭해 실제로 지나온 지점을 찍어주세요.</div>';
+    return;
+  }
+  el.innerHTML = '<div class="flex flex-wrap gap-1.5">' +
+    _trvMap.waypoints.map(function(w, k) {
+      return '<span class="inline-flex items-center gap-1 text-[10px] px-1.5 py-1 rounded-md bg-violet-50 text-violet-800 border border-violet-100">' +
+        '<i class="fas fa-map-pin text-[9px]"></i>' + (k + 1) +
+        '<span class="text-violet-500">' + w.lat.toFixed(4) + ', ' + w.lng.toFixed(4) + '</span>' +
+        '<button onclick="trvMapRemoveWaypoint(' + k + ')" class="text-violet-400 hover:text-rose-600 ml-0.5" title="삭제">' +
+          '<i class="fas fa-xmark"></i></button>' +
+      '</span>';
+    }).join('') +
+  '</div>';
+}
+
+/**
+ * 지도에서 정한 조건을 대기분에 담습니다 (저장은 표의 '적용' 에서).
+ * 출발지·복귀지 변경과 같은 흐름을 쓰므로 여러 날을 한 번에 반영할 수 있습니다.
+ */
+function trvMapConfirm() {
+  var d = _trvState.days[_trvMap.dayIndex];
+  if (!d) { closeModal(); return; }
+  if (_trvMap.loading) { toast('계산이 끝난 뒤에 반영해주세요', 'warn'); return; }
+
+  var key = _trvPendKey(d);
+  var p = _trvState.pending[key] || {};
+
+  // 저장값과 같아지면 대기분에서 빼야 '적용' 건수가 부풀지 않습니다.
+  var savedPr = String((d.log && d.log.route_priority) || d.route_priority || 'RECOMMEND').toUpperCase();
+  if (_trvMap.priority === savedPr) delete p.priority;
+  else p.priority = _trvMap.priority;
+
+  var savedWps = (d.route_waypoints || []);
+  var same = savedWps.length === _trvMap.waypoints.length && savedWps.every(function(w, k) {
+    var n = _trvMap.waypoints[k];
+    return Math.abs(Number(w.lat) - n.lat) < 1e-6 && Math.abs(Number(w.lng) - n.lng) < 1e-6;
+  });
+  if (same) delete p.waypoints;
+  else p.waypoints = _trvMap.waypoints.slice();
+
+  if (!_trvHasPend(p)) delete _trvState.pending[key];
+  else _trvState.pending[key] = p;
+
+  if (_trvMap.map) { try { _trvMap.map.remove(); } catch (e) {} _trvMap.map = null; }
+  closeModal();
+
+  if (_trvPendCount()) toast('경로 조건을 담았습니다. 적용을 눌러 저장해주세요', 'ok');
+  else toast('저장된 값과 같아 변경할 내용이 없습니다', 'warn');
+
+  _trvRefreshApplyBar();
+  _trvMarkPendingRows();
+}
+
 function _trvRow(d, i) {
   var log = d.log || {};
   var showAmount = _trvState.days.some(function(x) { return x.rule && x.rule.mode !== 'none'; });
@@ -14355,6 +14888,8 @@ function _trvRow(d, i) {
     '</td>' +
     // 출발지·복귀지는 날마다 다릅니다 (집→병원→사무실 등). 고른 뒤 '적용'을 눌러 반영합니다.
     '<td class="px-3 py-2.5 whitespace-nowrap" id="trv-ep-' + i + '">' + _trvEndpointCell(d, i) + '</td>' +
+    // 경로 방식(추천/최단거리/무료도로) + 지도에서 찍은 보정 경유지
+    '<td class="px-3 py-2.5 whitespace-nowrap" id="trv-rt-' + i + '">' + _trvRouteCell(d, i) + '</td>' +
     '<td class="px-3 py-2.5 min-w-[240px]">' + stops +
       (d.error ? '<div class="text-[10px] text-red-600 mt-1"><i class="fas fa-circle-exclamation mr-1"></i>' + csEsc(d.error) + '</div>' : '') +
       (d.missing_coords && d.missing_coords.length ? '<div class="text-[10px] text-orange-600 mt-1"><i class="fas fa-location-crosshairs mr-1"></i>좌표 없어 제외: ' + d.missing_coords.map(csEsc).join(', ') + '</div>' : '') +

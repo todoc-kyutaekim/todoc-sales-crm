@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """로컬 검증용 시드. meeting_type 은 프로덕션과 동일하게 영문 'visit' 을 사용합니다.
 검증 후 scripts/seed_travel_local.py --clean 으로 반드시 삭제하세요."""
-import subprocess, sys, json, re
+import subprocess, sys, json, re, io, os
 
 DB = 'todoc-crm-production'
+BACKUP = '/tmp/seed_vehicle_backup.json'
 
 def run(sql):
     p = subprocess.run(
@@ -45,6 +46,23 @@ def clean():
     print('[clean] 테스트 데이터 삭제')
     for s in CLEAN:
         run(s)
+    # 차량 정보는 원래 사용자 데이터이므로 삭제가 아니라 백업값으로 되돌립니다.
+    if os.path.exists(BACKUP):
+        b = json.loads(io.open(BACKUP, encoding='utf-8').read())
+        v = b['vehicle']
+        def q(x):
+            return 'NULL' if x is None else ("'" + str(x).replace("'", "''") + "'")
+        def qn(x):
+            return 'NULL' if x is None else str(x)
+        run(f"UPDATE users SET vehicle_type={q(v.get('vehicle_type'))}, "
+            f"vehicle_model={q(v.get('vehicle_model'))}, vehicle_plate={q(v.get('vehicle_plate'))}, "
+            f"vehicle_fuel={q(v.get('vehicle_fuel'))}, "
+            f"vehicle_fuel_efficiency={qn(v.get('vehicle_fuel_efficiency'))}, "
+            f"vehicle_fuel_price={qn(v.get('vehicle_fuel_price'))} WHERE id={b['user_id']}")
+        os.remove(BACKUP)
+        print('[clean] 차량 정보 원복')
+    # 경로 캐시는 테스트 좌표로 만들어진 행이 남으므로 함께 비웁니다.
+    run("DELETE FROM travel_route_cache")
     print('[clean] 완료')
 
 
@@ -77,8 +95,18 @@ def seed():
     run("INSERT INTO meetings (doctor_id, hospital_id, meeting_date, meeting_type, purpose, visit_time, user_id) "
         f"VALUES ({did}, {hids[1]}, '2026-08-06', 'conference', '[TEST]학회', 'allday', {uid})")
 
+    # 차량 정보 — 통행료가 연료 종류에 따라 달라지는지(전기차 감면) 확인하기 위해
+    # 실비 정산 + 연료 종류를 지정합니다. 원래 값은 복원할 수 있게 백업해 둡니다.
+    prev = run(f"SELECT vehicle_type, vehicle_model, vehicle_plate, vehicle_fuel, "
+               f"vehicle_fuel_efficiency, vehicle_fuel_price FROM users WHERE id={uid}")[0]
+    io.open(BACKUP, 'w', encoding='utf-8').write(json.dumps({'user_id': uid, 'vehicle': prev}, ensure_ascii=False))
+    run(f"UPDATE users SET vehicle_type='private_actual', vehicle_model='[TEST]테스트차량', "
+        f"vehicle_plate='12가3456', vehicle_fuel='GASOLINE', "
+        f"vehicle_fuel_efficiency=12, vehicle_fuel_price=1700 WHERE id={uid}")
+
     n = run("SELECT COUNT(*) c FROM meetings WHERE purpose LIKE '[TEST]%' AND meeting_type='visit'")[0]['c']
     print(f'[seed] 완료 — visit {n}건, 병원 {len(hids)}곳, 장소 2곳 (user_id={uid})')
+    print(f'[seed] 차량: private_actual / GASOLINE / 12km/L / 1700원 (원래 값은 {BACKUP} 에 백업)')
 
 
 if __name__ == '__main__':

@@ -11,7 +11,11 @@
 
 import { Hono } from 'hono'
 import { safeInt, logActivity } from '../helpers'
-import { findRoute, samePoint, toKm, toMin, type NaviPoint } from '../kakao_navi'
+import {
+  findRoute, samePoint, toKm, toMin, normalizeFuel, normalizePriority, isElectric,
+  CAR_FUEL_LABEL, ROUTE_PRIORITY_LABEL, ROUTE_PRIORITIES, CAR_FUELS,
+  type NaviPoint, type CarFuel, type RoutePriority,
+} from '../kakao_navi'
 
 type Bindings = { DB: D1Database; KAKAO_REST_API_KEY?: string }
 type Variables = { userId: number; user?: { id: number; name: string; email: string } }
@@ -108,11 +112,18 @@ export type UserVehicle = {
   rate_per_km: number | null
   fuel_efficiency: number | null
   fuel_price: number | null
+  /**
+   * 연료 종류 — 통행료 산출(카카오 car_fuel)에 사용합니다.
+   * 전기차는 고속도로 통행료 감면이 적용되어 기름차보다 통행료가 낮습니다.
+   * 또한 전기차는 fuel_efficiency 를 km/kWh(전바), fuel_price 를 원/kWh 로 해석합니다.
+   */
+  fuel: CarFuel
 }
 
 const EMPTY_VEHICLE: UserVehicle = {
   vehicle_type: '', vehicle_model: '', vehicle_plate: '',
   rate_per_km: null, fuel_efficiency: null, fuel_price: null,
+  fuel: 'GASOLINE',
 }
 
 /** users 테이블에서 차량 정보를 읽습니다. 컬럼이 없는 환경에서도 죽지 않습니다. */
@@ -129,7 +140,8 @@ export async function loadVehicles(db: D1Database, userIds: number[]): Promise<M
     try {
       const r = await db.prepare(
         `SELECT id, vehicle_type, vehicle_model, vehicle_plate,
-                travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price
+                travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
+                vehicle_fuel
          FROM users WHERE id IN (${ph})`
       ).bind(...part).all()
       for (const row of (r.results || []) as any[]) {
@@ -140,10 +152,11 @@ export async function loadVehicles(db: D1Database, userIds: number[]): Promise<M
           rate_per_km: num(row.travel_rate_per_km),
           fuel_efficiency: num(row.vehicle_fuel_efficiency),
           fuel_price: num(row.vehicle_fuel_price),
+          fuel: normalizeFuel(row.vehicle_fuel),
         })
       }
     } catch {
-      // 마이그레이션 0045 미적용 환경 → 전역 설정만 사용
+      // 마이그레이션 0045/0047 미적용 환경 → 전역 설정만 사용
     }
   }
   return map
@@ -184,6 +197,14 @@ export function resolveSettlement(v: UserVehicle, g: TravelSettings): {
       warning: '자가운전보조금(월 20만원 비과세)을 받는 경우 유류비·통행료를 실비로 함께 지급하면 20만원이 과세 대상으로 전환됩니다. 실비를 별도 지급받는 규정이라면 차량 형태를 "개인차량 + 실비 정산"으로 변경해주세요.',
     }
   }
+  // 전기차는 같은 숫자를 리터가 아닌 kWh 로 해석합니다.
+  // (전비 km/kWh · 전기요금 원/kWh) — 계산식은 동일하고 표기 단위만 달라집니다.
+  const ev = isElectric(v.fuel)
+  const effUnit = ev ? 'km/kWh' : 'km/L'
+  const priceUnit = ev ? '원/kWh' : '원/L'
+  const effName = ev ? '전비' : '연비'
+  const costName = ev ? '충전요금' : '유류비'
+
   if (v.vehicle_type === 'private_actual') {
     // 단가가 정해져 있으면 km 단가 정산, 없으면 연비 기준 유류비
     if (rate > 0) {
@@ -195,7 +216,7 @@ export function resolveSettlement(v: UserVehicle, g: TravelSettings): {
     }
     return {
       mode: 'fuel', rate_per_km: rate, fuel_efficiency: eff, fuel_price: price,
-      label: `개인차량 실비 — 연비 기준 유류비 (연비 ${eff}km/L, 유가 ${price.toLocaleString()}원/L)`,
+      label: `개인차량 실비 — ${effName} 기준 ${costName} (${effName} ${eff}${effUnit}, ${price.toLocaleString()}${priceUnit})`,
       warning: '',
     }
   }
@@ -204,7 +225,7 @@ export function resolveSettlement(v: UserVehicle, g: TravelSettings): {
   const gLabel = g.settlement_mode === 'mileage'
     ? `km 단가 정산 (${rate.toLocaleString()}원/km)`
     : (g.settlement_mode === 'fuel'
-      ? `실비 정산 (연비 ${eff}km/L, 유가 ${price.toLocaleString()}원/L)`
+      ? `실비 정산 (${effName} ${eff}${effUnit}, ${price.toLocaleString()}${priceUnit})`
       : '거리 증빙만 (금액 미산출)')
   return {
     mode: g.settlement_mode, rate_per_km: rate, fuel_efficiency: eff, fuel_price: price,
@@ -229,6 +250,7 @@ travel.get('/settings', async (c) => {
     place_type_labels: PLACE_TYPE_LABEL,
     my_user_id: Number(userId),
     vehicle_type_labels: VEHICLE_TYPE_LABEL,
+    car_fuel_labels: CAR_FUEL_LABEL,
     kakao_configured: !!c.env.KAKAO_REST_API_KEY,
   })
 })
@@ -489,10 +511,102 @@ export type DailyRoute = {
   rule?: ReturnType<typeof resolveSettlement>
   /** 담당자 차량 정보 */
   vehicle?: UserVehicle
+
+  // ── 산출 조건 (화면·보고서에 "어떤 기준으로 나온 수치인가" 를 밝힐 때 사용) ──────
+  /** 통행료 산출에 사용한 연료 종류 */
+  fuel?: CarFuel
+  fuel_label?: string
+  /** 적용된 경로 방식 */
+  route_priority?: RoutePriority
+  route_priority_label?: string
+  /** 사용자가 지도에서 찍은 보정 경유지 */
+  route_waypoints?: { lat: number; lng: number; name?: string }[]
+  /** 지도 표시용 경로 형상 [[lat,lng], ...] — 거리 계산에 사용 금지(간소화됨) */
+  polyline?: [number, number][]
+  /** 경로가 지나간 주요 도로명 */
+  road_names?: string[]
 }
 
-function routeKeyOf(points: NaviPoint[]): string {
-  return points.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join('|')
+/** travel_logs.route_waypoints_json 파싱 — 오염된 값은 조용하게 무시합니다. */
+export function parseWaypoints(raw: any): { lat: number; lng: number; name?: string }[] {
+  if (!raw) return []
+  try {
+    const arr = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!Array.isArray(arr)) return []
+    const out: { lat: number; lng: number; name?: string }[] = []
+    for (const w of arr) {
+      const lat = Number(w?.lat)
+      const lng = Number(w?.lng)
+      // 대한민국 서비스 범위 밖 좌표는 카카오가 code 107 로 거부하므로 여기서 걸러냅니다.
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue
+      if (lat < 33 || lat > 39 || lng < 124 || lng > 132) continue
+      out.push({ lat, lng, name: String(w?.name || '경유지').slice(0, 40) })
+      if (out.length >= 25) break // 카카오 경유지 30개 제한 — 방문지 분량을 남김
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/** 단순 하버사인 거리 (m) — 경유지 삽입 지점을 고를 때만 사용합니다.
+ *  ⚠️ 증빙 거리는 여전히 카카오 실주행거리만 사용합니다. */
+function roughMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371000
+  const dLat = (b.lat - a.lat) * Math.PI / 180
+  const dLng = (b.lng - a.lng) * Math.PI / 180
+  const mLat = (a.lat + b.lat) / 2 * Math.PI / 180
+  const x = dLng * Math.cos(mLat)
+  return Math.sqrt(dLat * dLat + x * x) * R
+}
+
+/**
+ * 보정 경유지를 방문 경로에 끼워 넣습니다.
+ *
+ * 사용자가 지도에서 찍은 지점은 "방문지"가 아니라 "지나간 지점"이므로,
+ * 어떤 구간 사이에 넣을지 정해줘야 합니다. 그냥 맨 뒤에 붙이면
+ * "기관A → 복귀 → 경유지" 가 되어 거리가 크게 부풀려집니다.
+ *
+ * 전략: 경유지마다 "이 지점을 사이에 넣었을 때 우회 거리가 가장 적게 늘는 구간"
+ *       을 고릅니다(하버사인 기준). 증빙 거리가 아니라 삽입 위치 선정에만 쓰므로
+ *       직선거리 근사로 충분합니다. 동일 구간에 여러 개가 들어가도 사용자가
+ *       찍은 순서(배열 순서)를 그대로 지킵니다.
+ */
+export function insertWaypoints(
+  points: NaviPoint[],
+  waypoints: { lat: number; lng: number; name?: string }[],
+): NaviPoint[] {
+  if (!waypoints || waypoints.length === 0) return points
+  if (points.length < 2) return points
+  const out: NaviPoint[] = points.slice()
+  for (const w of waypoints) {
+    const wp: NaviPoint = { lat: w.lat, lng: w.lng, name: w.name || '경유지' }
+    let bestAt = out.length - 1 // 기본: 마지막 구간
+    let bestCost = Infinity
+    for (let i = 0; i < out.length - 1; i++) {
+      const a = out[i]
+      const b = out[i + 1]
+      // a→w→b 로 돌렸을 때 추가로 늘어나는 거리
+      const detour = roughMeters(a, wp) + roughMeters(wp, b) - roughMeters(a, b)
+      if (detour < bestCost) { bestCost = detour; bestAt = i + 1 }
+    }
+    out.splice(bestAt, 0, wp)
+  }
+  return out
+}
+
+/**
+ * 경로 캐시 키.
+ *
+ * 🔴 옵션을 반드시 키에 포함시켜야 합니다.
+ *    예전엔 좌표만으로 키를 만들어서, 연료 종류나 경로 방식을 바꿔도 낡은 캐시가
+ *    그대로 반환되어 통행료·거리가 전혀 갱신되지 않았습니다.
+ *    (전기차 감면은 거리가 같아도 금액이 달라지므로 특히 중요합니다.)
+ *    기존 키로 생성된 행은 새 키와 맞지 않으므로 자연스럽게 폐기·재조회됩니다.
+ */
+function routeKeyOf(points: NaviPoint[], fuel: CarFuel, priority: RoutePriority): string {
+  const coords = points.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join('|')
+  return `${coords}#${fuel}#${priority}`
 }
 
 /**
@@ -502,7 +616,18 @@ function routeKeyOf(points: NaviPoint[]): string {
 export async function buildDailyRoutes(
   db: D1Database,
   apiKey: string | undefined,
-  opts: { from?: string; to?: string; userId?: number; noCache?: boolean }
+  opts: {
+    from?: string; to?: string; userId?: number; noCache?: boolean
+    /** 지도 표시용 경로 형상을 함께 반환할지 (지도 모달에서만 true) */
+    withPolyline?: boolean
+    /**
+     * 저장하지 않고 미리 계산해 볼 때 쓰는 임시 조건.
+     * 키는 `날짜|담당자ID` (담당자 미지정은 빈 문자열).
+     * 지도 모달에서 경유지를 찍는 중에는 아직 저장 전이므로,
+     * travel_logs 의 값 대신 이 값을 써서 거리·통행료를 계산합니다.
+     */
+    overrides?: Map<string, { route_priority?: any; route_waypoints?: any }>
+  }
 ): Promise<{ days: DailyRoute[]; settings: TravelSettings }> {
   const settings = await loadSettings(db)
 
@@ -612,6 +737,19 @@ export async function buildDailyRoutes(
     if (ret && hasVisit) stops.push({ ...ret })
 
     const vehicle = vehicleMap.get(Number(first.user_id)) || { ...EMPTY_VEHICLE }
+    const log = logMap.get(key) || null
+
+    // 산출 조건 — 연료는 담당자 차량에서, 경로 방식·보정 경유지는 그 날 운행기록에서 가져옵니다.
+    // 미리보기 요청이면 저장값 대신 넘겨받은 임시 조건을 씁니다.
+    const ov = opts.overrides?.get(key)
+    const fuel = normalizeFuel(vehicle.fuel)
+    const priority = normalizePriority(
+      ov && ov.route_priority !== undefined ? ov.route_priority : (log as any)?.route_priority
+    )
+    const extraWaypoints = ov && ov.route_waypoints !== undefined
+      ? parseWaypoints(ov.route_waypoints)
+      : parseWaypoints((log as any)?.route_waypoints_json)
+
     const day: DailyRoute = {
       date,
       user_id: first.user_id ?? null,
@@ -622,9 +760,14 @@ export async function buildDailyRoutes(
       duration_min: 0,
       toll: 0,
       legs: [],
-      log: logMap.get(key) || null,
+      log,
       vehicle,
       rule: resolveSettlement(vehicle, settings),
+      fuel,
+      fuel_label: CAR_FUEL_LABEL[fuel],
+      route_priority: priority,
+      route_priority_label: ROUTE_PRIORITY_LABEL[priority],
+      route_waypoints: extraWaypoints,
     }
 
     // 좌표가 있는 지점이 2곳 미만이면 이동거리 계산 불가
@@ -632,9 +775,12 @@ export async function buildDailyRoutes(
       .filter(s => s.lat !== null && s.lng !== null)
       .map(s => ({ lat: s.lat as number, lng: s.lng as number, name: s.name }))
 
+    // 보정 경유지 삽입 — 추천도 최단거리도 아닌 실제 동선(정체 때문에 탄 국도 등)을 재현합니다.
+    const withWaypoints = insertWaypoints(points, extraWaypoints)
+
     // 인접 중복 좌표 제거 (카카오 result_code 104 방지)
     const dedup: NaviPoint[] = []
-    for (const p of points) {
+    for (const p of withWaypoints) {
       const last = dedup[dedup.length - 1]
       if (last && samePoint(last, p)) continue
       dedup.push(p)
@@ -648,7 +794,8 @@ export async function buildDailyRoutes(
       continue
     }
 
-    const rkey = routeKeyOf(dedup)
+    // 키에 연료·경로 방식을 포함시킵니다. 보정 경유지는 dedup 좌표열에 이미 녹아 있습니다.
+    const rkey = routeKeyOf(dedup, fuel, priority)
 
     // 캐시 조회
     let cached: any = null
@@ -657,6 +804,9 @@ export async function buildDailyRoutes(
         cached = await db.prepare('SELECT * FROM travel_route_cache WHERE route_key = ?').bind(rkey).first()
       } catch { /* 테이블 없음 */ }
     }
+
+    // 지도 형상이 필요한데 캐시에 없으면(0047 이전에 생성된 행) 캐시를 무시하고 재조회합니다.
+    if (cached && opts.withPolyline && !cached.polyline_json) cached = null
 
     if (cached) {
       day.distance_km = toKm(Number(cached.distance_m))
@@ -671,11 +821,24 @@ export async function buildDailyRoutes(
           duration_min: toMin(Number(l.duration) || 0),
         }))
       } catch { /* legs 파싱 실패 무시 */ }
+      if (opts.withPolyline) {
+        try {
+          const p = JSON.parse(String(cached.polyline_json || 'null'))
+          if (p && Array.isArray(p.line)) {
+            day.polyline = p.line
+            day.road_names = Array.isArray(p.roads) ? p.roads : []
+          }
+        } catch { /* 폴리라인 파싱 실패 무시 */ }
+      }
       days.push(day)
       continue
     }
 
-    const res = await findRoute(dedup, apiKey || '')
+    const res = await findRoute(dedup, apiKey || '', {
+      fuel,
+      priority,
+      withPolyline: !!opts.withPolyline,
+    })
     if (!res.ok) {
       day.error = res.message
       days.push(day)
@@ -690,14 +853,24 @@ export async function buildDailyRoutes(
       distance_km: toKm(l.distance),
       duration_min: toMin(l.duration),
     }))
+    if (opts.withPolyline) {
+      day.polyline = res.polyline || []
+      day.road_names = res.roadNames || []
+    }
 
     try {
+      // 폴리라인은 지도를 여는 상황에서만 확보되므로, 없을 때 기존 값을 지우지 않도록
+      // COALESCE 로 보존합니다 (한 번 지도를 보면 그 뒤로 재호출 없이 재사용).
+      const polyJson = opts.withPolyline
+        ? JSON.stringify({ line: res.polyline || [], roads: res.roadNames || [] })
+        : null
       await db.prepare(
-        `INSERT INTO travel_route_cache (route_key, distance_m, duration_s, toll, legs_json)
-         VALUES (?, ?, ?, ?, ?) ON CONFLICT(route_key) DO UPDATE SET
+        `INSERT INTO travel_route_cache (route_key, distance_m, duration_s, toll, legs_json, polyline_json)
+         VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(route_key) DO UPDATE SET
            distance_m=excluded.distance_m, duration_s=excluded.duration_s,
-           toll=excluded.toll, legs_json=excluded.legs_json`
-      ).bind(rkey, res.distance, res.duration, res.toll, JSON.stringify(res.legs)).run()
+           toll=excluded.toll, legs_json=excluded.legs_json,
+           polyline_json=COALESCE(excluded.polyline_json, travel_route_cache.polyline_json)`
+      ).bind(rkey, res.distance, res.duration, res.toll, JSON.stringify(res.legs), polyJson).run()
     } catch { /* 캐시 실패는 무시 */ }
 
     days.push(day)
@@ -732,6 +905,8 @@ travel.get('/daily', async (c) => {
   const to = c.req.query('to') || ''
   const userId = safeInt(c.req.query('user_id'), 0)
   const noCache = c.req.query('refresh') === '1'
+  // 지도 형상은 용량이 있어 지도를 여는 요청에서만 받습니다 (목록 조회는 기존과 동일).
+  const withPolyline = c.req.query('polyline') === '1'
 
   if (!c.env.KAKAO_REST_API_KEY) {
     return c.json({
@@ -741,7 +916,7 @@ travel.get('/daily', async (c) => {
   }
 
   const { days, settings } = await buildDailyRoutes(c.env.DB, c.env.KAKAO_REST_API_KEY, {
-    from, to, userId: userId || undefined, noCache,
+    from, to, userId: userId || undefined, noCache, withPolyline,
   })
 
   const totalKm = Math.round(days.reduce((a, d) => a + d.distance_km, 0) * 10) / 10
@@ -763,6 +938,9 @@ travel.get('/daily', async (c) => {
     settings,
     places,
     place_type_labels: PLACE_TYPE_LABEL,
+    // 화면에서 경로 방식 셀렉트·연료 배지를 그릴 때 쓰는 선택지 목록
+    route_priorities: ROUTE_PRIORITIES.map(v => ({ value: v, label: ROUTE_PRIORITY_LABEL[v] })),
+    car_fuels: CAR_FUELS.map(v => ({ value: v, label: CAR_FUEL_LABEL[v] })),
     summary: {
       days: days.length,
       total_km: totalKm,
@@ -772,6 +950,51 @@ travel.get('/daily', async (c) => {
       missing_coords: Array.from(new Set(days.flatMap(d => d.missing_coords))),
       warnings,
     },
+  })
+})
+
+// ── POST /api/travel/route-preview ──────────────────────────────────────────
+// 지도 모달에서 경유지를 찍는 중에 쓰는 '저장 없는 재계산'.
+//
+// 왜 별도 엔드포인트인가:
+//   경유지를 찍을 때마다 travel_logs 에 저장해 버리면 사용자가 취소해도
+//   되돌릴 수 없습니다. 그래서 조건만 넘겨받아 계산하고 저장은 하지 않습니다.
+//   (카카오 응답은 travel_route_cache 에 남으므로 '적용' 후에는 재호출이 없습니다.)
+travel.post('/route-preview', async (c) => {
+  const b = await c.req.json().catch(() => ({} as any))
+  const logDate = String(b.log_date || '')
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(logDate)) {
+    return apiError(c, 400, '사용일자를 YYYY-MM-DD 형식으로 보내주세요.', ErrorCodes.VALIDATION)
+  }
+  const userId = b.user_id === null || b.user_id === undefined || b.user_id === ''
+    ? null : safeInt(b.user_id, 0)
+
+  if (!c.env.KAKAO_REST_API_KEY) {
+    return apiError(c, 503, '카카오 REST API 키가 서버에 설정되지 않았습니다.', ErrorCodes.VALIDATION)
+  }
+
+  // 그 날 하루만 계산합니다 (기간 전체를 다시 돌리면 카카오 호출이 낭비됩니다).
+  const key = `${logDate}|${userId ?? ''}`
+  const overrides = new Map<string, { route_priority?: any; route_waypoints?: any }>()
+  overrides.set(key, {
+    route_priority: b.route_priority,
+    route_waypoints: b.route_waypoints,
+  })
+
+  const { days, settings } = await buildDailyRoutes(c.env.DB, c.env.KAKAO_REST_API_KEY, {
+    from: logDate, to: logDate,
+    userId: userId || undefined,
+    withPolyline: true,
+    overrides,
+  })
+
+  const day = days.find(d => d.date === logDate && String(d.user_id ?? '') === String(userId ?? ''))
+  if (!day) {
+    return apiError(c, 404, '해당 일자의 방문 기록을 찾을 수 없습니다.', ErrorCodes.NOT_FOUND)
+  }
+
+  return c.json({
+    data: { ...day, amount: settleAmount(day.distance_km, settings, day.rule) },
   })
 })
 
@@ -834,15 +1057,37 @@ travel.put('/logs', async (c) => {
     }
   }
 
+  // 경로 방식·보정 경유지는 요청에 실리지 않으면 기존 값을 그대로 지켜야 합니다.
+  // (출발지 셀렉트만 바꾸는 저장 요청이 지도에서 찍어둔 경유지를 날려버리면 안 됩니다.)
+  // upsert 안에서 이를 표현하기가 까다로워, 기존 행을 먼저 읽어 최종값을 확정합니다.
+  const prev = await c.env.DB.prepare(
+    'SELECT route_priority, route_waypoints_json FROM travel_logs WHERE log_date=? AND user_id IS ?'
+  ).bind(logDate, userId).first().catch(() => null) as any
+
+  const routePriority = b.route_priority === undefined
+    ? (prev?.route_priority ?? null)
+    : normalizePriority(b.route_priority)
+
+  let routeWaypointsJson: string | null
+  if (b.route_waypoints === undefined) {
+    routeWaypointsJson = prev?.route_waypoints_json ?? null
+  } else {
+    // 빈 배열을 보내면 "경유지 전부 지움" 의미이므로 NULL 로 초기화합니다.
+    const wps = parseWaypoints(b.route_waypoints)
+    routeWaypointsJson = wps.length ? JSON.stringify(wps) : null
+  }
+
   await c.env.DB.prepare(
-    `INSERT INTO travel_logs (log_date, user_id, vehicle_model, vehicle_plate, odo_start, odo_end, toll_amount, fuel_amount, note, origin_place_id, return_place_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO travel_logs (log_date, user_id, vehicle_model, vehicle_plate, odo_start, odo_end, toll_amount, fuel_amount, note, origin_place_id, return_place_id, route_priority, route_waypoints_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(log_date, user_id) DO UPDATE SET
        vehicle_model=excluded.vehicle_model, vehicle_plate=excluded.vehicle_plate,
        odo_start=excluded.odo_start, odo_end=excluded.odo_end,
        toll_amount=excluded.toll_amount, fuel_amount=excluded.fuel_amount,
        note=excluded.note,
        origin_place_id=excluded.origin_place_id, return_place_id=excluded.return_place_id,
+       route_priority=excluded.route_priority,
+       route_waypoints_json=excluded.route_waypoints_json,
        updated_at=CURRENT_TIMESTAMP`
   ).bind(
     logDate, userId,
@@ -850,7 +1095,8 @@ travel.put('/logs', async (c) => {
     odoStart, odoEnd,
     intOrNull(b.toll_amount), intOrNull(b.fuel_amount),
     b.note || '',
-    originPlaceId, returnPlaceId
+    originPlaceId, returnPlaceId,
+    routePriority, routeWaypointsJson
   ).run()
 
   const row = await c.env.DB.prepare(

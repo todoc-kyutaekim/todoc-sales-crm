@@ -31,6 +31,7 @@ mypage.get('/', async (c) => {
     SELECT id, name, email, phone, department, position, job_role, avatar_url, bio,
            vehicle_type, vehicle_model, vehicle_plate,
            travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
+           vehicle_fuel,
            created_at, updated_at
     FROM users WHERE id=?
   `).bind(userId).first()
@@ -117,12 +118,19 @@ mypage.get('/', async (c) => {
 // PUT /api/mypage — 프로필 수정
 //   허용 필드: name, phone, department, position, job_role, avatar_url, bio
 //   차량 정보(출장 거리 정산용): vehicle_type, vehicle_model, vehicle_plate,
-//     travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price
+//     travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price, vehicle_fuel
 //   (email은 로그인 계정이라 별도 프로세스 필요 — 여기선 수정 불가)
 // ─────────────────────────────────────────────────────────────
 
 /** 차량 형태 허용값 — 이 외의 값이 들어오면 거부합니다. */
 const VEHICLE_TYPES = ['', 'corporate', 'private_allowance', 'private_actual']
+
+/**
+ * 연료 종류 허용값 — 카카오 길찾기 car_fuel 에 그대로 전달되므로 임의 값을 받으면 안 됩니다.
+ * 전기(ELECTRIC)는 고속도로 통행료 감면이 자동 반영되고,
+ * 연비/유가 입력값을 km/kWh · 원/kWh 로 해석합니다.
+ */
+const CAR_FUEL_VALUES = ['', 'GASOLINE', 'DIESEL', 'LPG', 'ELECTRIC']
 
 mypage.put('/', async (c) => {
   const auth = await requireUser(c)
@@ -134,12 +142,20 @@ mypage.put('/', async (c) => {
   const {
     vehicle_type, vehicle_model, vehicle_plate,
     travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
+    vehicle_fuel,
   } = body || {}
 
   // 차량 형태 검증
   if (vehicle_type !== undefined && vehicle_type !== null) {
     if (!VEHICLE_TYPES.includes(String(vehicle_type))) {
       return apiError(c, 400, '차량 형태 값이 올바르지 않습니다.', ErrorCodes.VALIDATION)
+    }
+  }
+
+  // 연료 종류 검증
+  if (vehicle_fuel !== undefined && vehicle_fuel !== null) {
+    if (!CAR_FUEL_VALUES.includes(String(vehicle_fuel).toUpperCase())) {
+      return apiError(c, 400, '연료 종류 값이 올바르지 않습니다.', ErrorCodes.VALIDATION)
     }
   }
 
@@ -211,6 +227,9 @@ mypage.put('/', async (c) => {
   push('avatar_url', avatar_url)
   push('bio', bio)
   push('vehicle_type', vehicle_type)
+  // 대소문자 흔들림을 막기 위해 저장 시 대문자로 정규화합니다.
+  push('vehicle_fuel', vehicle_fuel === undefined || vehicle_fuel === null
+    ? vehicle_fuel : String(vehicle_fuel).toUpperCase())
   push('vehicle_model', vehicle_model)
   push('vehicle_plate', vehicle_plate)
   // 숫자 필드: 빈 문자열 → NULL (전역 설정 따름). push() 가 '' 를 NULL 로 바꿔주므로 그대로 전달.
@@ -235,6 +254,7 @@ mypage.put('/', async (c) => {
     SELECT id, name, email, phone, department, position, job_role, avatar_url, bio,
            vehicle_type, vehicle_model, vehicle_plate,
            travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
+           vehicle_fuel,
            created_at, updated_at
     FROM users WHERE id=?
   `).bind(userId).first()

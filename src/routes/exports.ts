@@ -1608,9 +1608,9 @@ exports.get('/report/travel', async (c) => {
   // ── ① 일자별 운행 내역 ────────────────────────────────────────────────────
   // 계기판 주행거리(사용자 입력)와 API 산출 거리를 나란히 두어 재무팀이 대조할 수 있게 합니다.
   const dailyHeaders = [
-    'No', '사용일자', '운전자', '차종', '자동차등록번호',
+    'No', '사용일자', '운전자', '차종', '자동차등록번호', '연료 종류',
     '주행전 계기판(km)', '주행후 계기판(km)', '계기판 주행거리(km)',
-    '출발지', '복귀지',
+    '출발지', '복귀지', '경로 산출 방식', '보정 경유지',
     '방문 기관수', '행선지(방문 순서)', '방문 목적',
     'API 산출 주행거리(km)', '예상 소요시간(분)',
     '카카오 추정 통행료(원)', '실제 통행료(원)', '주유 금액(원)',
@@ -1661,6 +1661,13 @@ exports.get('/report/travel', async (c) => {
     const routeLabel = d.stops.map(s => s.name).join(' → ')
     const purposes = Array.from(new Set(visits.map(s => s.purpose).filter(Boolean))).join(' / ')
 
+    // 담당자가 지도에서 찍은 '보정 경유지' — 추천·최단거리 어디에도 없는 길로 간 경우의 근거입니다.
+    // 좌표만으로는 재무팀이 확인하기 어려우므로 개수와 좌표를 함께 남깁니다.
+    const wps = d.route_waypoints || []
+    const waypointLabel = wps.length
+      ? `${wps.length}곳: ` + wps.map(w => `${w.lat.toFixed(5)},${w.lng.toFixed(5)}`).join(' / ')
+      : ''
+
     const amount = settleAmount(d.distance_km, settings, d.rule)
 
     // 업무용 사용거리: 영업 방문이므로 전 구간 업무용으로 봅니다.
@@ -1693,11 +1700,16 @@ exports.get('/report/travel', async (c) => {
       d.user_name || '',
       vehModel,
       vehPlate,
+      // 통행료가 연료 종류에 따라 달라지므로(전기차 감면) 어떤 기준으로 계산했는지 남깁니다.
+      d.fuel_label || '휘발유',
       odoStart,
       odoEnd,
       odoDist,
       originLabel,
       returnLabel,
+      // 카카오 추천경로가 실제 동선과 다를 수 있어, 어떤 방식으로 산출했는지 밝혀둡니다.
+      d.route_priority_label || '추천',
+      waypointLabel,
       visits.length,
       routeLabel,
       purposes,
@@ -1764,11 +1776,28 @@ exports.get('/report/travel', async (c) => {
         .join(' / ')
     : '해당 없음'
 
+  // 경로 방식·연료 종류가 섞여 있으면 통행료 기준이 달라지므로 요약에 분포를 남깁니다.
+  const countBy = (vals: string[]) => {
+    const m = new Map<string, number>()
+    for (const v of vals) m.set(v, (m.get(v) || 0) + 1)
+    return m.size
+      ? Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}일`).join(' / ')
+      : '해당 없음'
+  }
+  const prioritySummary = countBy(days.map(d => d.route_priority_label || '추천'))
+  const fuelSummary = countBy(days.map(d => d.fuel_label || '휘발유'))
+  const waypointDays = days.filter(d => (d.route_waypoints || []).length > 0)
+
   const summaryRows: any[][] = [
     ['보고서 기간', periodLabel],
     ['생성 일시', generatedAt],
     ['거리 산출 방식', '카카오모빌리티 길찾기 API — 실제 도로 주행거리 (직선거리 아님)'],
-    ['통행료 산출 방식', '카카오 추정치 (실제 증빙은 하이패스 이용내역 기준)'],
+    ['경로 산출 방식', prioritySummary],
+    ['통행료 산출 방식', '카카오 추정치 (차량 연료 종류 반영 · 실제 증빙은 하이패스 이용내역 기준)'],
+    ['차량 연료 종류', fuelSummary + ' — 전기차는 통행료 감면이 적용됩니다'],
+    ['지도 보정 경유지 사용', waypointDays.length
+      ? `${waypointDays.length}일 (${waypointDays.map(d => d.date).join(', ')}) — 추천·최단거리에 없는 실제 동선을 반영`
+      : '없음'],
     ['정산 방식', modeLabel],
     ['출발지·복귀지', endpointSummary],
     ['기본 출발지(전역 설정)', settings.origin_lat !== null
