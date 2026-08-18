@@ -14444,12 +14444,28 @@ function trvPlaceForm(id) {
         '<div><label class="input-label">종류</label><select name="place_type" class="input">' + typeOpts + '</select></div>' +
         '<div class="sm:col-span-2"><label class="input-label">이름 <span class="text-red-500">*</span></label>' +
           '<input name="name" type="text" class="input" value="' + csEsc(v(p.name)) + '" placeholder="예: 집, 본사, 수원 사무실" maxlength="50" required></div>' +
-        '<div class="col-span-full"><label class="input-label">주소</label>' +
-          '<input name="address" type="text" class="input" value="' + csEsc(v(p.address)) + '" placeholder="예: 서울특별시 강남구 …" maxlength="300"></div>' +
-        '<div><label class="input-label">위도 (lat)</label><input name="lat" type="number" step="0.0000001" class="input" value="' + csEsc(v(p.lat)) + '" placeholder="37.5012"></div>' +
-        '<div><label class="input-label">경도 (lng)</label><input name="lng" type="number" step="0.0000001" class="input" value="' + csEsc(v(p.lng)) + '" placeholder="127.0396"></div>' +
+        '<div class="col-span-full"><label class="input-label">주소 <span class="text-[10px] font-normal text-slate-400">— 입력하면 좌표를 자동으로 찾아줍니다</span></label>' +
+          '<div class="flex gap-2">' +
+            '<input name="address" id="trv-addr" type="text" class="input flex-1" value="' + csEsc(v(p.address)) + '" placeholder="예: 서울 강남구 테헤란로 152 · 또는 건물/기관 이름" maxlength="300" autocomplete="off" ' +
+              // Enter 로 폼이 제출되지 않도록 막고 검색을 실행합니다.
+              'onkeydown="if(event.key===\'Enter\'){event.preventDefault();trvGeocode();}">' +
+            '<button type="button" onclick="trvGeocode()" class="btn btn-outline btn-sm whitespace-nowrap"><i class="fas fa-magnifying-glass-location mr-1"></i>좌표 찾기</button>' +
+          '</div>' +
+          '<div id="trv-geo-result" class="mt-2"></div>' +
+        '</div>' +
       '</div>' +
-      '<div class="text-[10px] text-slate-400 mt-1.5 mb-3">카카오맵에서 장소를 우클릭 → <b>좌표 복사</b>로 확인할 수 있습니다. 좌표가 없으면 경로 계산에 쓸 수 없습니다.</div>' +
+      // 좌표는 검색으로 자동 채워지므로 기본은 접어둡니다 (직접 입력도 계속 가능)
+      '<details id="trv-coord-box" class="mt-2"' + ((p.lat !== null && p.lat !== undefined) ? ' open' : '') + '>' +
+        '<summary class="text-[11px] text-slate-500 cursor-pointer select-none hover:text-slate-700">' +
+          '<i class="fas fa-crosshairs mr-1"></i>좌표 직접 입력 / 확인' +
+        '</summary>' +
+        '<div class="grid grid-cols-2 gap-3 mt-2">' +
+          '<div><label class="input-label">위도 (lat)</label><input name="lat" id="trv-lat" type="number" step="0.0000001" class="input" value="' + csEsc(v(p.lat)) + '" placeholder="37.5012"></div>' +
+          '<div><label class="input-label">경도 (lng)</label><input name="lng" id="trv-lng" type="number" step="0.0000001" class="input" value="' + csEsc(v(p.lng)) + '" placeholder="127.0396"></div>' +
+        '</div>' +
+        '<div class="text-[10px] text-slate-400 mt-1.5">검색이 잘 안 되면 카카오맵/네이버지도에서 해당 위치를 우클릭 → <b>좌표 복사</b> 후 붙여넣어도 됩니다.</div>' +
+      '</details>' +
+      '<div class="text-[10px] text-slate-400 mt-1.5 mb-3">좌표가 없으면 경로 계산에 쓸 수 없습니다.</div>' +
       '<div class="space-y-2">' +
         '<label class="flex items-center gap-2 text-[12px] text-slate-600 cursor-pointer">' +
           '<input type="checkbox" name="is_default_origin" value="1" class="rounded"' + (p.is_default_origin ? ' checked' : '') + '>' +
@@ -14465,6 +14481,85 @@ function trvPlaceForm(id) {
     '</form>');
 }
 
+/**
+ * 주소/장소명 → 좌표 후보 검색.
+ * 서버(/api/travel/geocode)가 카카오 로컬 → OSM 순으로 시도하고 후보를 돌려줍니다.
+ */
+var _trvGeoBusy = false;
+async function trvGeocode() {
+  var box = document.getElementById('trv-geo-result');
+  var input = document.getElementById('trv-addr');
+  if (!box || !input) return;
+  var q = (input.value || '').trim();
+  if (q.length < 2) {
+    box.innerHTML = '<div class="text-[11px] text-amber-600"><i class="fas fa-triangle-exclamation mr-1"></i>주소나 기관 이름을 2자 이상 입력해주세요.</div>';
+    return;
+  }
+  if (_trvGeoBusy) return;
+  _trvGeoBusy = true;
+  box.innerHTML = '<div class="text-[11px] text-slate-400"><i class="fas fa-spinner fa-spin mr-1"></i>좌표를 찾고 있습니다…</div>';
+  try {
+    var r = await API.get('/travel/geocode', { params: { q: q } });
+    var list = (r.data && r.data.data) || [];
+    if (!list.length) {
+      box.innerHTML = '<div class="text-[11px] text-amber-600 leading-relaxed">' +
+        '<i class="fas fa-triangle-exclamation mr-1"></i>결과가 없습니다. ' +
+        '도로명 주소(예: 서울 강남구 테헤란로 152)나 건물 이름으로 다시 시도해보세요.<br>' +
+        '<span class="text-slate-400">그래도 안 되면 아래 <b>좌표 직접 입력</b>을 펼쳐 카카오맵에서 복사한 좌표를 넣어주세요.</span>' +
+      '</div>';
+      return;
+    }
+    // 후보 목록 — 클릭하면 좌표(+주소)가 폼에 채워집니다.
+    _trvGeoCands = list;
+    box.innerHTML =
+      '<div class="text-[10px] text-slate-400 mb-1">아래에서 맞는 곳을 눌러주세요' +
+        (r.data.provider === 'osm' ? ' <span class="text-slate-300">(OpenStreetMap 결과)</span>' : '') +
+      '</div>' +
+      '<div class="rounded-xl border border-slate-100 divide-y divide-slate-50 overflow-hidden">' +
+      list.map(function(x, i) {
+        return '<button type="button" onclick="trvPickGeo(' + i + ')" class="w-full text-left px-3 py-2 hover:bg-sky-50 transition">' +
+          '<div class="text-[12px] font-semibold text-slate-800 truncate">' + csEsc(x.name) + '</div>' +
+          (x.address ? '<div class="text-[10px] text-slate-500 truncate">' + csEsc(x.address) + '</div>' : '') +
+          '<div class="text-[9px] text-slate-400 font-mono mt-0.5">' + x.lat.toFixed(6) + ', ' + x.lng.toFixed(6) + '</div>' +
+        '</button>';
+      }).join('') +
+      '</div>';
+  } catch (err) {
+    var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '검색에 실패했습니다';
+    box.innerHTML = '<div class="text-[11px] text-red-600"><i class="fas fa-circle-exclamation mr-1"></i>' + csEsc(msg) + '</div>';
+  } finally {
+    _trvGeoBusy = false;
+  }
+}
+
+var _trvGeoCands = [];
+/** 검색 후보 선택 → lat/lng(+주소) 폼에 반영 */
+function trvPickGeo(i) {
+  var x = _trvGeoCands[i];
+  if (!x) return;
+  var lat = document.getElementById('trv-lat');
+  var lng = document.getElementById('trv-lng');
+  var addr = document.getElementById('trv-addr');
+  var box = document.getElementById('trv-coord-box');
+  if (lat) lat.value = x.lat;
+  if (lng) lng.value = x.lng;
+  // 검색 결과의 정제된 주소가 있으면 주소칸도 갱신 (사용자가 이름만 넣고 검색한 경우 유용)
+  if (addr && x.address) addr.value = x.address;
+  // 이름칸이 비어 있으면 검색 결과 이름을 제안
+  var nameEl = document.querySelector('#trv-place-form input[name=name]');
+  if (nameEl && !nameEl.value.trim()) nameEl.value = x.name.slice(0, 50);
+  if (box) box.open = true;
+  var res = document.getElementById('trv-geo-result');
+  if (res) {
+    res.innerHTML = '<div class="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-lg px-2.5 py-2">' +
+      '<i class="fas fa-circle-check mr-1"></i><b>' + csEsc(x.name) + '</b> 좌표를 넣었습니다.' +
+      '<div class="text-[10px] text-emerald-600 font-mono mt-0.5">' + x.lat.toFixed(6) + ', ' + x.lng.toFixed(6) + '</div>' +
+      '<div class="text-[10px] text-slate-500 mt-1">위치가 조금 다르면 아래 좌표를 직접 고쳐도 됩니다. ' +
+        '<a href="https://map.kakao.com/?q=' + encodeURIComponent(x.name) + '" target="_blank" rel="noopener" class="text-sky-600 underline">카카오맵에서 확인</a></div>' +
+    '</div>';
+  }
+}
+
 async function trvPlaceSave(e, id) {
   e.preventDefault();
   var fm = document.getElementById('trv-place-form');
@@ -14473,6 +14568,22 @@ async function trvPlaceSave(e, id) {
   // 체크박스는 해제 시 FormData 에 없으므로 명시적으로 채웁니다.
   f.is_default_origin = fm.is_default_origin.checked ? 1 : 0;
   f.is_default_return = fm.is_default_return.checked ? 1 : 0;
+  // 좌표를 비운 채 주소만 넣고 저장하려는 경우 — 자동으로 한 번 찾아봅니다.
+  // (매번 "좌표 찾기"를 눌러야 하는 번거로움 제거)
+  if ((!f.lat || !String(f.lat).trim()) && (!f.lng || !String(f.lng).trim()) &&
+      f.address && String(f.address).trim().length >= 2) {
+    try {
+      var g = await API.get('/travel/geocode', { params: { q: String(f.address).trim() } });
+      var cand = (g.data && g.data.data && g.data.data[0]) || null;
+      if (cand) {
+        f.lat = cand.lat; f.lng = cand.lng;
+        var la = document.getElementById('trv-lat'), ln = document.getElementById('trv-lng');
+        if (la) la.value = cand.lat;
+        if (ln) ln.value = cand.lng;
+        toast('주소로 좌표를 자동 입력했습니다', 'ok');
+      }
+    } catch (e) { /* 실패해도 좌표 없이 저장은 허용 */ }
+  }
   try {
     if (id) await API.put('/travel/places/' + id, f);
     else await API.post('/travel/places', f);

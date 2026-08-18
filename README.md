@@ -28,6 +28,8 @@
   - 결정 우선순위: ① 그 날 명시값(`travel_logs.origin_place_id`/`return_place_id`,
     `0` = "없음" 명시 선택 / `NULL` = 미지정) → ② 담당자 본인 기본값 → ③ 전사 공용(`user_id IS NULL`) 기본값
     → ④ 전역 설정(`travel_origin_*`)
+  - **좌표 자동 입력**: 주소나 건물/기관 이름을 넣고 `좌표 찾기`(또는 Enter) → 후보 목록에서 클릭.
+    좌표를 비운 채 저장해도 주소로 한 번 자동 조회합니다 (`GET /api/travel/geocode`)
   - 좌표(위도·경도)가 없는 장소는 경로 계산에 쓸 수 없으며 셀렉트에서 제외됩니다
   - 출발/복귀를 바꾸면 그 날 경로와 주행거리가 **즉시 재계산**됩니다
   - 보고서에도 `출발지`·`복귀지` 열과 조합별 일수 요약이 들어갑니다
@@ -48,6 +50,17 @@
   비고에 확인 안내를 넣습니다 (서식상 100% 초과는 불가능)
 - **경로 캐시**: `travel_route_cache` (동일 구간 재조회 시 API 호출 절감, `?refresh=1`로 무효화)
 - **좌표 미등록 기관 안내**: 좌표 없는 기관은 경로에서 제외되고 화면·보고서에 명시
+
+**좌표 조회 (지오코딩)**
+- `GET /api/travel/geocode?q=…` 가 후보 좌표를 돌려줍니다. 제공자 우선순위:
+  1. **카카오 로컬** (주소검색 → 실패 시 키워드검색) — 국내 정확도 최상
+  2. **Nominatim / OpenStreetMap** — 키 불필요 폴백
+- 현재 카카오 로컬은 `OPEN_MAP_AND_LOCAL disabled` (403) 상태라 **실제로는 OSM 폴백이 동작**합니다.
+  카카오 서비스가 복구되면 코드 수정 없이 자동으로 카카오가 우선 사용됩니다.
+- 실측 오차(기존 카카오 좌표 대조): 도로명 주소 0~400m, 기관명 검색 0m.
+  출발지·복귀지 용도로는 충분하며, 후보 선택 후 좌표를 직접 미세조정할 수 있습니다.
+- ⚠️ Nominatim 이용약관상 초당 1건 제한 + 식별 User-Agent 필수 → 서버에서 대신 호출합니다
+  (브라우저 직접 호출 금지).
 
 **한계 / 주의**
 - 통행료는 **카카오 추정치**입니다. 실제 증빙은 하이패스 이용내역이 기준이며,
@@ -194,6 +207,7 @@
 | POST | `/api/products/link-to-meeting` | 미팅-제품 일괄 연계 (자동 movement 생성) |
 | DELETE | `/api/products/meeting-product/:id` | 미팅-제품 연계 해제 |
 | GET/PUT | `/api/travel/settings` | 출장 정산 설정 (전역 출발지 좌표·복귀구간·전역 단가) + 장소 목록 동봉 |
+| GET | `/api/travel/geocode` | 주소/장소명 → 좌표 후보 (?q=) · 카카오 로컬 → OSM 폴백 |
 | GET | `/api/travel/places` | 출발지·복귀지 장소 목록 (본인 + 전사 공용) |
 | POST | `/api/travel/places` | 장소 등록 (이름/종류/주소/좌표/기본 출발·복귀 플래그) |
 | PUT | `/api/travel/places/:id` | 장소 수정 (전사 공용·타인 장소는 403) |
@@ -485,7 +499,7 @@ if (!f.currentPassword) { toast('...', 'warn'); release(); return }
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-08-18 (출장 거리 정산 + 날짜별 출발지·복귀지 선택)
+- **Last Updated**: 2026-08-18 (출장 거리 정산 + 날짜별 출발지·복귀지 + 좌표 자동 조회)
 
 ## 프론트엔드 빌드 (⚠️ 필수 확인)
 

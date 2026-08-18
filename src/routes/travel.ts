@@ -996,6 +996,122 @@ async function clearDefaultFlags(
   ).bind(...(keepId ? [userId, keepId] : [userId])).run()
 }
 
+// ── GET /api/travel/geocode?q=… ─────────────────────────────────────────────
+// 주소/장소명 → 좌표 후보 목록.
+//
+// 왜 서버 경유인가: 브라우저에서 직접 부르면 (1) 지오코딩 제공자가 요구하는
+// User-Agent 를 설정할 수 없고 (2) CORS 정책 변경에 그대로 노출되며
+// (3) 카카오 키가 살아났을 때 프론트를 고쳐야 합니다. 서버에서 흡수합니다.
+//
+// 제공자 우선순위:
+//   1) 카카오 로컬 (키가 있고 OPEN_MAP_AND_LOCAL 이 열려 있을 때) — 국내 주소 정확도 최상
+//   2) Nominatim (OpenStreetMap, 키 불필요) — 카카오가 403 이어도 동작하는 폴백
+//
+// ⚠️ Nominatim 이용약관: 초당 1건 이하 + 식별 가능한 User-Agent 필수.
+//    사용자가 검색창에 직접 타이핑할 때만 호출되므로(프론트에서 디바운스) 위반 소지 없음.
+travel.get('/geocode', async (c) => {
+  const q = (c.req.query('q') || '').trim()
+  if (q.length < 2) {
+    return c.json({ error: '검색어를 2자 이상 입력해주세요.', message: '검색어를 2자 이상 입력해주세요.' }, 400)
+  }
+  if (q.length > 120) {
+    return c.json({ error: '검색어가 너무 깁니다.', message: '검색어가 너무 깁니다.' }, 400)
+  }
+
+  type Cand = { name: string; address: string; lat: number; lng: number; source: string }
+  const out: Cand[] = []
+  const seen = new Set<string>()
+  const push = (x: Cand) => {
+    // 소수 5자리(약 1m)로 중복 제거 — 제공자별 미세한 좌표 차이를 같은 곳으로 취급
+    const k = x.lat.toFixed(5) + ',' + x.lng.toFixed(5)
+    if (seen.has(k)) return
+    seen.add(k)
+    out.push(x)
+  }
+  const inKorea = (lat: number, lng: number) =>
+    isFinite(lat) && isFinite(lng) && lat >= 33 && lat <= 38.7 && lng >= 124.5 && lng <= 131.9
+
+  const notes: string[] = []
+  const key = c.env.KAKAO_REST_API_KEY
+
+  // ── 1) 카카오 로컬 (주소검색 + 키워드검색) ────────────────────────────────
+  if (key) {
+    const kakao = async (path: string, label: string) => {
+      try {
+        const r = await fetch(
+          `https://dapi.kakao.com/v2/local/search/${path}.json?query=${encodeURIComponent(q)}&size=5`,
+          { headers: { Authorization: `KakaoAK ${key}` } }
+        )
+        if (!r.ok) {
+          // 403 = OPEN_MAP_AND_LOCAL 비활성. 키 자체는 유효하므로 폴백만 쓰면 됩니다.
+          if (r.status === 403) notes.push('kakao_local_disabled')
+          else notes.push(`kakao_${label}_http_${r.status}`)
+          return
+        }
+        const j: any = await r.json()
+        for (const d of (j.documents || [])) {
+          // 주소검색: x/y 가 문서 루트. 키워드검색도 동일 필드명.
+          const lat = Number(d.y), lng = Number(d.x)
+          if (!inKorea(lat, lng)) continue
+          push({
+            name: d.place_name || d.address_name || d.road_address_name || q,
+            address: d.road_address_name || d.address_name ||
+                     d.road_address?.address_name || d.address?.address_name || '',
+            lat, lng, source: 'kakao',
+          })
+        }
+      } catch (e) { notes.push(`kakao_${label}_error`) }
+    }
+    await kakao('address', 'address')
+    // 주소검색이 비어 있으면 상호명일 가능성 → 키워드검색도 시도
+    if (!out.length) await kakao('keyword', 'keyword')
+  } else {
+    notes.push('kakao_key_missing')
+  }
+
+  // ── 2) Nominatim 폴백 ─────────────────────────────────────────────────────
+  if (!out.length) {
+    try {
+      const u = 'https://nominatim.openstreetmap.org/search?' + new URLSearchParams({
+        q, format: 'json', limit: '5', countrycodes: 'kr', addressdetails: '1',
+        'accept-language': 'ko',
+      }).toString()
+      const r = await fetch(u, {
+        headers: {
+          // 약관상 필수: 연락 가능한 식별자
+          'User-Agent': 'todoc-crm/1.0 (+https://todoc-crm.pages.dev; todoc.tech@gmail.com)',
+          'Accept-Language': 'ko',
+        },
+      })
+      if (r.ok) {
+        const arr: any[] = await r.json()
+        for (const d of (arr || [])) {
+          const lat = Number(d.lat), lng = Number(d.lon)
+          if (!inKorea(lat, lng)) continue
+          const a = d.address || {}
+          // display_name 은 "…, 대한민국" 까지 다 붙어 길어서, 앞 3토막만 이름으로 씁니다.
+          const parts = String(d.display_name || '').split(',').map((s: string) => s.trim())
+          const road = [a.city || a.province || '', a.borough || a.county || '',
+                        a.road || '', a.house_number || ''].filter(Boolean).join(' ')
+          push({
+            name: d.name || parts[0] || q,
+            address: road || parts.slice(0, 4).join(' '),
+            lat, lng, source: 'osm',
+          })
+        }
+      } else notes.push(`osm_http_${r.status}`)
+    } catch (e) { notes.push('osm_error') }
+  }
+
+  return c.json({
+    data: out.slice(0, 6),
+    query: q,
+    // 프론트에서 "카카오가 막혀 OSM 결과입니다" 같은 안내를 띄우기 위한 힌트
+    notes,
+    provider: out.length ? out[0].source : null,
+  })
+})
+
 // ── GET /api/travel/places ──────────────────────────────────────────────────
 travel.get('/places', async (c) => {
   const uid = Number(c.get('userId')) || 0
