@@ -331,6 +331,9 @@ async function initAuth() {
 
 // ===== Toast =====
 function toast(msg, type = 'ok') {
+  // 별칭 정규화: 코드 곳곳에서 success/error/warn 로 호출하지만 CSS 는 ok/err/warn 만 정의되어 있음
+  if (type === 'success') type = 'ok';
+  else if (type === 'error') type = 'err';
   const el = document.createElement('div'); el.className = 'toast toast-' + type;
   el.innerHTML = '<i class="fas ' + (type === 'ok' ? 'fa-check-circle' : type === 'err' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle') + '"></i><span>' + msg + '</span>';
   document.getElementById('toast-wrap').appendChild(el);
@@ -13873,7 +13876,9 @@ function _csDashToggleMine() {
 var _trvState = {
   from: '', to: '', userId: '',
   days: null, summary: null, settings: null,
-  users: [], loading: false
+  users: [], loading: false,
+  // 자주 쓰는 장소(집/사무실) — 일자별 출발지·복귀지 선택지
+  places: [], myUserId: null
 };
 
 function _trvFmtDate(d) {
@@ -13922,6 +13927,8 @@ async function loadTravel() {
     _trvState.resolved = res[0].data.resolved;
     _trvState.vehicle = res[0].data.vehicle;
     _trvState.kakao = res[0].data.kakao_configured;
+    _trvState.places = res[0].data.places || [];
+    _trvState.myUserId = res[0].data.my_user_id;
     _trvState.users = res[1].data.data || [];
   } catch (e) {
     _trvState.settings = null;
@@ -13979,16 +13986,15 @@ function renderTravel() {
         '<button onclick="trvFetch()" class="btn btn-primary whitespace-nowrap h-[42px]"><i class="fas fa-calculator mr-1.5"></i>거리 산출</button>' +
       '</div>' +
     '</div>' +
-    // 출발지 / 내 정산 방식 요약
+    // 기본 출발지·복귀지 / 내 정산 방식 요약
     '<div class="flex flex-wrap items-center gap-x-4 gap-y-2 pt-3 border-t border-slate-100 text-[11px]">' +
-      '<span class="text-slate-500"><i class="fas fa-location-dot text-slate-400 mr-1"></i>출발지 ' +
-        (s && s.origin_name ? '<b class="text-slate-700">' + csEsc(s.origin_name) + '</b>' : '<span class="text-amber-600 font-semibold">미설정</span> <span class="text-slate-400">(그 날 첫 방문지부터 계산)</span>') +
-      '</span>' +
-      (s ? '<span class="text-slate-500"><i class="fas fa-rotate-left text-slate-400 mr-1"></i>복귀 구간 ' + (s.include_return ? '<b class="text-slate-700">포함</b>' : '<span class="text-slate-400">미포함</span>') + '</span>' : '') +
+      '<span class="text-slate-500"><i class="fas fa-location-dot text-slate-400 mr-1"></i>기본 출발지 ' + _trvDefaultLabel('origin') + '</span>' +
+      '<span class="text-slate-500"><i class="fas fa-flag-checkered text-slate-400 mr-1"></i>기본 복귀지 ' + _trvDefaultLabel('return') + '</span>' +
       (_trvState.resolved ? '<span class="text-slate-500"><i class="fas fa-car text-slate-400 mr-1"></i>내 정산 <b class="text-slate-700">' + csEsc(_trvState.resolved.label) + '</b></span>' : '') +
-      '<button onclick="trvOpenSettings()" class="text-[11px] text-sky-600 hover:text-sky-700 font-semibold ml-auto"><i class="fas fa-gear mr-1"></i>출발지 설정</button>' +
+      '<button onclick="trvOpenPlaces()" class="text-[11px] text-sky-600 hover:text-sky-700 font-semibold ml-auto"><i class="fas fa-map-location-dot mr-1"></i>장소 관리</button>' +
       '<button onclick="nav(\'mypage\')" class="text-[11px] text-slate-500 hover:text-slate-700 font-semibold"><i class="fas fa-user-circle mr-1"></i>내 차량 정보</button>' +
     '</div>' +
+    '<div class="text-[10px] text-slate-400 mt-2"><i class="fas fa-circle-info mr-1"></i>출발지·복귀지는 날마다 다를 수 있습니다. 표의 <b>출발/복귀</b> 칸에서 그 날 실제로 쓴 곳을 골라주세요.</div>' +
   '</div>';
 
   html += '<div id="trv-result">' + _trvRenderResult() + '</div>';
@@ -14076,6 +14082,7 @@ function _trvRenderResult() {
       '<thead><tr class="bg-slate-50 text-slate-500 text-[11px]">' +
         '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">사용일자</th>' +
         '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">운전자</th>' +
+        '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">출발 → 복귀</th>' +
         '<th class="px-3 py-2 text-left font-semibold">행선지 (방문 순서)</th>' +
         '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">주행거리</th>' +
         '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">계기판</th>' +
@@ -14088,11 +14095,78 @@ function _trvRenderResult() {
   '</div>';
 
   h += '<div class="text-[10px] text-slate-400 leading-relaxed px-1">' +
+    '· <b>출발 → 복귀</b>를 바꾸면 그 날 경로와 주행거리가 즉시 다시 계산됩니다. 장소는 <b>장소 관리</b>에서 등록합니다.<br>' +
     '· 주행거리는 카카오모빌리티 길찾기 API 의 <b>실제 도로 경로</b> 기준입니다 (직선거리 아님).<br>' +
     '· 통행료는 카카오 <b>추정치</b>입니다. 재무팀 증빙은 하이패스 이용내역을 기준으로 하고, 실제 금액은 <b>입력</b> 버튼으로 채워주세요.<br>' +
     '· 좌표가 없는 기관은 경로에서 제외되므로 실제보다 거리가 짧게 나올 수 있습니다.' +
   '</div>';
   return h;
+}
+
+/**
+ * 일자별 출발지 → 복귀지 선택 셀.
+ * 실제로 적용된 지점(stops의 is_origin/is_return)을 함께 보여주어
+ * "기본값 사용"을 골랐을 때 어디가 쓰였는지 바로 알 수 있게 합니다.
+ */
+function _trvEndpointCell(d, i) {
+  var log = d.log || {};
+  var stops = d.stops || [];
+  var o = null, r = null;
+  for (var k = 0; k < stops.length; k++) {
+    if (stops[k].is_origin) o = stops[k];
+    if (stops[k].is_return) r = stops[k];
+  }
+  var badge = function(s, none) {
+    if (!s) return '<span class="text-slate-300">' + none + '</span>';
+    var m = _trvPlaceMeta(s.place_type || 'other');
+    return '<span class="inline-flex items-center gap-1 text-slate-600">' +
+      '<i class="fas ' + m.icon + ' text-slate-400 text-[9px]"></i>' + csEsc(s.name) + '</span>';
+  };
+  return '<div class="text-[10px] mb-1">' + badge(o, '첫 방문지') +
+      '<i class="fas fa-arrow-right text-slate-300 mx-1 text-[8px]"></i>' + badge(r, '복귀 없음') +
+    '</div>' +
+    '<div class="flex gap-1">' +
+      '<select onchange="trvSetEndpoint(' + i + ', \'origin\', this.value)" ' +
+        'class="text-[10px] border border-slate-200 rounded-md px-1 py-0.5 bg-white max-w-[104px] truncate" title="출발지">' +
+        _trvPlaceOptions(log.origin_place_id, 'origin') + '</select>' +
+      '<select onchange="trvSetEndpoint(' + i + ', \'return\', this.value)" ' +
+        'class="text-[10px] border border-slate-200 rounded-md px-1 py-0.5 bg-white max-w-[104px] truncate" title="복귀지">' +
+        _trvPlaceOptions(log.return_place_id, 'return') + '</select>' +
+    '</div>';
+}
+
+/**
+ * 표에서 출발지/복귀지를 바꾸면 그 날 운행기록에 저장하고 거리를 다시 계산합니다.
+ * 경로가 바뀌면 주행거리·통행료·정산액이 모두 달라지므로 재조회가 필요합니다.
+ */
+async function trvSetEndpoint(i, kind, value) {
+  var d = _trvState.days[i];
+  if (!d) return;
+  var log = d.log || {};
+  var payload = {
+    log_date: d.date,
+    user_id: d.user_id,
+    // 기존 입력값을 지우지 않도록 함께 넘깁니다 (upsert 라 누락 시 NULL 로 덮어씀).
+    vehicle_model: log.vehicle_model || '',
+    vehicle_plate: log.vehicle_plate || '',
+    odo_start: log.odo_start,
+    odo_end: log.odo_end,
+    toll_amount: log.toll_amount,
+    fuel_amount: log.fuel_amount,
+    note: log.note || '',
+    origin_place_id: kind === 'origin' ? value : (log.origin_place_id === null || log.origin_place_id === undefined ? '' : log.origin_place_id),
+    return_place_id: kind === 'return' ? value : (log.return_place_id === null || log.return_place_id === undefined ? '' : log.return_place_id)
+  };
+  try {
+    await API.put('/travel/logs', payload);
+    toast(kind === 'origin' ? '출발지를 변경했습니다' : '복귀지를 변경했습니다', 'success');
+    // 경로가 바뀌었으므로 거리를 다시 산출합니다.
+    await trvFetch();
+  } catch (err) {
+    var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '변경 실패';
+    toast(msg, 'error');
+    renderTravel();
+  }
 }
 
 function _trvRow(d, i) {
@@ -14118,6 +14192,8 @@ function _trvRow(d, i) {
       '<div class="text-slate-700">' + csEsc(d.user_name || '-') + '</div>' +
       (d.vehicle && d.vehicle.vehicle_model ? '<div class="text-[10px] text-slate-400">' + csEsc(d.vehicle.vehicle_model) + '</div>' : '') +
     '</td>' +
+    // 출발지·복귀지는 날마다 다릅니다 (집→병원→사무실 등). 표에서 바로 바꿉니다.
+    '<td class="px-3 py-2.5 whitespace-nowrap">' + _trvEndpointCell(d, i) + '</td>' +
     '<td class="px-3 py-2.5 min-w-[240px]">' + stops +
       (d.error ? '<div class="text-[10px] text-red-600 mt-1"><i class="fas fa-circle-exclamation mr-1"></i>' + csEsc(d.error) + '</div>' : '') +
       (d.missing_coords && d.missing_coords.length ? '<div class="text-[10px] text-orange-600 mt-1"><i class="fas fa-location-crosshairs mr-1"></i>좌표 없어 제외: ' + d.missing_coords.map(csEsc).join(', ') + '</div>' : '') +
@@ -14154,6 +14230,7 @@ async function trvFetch() {
     _trvState.days = r.data.data || [];
     _trvState.summary = r.data.summary || {};
     _trvState.settings = r.data.settings || _trvState.settings;
+    if (r.data.places) _trvState.places = r.data.places;
   } catch (e) {
     var msg = (e && e.response && e.response.data && (e.response.data.message || e.response.data.error)) || '거리 산출에 실패했습니다';
     toast(msg, 'error');
@@ -14229,53 +14306,209 @@ async function trvSaveLog(e, i) {
   return false;
 }
 
-// ── 출발지(사무실) 설정 ──
-function trvOpenSettings() {
-  var s = _trvState.settings || {};
+// ── 자주 쓰는 장소 (집 / 사무실 / 기타) ──────────────────────────────────
+// 출발지가 집인 날도 있고 사무실인 날도 있어서, 장소를 등록해두고
+// 일자별로 골라 쓰는 구조입니다.
+var TRV_PLACE_TYPES = [
+  { v: 'home',   label: '집',     icon: 'fa-house',            cls: 'bg-violet-50 text-violet-700 border-violet-100' },
+  { v: 'office', label: '사무실', icon: 'fa-building',         cls: 'bg-sky-50 text-sky-700 border-sky-100' },
+  { v: 'other',  label: '기타',   icon: 'fa-location-dot',     cls: 'bg-slate-50 text-slate-600 border-slate-200' }
+];
+
+function _trvPlaceMeta(t) {
+  for (var i = 0; i < TRV_PLACE_TYPES.length; i++) {
+    if (TRV_PLACE_TYPES[i].v === t) return TRV_PLACE_TYPES[i];
+  }
+  return TRV_PLACE_TYPES[2];
+}
+
+/** 내가 쓸 수 있는 장소 목록 (본인 장소 + 전사 공용) */
+function _trvMyPlaces() {
+  return _trvState.places || [];
+}
+
+/** 요약바에 보여줄 기본 출발지/복귀지 라벨 */
+function _trvDefaultLabel(kind) {
+  var list = _trvMyPlaces();
+  var uid = _trvState.myUserId;
+  var flag = kind === 'origin' ? 'is_default_origin' : 'is_default_return';
+  var mine = null, shared = null;
+  for (var i = 0; i < list.length; i++) {
+    var p = list[i];
+    if (!p[flag] || p.lat === null || p.lng === null) continue;
+    if (p.user_id !== null && String(p.user_id) === String(uid)) { if (!mine) mine = p; }
+    else if (p.user_id === null) { if (!shared) shared = p; }
+  }
+  var pick = mine || shared;
+  if (pick) {
+    var m = _trvPlaceMeta(pick.place_type);
+    return '<b class="text-slate-700">' + csEsc(pick.name) + '</b> <span class="text-slate-400">(' + m.label + ')</span>';
+  }
+  // 장소 기본값이 없으면 전역 설정으로 폴백합니다.
+  var s = _trvState.settings;
+  if (s && s.origin_name && s.origin_lat !== null) {
+    if (kind === 'origin' || s.include_return) {
+      return '<b class="text-slate-700">' + csEsc(s.origin_name) + '</b> <span class="text-slate-400">(전역 설정)</span>';
+    }
+  }
+  return kind === 'origin'
+    ? '<span class="text-amber-600 font-semibold">미설정</span> <span class="text-slate-400">(첫 방문지부터 계산)</span>'
+    : '<span class="text-slate-400">없음</span>';
+}
+
+/** 일자별 출발/복귀 셀렉트 옵션 */
+function _trvPlaceOptions(selected, kind) {
+  var list = _trvMyPlaces().filter(function(p) { return p.lat !== null && p.lng !== null; });
+  var sel = (selected === null || selected === undefined || selected === '') ? '' : String(selected);
+  var html = '<option value=""' + (sel === '' ? ' selected' : '') + '>기본값 사용</option>' +
+             '<option value="0"' + (sel === '0' ? ' selected' : '') + '>' +
+             (kind === 'origin' ? '없음 (첫 방문지에서 시작)' : '없음 (복귀 구간 제외)') + '</option>';
+  for (var i = 0; i < list.length; i++) {
+    var p = list[i];
+    var m = _trvPlaceMeta(p.place_type);
+    var own = p.user_id === null ? ' · 공용' : '';
+    html += '<option value="' + p.id + '"' + (sel === String(p.id) ? ' selected' : '') + '>' +
+            csEsc(p.name) + ' (' + m.label + own + ')</option>';
+  }
+  return html;
+}
+
+// ── 장소 관리 모달 ──
+function trvOpenPlaces() {
+  openModal('<i class="fas fa-map-location-dot text-sky-500 mr-2"></i>출발지 · 복귀지 장소 관리', _trvPlacesBody(), true);
+}
+
+function _trvPlacesBody() {
+  var list = _trvMyPlaces();
+  var uid = _trvState.myUserId;
+  var rows = list.map(function(p) {
+    var m = _trvPlaceMeta(p.place_type);
+    var isShared = p.user_id === null;
+    var noCoord = p.lat === null || p.lng === null;
+    return '<div class="flex items-start gap-3 py-2.5 border-b border-slate-50 last:border-0">' +
+      '<span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg border text-[10px] font-semibold whitespace-nowrap ' + m.cls + '">' +
+        '<i class="fas ' + m.icon + '"></i>' + m.label +
+      '</span>' +
+      '<div class="flex-1 min-w-0">' +
+        '<div class="text-[13px] font-semibold text-slate-800 truncate">' + csEsc(p.name) +
+          (isShared ? ' <span class="text-[10px] font-normal text-slate-400">(전사 공용)</span>' : '') +
+        '</div>' +
+        (p.address ? '<div class="text-[11px] text-slate-500 truncate">' + csEsc(p.address) + '</div>' : '') +
+        (noCoord
+          ? '<div class="text-[10px] text-amber-600 font-semibold mt-0.5"><i class="fas fa-triangle-exclamation mr-1"></i>좌표 없음 — 경로 계산에 쓸 수 없습니다</div>'
+          : '<div class="text-[10px] text-slate-400 mt-0.5 font-mono">' + p.lat + ', ' + p.lng + '</div>') +
+        '<div class="flex gap-1.5 mt-1">' +
+          (p.is_default_origin ? '<span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">기본 출발지</span>' : '') +
+          (p.is_default_return ? '<span class="text-[9px] px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold">기본 복귀지</span>' : '') +
+        '</div>' +
+      '</div>' +
+      (isShared || String(p.user_id) !== String(uid) ? '' :
+        '<div class="flex gap-1 shrink-0">' +
+          '<button onclick="trvPlaceForm(' + p.id + ')" class="text-[11px] px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200"><i class="fas fa-pen"></i></button>' +
+          '<button onclick="trvPlaceDelete(' + p.id + ')" class="text-[11px] px-2 py-1 rounded-lg bg-red-50 text-red-600 hover:bg-red-100"><i class="fas fa-trash"></i></button>' +
+        '</div>') +
+    '</div>';
+  }).join('');
+
+  return '<div id="trv-places-body">' +
+    '<div class="text-[11px] text-slate-500 mb-3 leading-relaxed">' +
+      '집·사무실 등 자주 출발하거나 복귀하는 곳을 등록해두면, 표에서 날짜별로 골라 쓸 수 있습니다.' +
+    '</div>' +
+    '<div class="rounded-xl border border-slate-100 px-3 py-1 max-h-[320px] overflow-y-auto">' +
+      (rows || '<div class="py-6 text-center text-slate-400 text-[12px]">등록된 장소가 없습니다.</div>') +
+    '</div>' +
+    '<div class="flex gap-2 mt-4 justify-between items-center">' +
+      '<button type="button" onclick="trvPlaceForm(0)" class="btn btn-primary btn-sm"><i class="fas fa-plus mr-1"></i>장소 추가</button>' +
+      '<button type="button" onclick="closeModal()" class="btn btn-outline btn-sm">닫기</button>' +
+    '</div>' +
+  '</div>';
+}
+
+/** 장소 추가/수정 폼 (id=0 이면 추가) */
+function trvPlaceForm(id) {
+  var p = null;
+  if (id) {
+    var list = _trvMyPlaces();
+    for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) p = list[i];
+  }
+  p = p || { name: '', place_type: 'home', address: '', lat: null, lng: null, is_default_origin: false, is_default_return: false };
   var v = function(x) { return (x === null || x === undefined) ? '' : String(x); };
-  openModal('출장 정산 설정',
-    '<form id="trv-set-form" onsubmit="return trvSaveSettings(event)">' +
-      '<div class="text-[11px] text-slate-500 mb-4 leading-relaxed">' +
-        '출발지를 설정하면 매일 <b>사무실 → 첫 방문지</b> 구간이 주행거리에 포함됩니다. 비워두면 그 날 첫 방문지부터 계산합니다.' +
+
+  var typeOpts = TRV_PLACE_TYPES.map(function(t) {
+    return '<option value="' + t.v + '"' + (p.place_type === t.v ? ' selected' : '') + '>' + t.label + '</option>';
+  }).join('');
+
+  openModal(id ? '장소 수정' : '장소 추가',
+    '<form id="trv-place-form" onsubmit="return trvPlaceSave(event, ' + (id || 0) + ')">' +
+      '<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">' +
+        '<div><label class="input-label">종류</label><select name="place_type" class="input">' + typeOpts + '</select></div>' +
+        '<div class="sm:col-span-2"><label class="input-label">이름 <span class="text-red-500">*</span></label>' +
+          '<input name="name" type="text" class="input" value="' + csEsc(v(p.name)) + '" placeholder="예: 집, 본사, 수원 사무실" maxlength="50" required></div>' +
+        '<div class="col-span-full"><label class="input-label">주소</label>' +
+          '<input name="address" type="text" class="input" value="' + csEsc(v(p.address)) + '" placeholder="예: 서울특별시 강남구 …" maxlength="300"></div>' +
+        '<div><label class="input-label">위도 (lat)</label><input name="lat" type="number" step="0.0000001" class="input" value="' + csEsc(v(p.lat)) + '" placeholder="37.5012"></div>' +
+        '<div><label class="input-label">경도 (lng)</label><input name="lng" type="number" step="0.0000001" class="input" value="' + csEsc(v(p.lng)) + '" placeholder="127.0396"></div>' +
       '</div>' +
-      '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-        '<div class="col-span-full"><label class="input-label">출발지 이름</label><input name="travel_origin_name" type="text" class="input" value="' + csEsc(v(s.origin_name)) + '" placeholder="예: 토닥 본사" maxlength="200"></div>' +
-        '<div class="col-span-full"><label class="input-label">출발지 주소</label><input name="travel_origin_address" type="text" class="input" value="' + csEsc(v(s.origin_address)) + '" placeholder="예: 서울특별시 강남구 …" maxlength="300"></div>' +
-        '<div><label class="input-label">위도 (lat)</label><input name="travel_origin_lat" type="number" step="0.0000001" class="input" value="' + csEsc(v(s.origin_lat)) + '" placeholder="37.5012"></div>' +
-        '<div><label class="input-label">경도 (lng)</label><input name="travel_origin_lng" type="number" step="0.0000001" class="input" value="' + csEsc(v(s.origin_lng)) + '" placeholder="127.0396"></div>' +
-      '</div>' +
-      '<div class="text-[10px] text-slate-400 mt-1.5 mb-4">카카오맵에서 장소를 우클릭 → <b>좌표 복사</b>로 확인할 수 있습니다. 위도·경도는 둘 다 입력하거나 둘 다 비워주세요.</div>' +
-      '<label class="flex items-center gap-2 text-[12px] text-slate-600 cursor-pointer">' +
-        '<input type="checkbox" name="travel_include_return" value="1" class="rounded"' + (s.include_return ? ' checked' : '') + '>' +
-        '<span>마지막 방문지 → 출발지 <b>복귀 구간</b>도 주행거리에 포함</span>' +
-      '</label>' +
-      '<div class="rounded-xl bg-sky-50 border border-sky-100 px-3 py-2.5 mt-4 text-[11px] text-sky-800 leading-relaxed">' +
-        '<i class="fas fa-circle-info mr-1"></i>정산 방식(금액 산출 여부·km당 단가·연비)은 담당자별 <b>차량 형태</b>에 따라 결정됩니다. ' +
-        '<button type="button" onclick="closeModal();nav(\'mypage\')" class="underline font-semibold">마이페이지</button>에서 입력해주세요.' +
+      '<div class="text-[10px] text-slate-400 mt-1.5 mb-3">카카오맵에서 장소를 우클릭 → <b>좌표 복사</b>로 확인할 수 있습니다. 좌표가 없으면 경로 계산에 쓸 수 없습니다.</div>' +
+      '<div class="space-y-2">' +
+        '<label class="flex items-center gap-2 text-[12px] text-slate-600 cursor-pointer">' +
+          '<input type="checkbox" name="is_default_origin" value="1" class="rounded"' + (p.is_default_origin ? ' checked' : '') + '>' +
+          '<span>이곳을 <b>기본 출발지</b>로 사용 (날짜별로 바꿀 수 있습니다)</span></label>' +
+        '<label class="flex items-center gap-2 text-[12px] text-slate-600 cursor-pointer">' +
+          '<input type="checkbox" name="is_default_return" value="1" class="rounded"' + (p.is_default_return ? ' checked' : '') + '>' +
+          '<span>이곳을 <b>기본 복귀지</b>로 사용</span></label>' +
       '</div>' +
       '<div class="flex gap-2 mt-5 justify-end">' +
-        '<button type="button" onclick="closeModal()" class="btn btn-outline btn-sm">취소</button>' +
+        '<button type="button" onclick="trvOpenPlaces()" class="btn btn-outline btn-sm">뒤로</button>' +
         '<button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-check mr-1"></i>저장</button>' +
       '</div>' +
     '</form>');
 }
 
-async function trvSaveSettings(e) {
+async function trvPlaceSave(e, id) {
   e.preventDefault();
-  var fm = document.getElementById('trv-set-form');
+  var fm = document.getElementById('trv-place-form');
   if (!fm) return false;
   var f = Object.fromEntries(new FormData(fm));
-  // 체크박스는 해제 시 FormData 에 아예 없으므로 명시적으로 0 을 넣습니다.
-  f.travel_include_return = fm.travel_include_return.checked ? '1' : '0';
+  // 체크박스는 해제 시 FormData 에 없으므로 명시적으로 채웁니다.
+  f.is_default_origin = fm.is_default_origin.checked ? 1 : 0;
+  f.is_default_return = fm.is_default_return.checked ? 1 : 0;
   try {
-    var r = await API.put('/travel/settings', f);
-    _trvState.settings = r.data.data;
-    closeModal();
-    toast('설정이 저장되었습니다', 'success');
+    if (id) await API.put('/travel/places/' + id, f);
+    else await API.post('/travel/places', f);
+    await _trvReloadPlaces();
+    toast(id ? '장소가 수정되었습니다' : '장소가 등록되었습니다', 'success');
+    trvOpenPlaces();
     renderTravel();
   } catch (err) {
     var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '저장 실패';
     toast(msg, 'error');
   }
   return false;
+}
+
+function trvPlaceDelete(id) {
+  var list = _trvMyPlaces();
+  var name = '';
+  for (var i = 0; i < list.length; i++) if (String(list[i].id) === String(id)) name = list[i].name;
+  showConfirm('장소 삭제', '"' + name + '"을(를) 삭제할까요?<br><span class="text-[11px] text-slate-500">이 장소를 지정한 운행기록은 기본 출발지·복귀지로 되돌아갑니다.</span>', async function() {
+    try {
+      var r = await API.delete('/travel/places/' + id);
+      await _trvReloadPlaces();
+      toast((r.data && r.data.message) || '삭제되었습니다', 'success');
+      trvOpenPlaces();
+      renderTravel();
+    } catch (err) {
+      var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '삭제 실패';
+      toast(msg, 'error');
+    }
+  });
+}
+
+async function _trvReloadPlaces() {
+  try {
+    var r = await API.get('/travel/places');
+    _trvState.places = r.data.data || [];
+    _trvState.myUserId = r.data.my_user_id;
+  } catch (e) { /* 유지 */ }
 }

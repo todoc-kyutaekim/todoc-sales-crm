@@ -220,10 +220,14 @@ travel.get('/settings', async (c) => {
   const vmap = await loadVehicles(c.env.DB, [Number(userId)])
   const vehicle = vmap.get(Number(userId)) || { ...EMPTY_VEHICLE }
   const resolved = resolveSettlement(vehicle, s)
+  const places = await loadPlaces(c.env.DB, [Number(userId)])
   return c.json({
     data: s,
     vehicle,
     resolved,
+    places,
+    place_type_labels: PLACE_TYPE_LABEL,
+    my_user_id: Number(userId),
     vehicle_type_labels: VEHICLE_TYPE_LABEL,
     kakao_configured: !!c.env.KAKAO_REST_API_KEY,
   })
@@ -296,13 +300,172 @@ export type DailyStop = {
   address: string
   lat: number | null
   lng: number | null
-  /** 출발지(사무실)인지 */
+  /** 출발지(집/사무실)인지 */
   is_origin?: boolean
   /** 복귀 지점인지 */
   is_return?: boolean
+  /** 출발지/복귀지로 쓰인 travel_places.id (전역 설정 사용 시 null) */
+  place_id?: number | null
+  /** home | office | other */
+  place_type?: string
   visit_time?: string
   purpose?: string
   doctors?: string
+}
+
+// ============================================================================
+// 자주 쓰는 장소 (집 / 사무실 / 기타)
+//
+// 출발지가 집인 날도 사무실인 날도 있고, 복귀지도 매번 달라집니다.
+// 그래서 장소를 미리 등록해두고 일자별로 골라 쓰는 구조로 만들었습니다.
+//   - travel_places            : 장소 목록 (담당자별, user_id NULL = 전사 공용)
+//   - travel_logs.origin_place_id / return_place_id : 그 날 실제로 쓴 장소
+// ============================================================================
+
+export const PLACE_TYPE_LABEL: Record<string, string> = {
+  home: '집',
+  office: '사무실',
+  other: '기타',
+}
+
+export type TravelPlace = {
+  id: number
+  user_id: number | null
+  name: string
+  place_type: string
+  address: string
+  lat: number | null
+  lng: number | null
+  is_default_origin: boolean
+  is_default_return: boolean
+  sort_order: number
+}
+
+function rowToPlace(r: any): TravelPlace {
+  return {
+    id: Number(r.id),
+    user_id: r.user_id === null || r.user_id === undefined ? null : Number(r.user_id),
+    name: String(r.name || ''),
+    place_type: String(r.place_type || 'other'),
+    address: String(r.address || ''),
+    lat: r.lat === null || r.lat === undefined ? null : Number(r.lat),
+    lng: r.lng === null || r.lng === undefined ? null : Number(r.lng),
+    is_default_origin: Number(r.is_default_origin) === 1,
+    is_default_return: Number(r.is_default_return) === 1,
+    sort_order: Number(r.sort_order) || 0,
+  }
+}
+
+/**
+ * 장소 목록을 읽습니다.
+ * 담당자 본인 장소 + 전사 공용(user_id IS NULL) 장소를 함께 돌려줍니다.
+ * 테이블이 없는 환경(마이그레이션 미적용)에서도 죽지 않습니다.
+ */
+export async function loadPlaces(db: D1Database, userIds: number[]): Promise<TravelPlace[]> {
+  const ids = Array.from(new Set(userIds.filter(x => x > 0)))
+  try {
+    // 담당자 수는 조직 규모상 소수라 변수 상한(100)에 안전하지만 방어적으로 잘라둡니다.
+    const capped = ids.slice(0, 80)
+    const ph = capped.map(() => '?').join(',')
+    const cond = capped.length ? `user_id IS NULL OR user_id IN (${ph})` : 'user_id IS NULL'
+    const r = await db.prepare(
+      `SELECT * FROM travel_places WHERE ${cond} ORDER BY sort_order ASC, id ASC`
+    ).bind(...capped).all()
+    return ((r.results || []) as any[]).map(rowToPlace)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 그 날 담당자가 쓸 출발지/복귀지를 결정합니다.
+ *
+ * 우선순위
+ *   1) travel_logs 에 그 날 명시적으로 지정한 장소 (0 = "없음"을 고른 것도 존중)
+ *   2) 담당자 본인 장소 중 기본값 플래그
+ *   3) 전사 공용 장소 중 기본값 플래그
+ *   4) 전역 설정(travel_origin_*) — 기존 동작 유지
+ */
+export function resolveEndpoints(
+  places: TravelPlace[],
+  userId: number | null,
+  log: any,
+  settings: TravelSettings
+): { origin: DailyStop | null; ret: DailyStop | null } {
+  const byId = new Map<number, TravelPlace>()
+  for (const p of places) byId.set(p.id, p)
+
+  const mine = places.filter(p => p.user_id !== null && Number(p.user_id) === Number(userId))
+  const shared = places.filter(p => p.user_id === null)
+
+  const toStop = (p: TravelPlace, kind: 'origin' | 'return'): DailyStop => ({
+    hospital_id: null,
+    name: p.name || (kind === 'origin' ? '출발지' : '복귀지'),
+    region: '',
+    address: p.address,
+    lat: p.lat,
+    lng: p.lng,
+    place_id: p.id,
+    place_type: p.place_type,
+    ...(kind === 'origin' ? { is_origin: true } : { is_return: true }),
+  })
+
+  const globalStop = (kind: 'origin' | 'return'): DailyStop | null => {
+    if (settings.origin_lat === null || settings.origin_lng === null) return null
+    return {
+      hospital_id: null,
+      name: settings.origin_name || (kind === 'origin' ? '출발지' : '복귀지'),
+      region: '',
+      address: settings.origin_address,
+      lat: settings.origin_lat,
+      lng: settings.origin_lng,
+      place_id: null,
+      place_type: 'office',
+      ...(kind === 'origin' ? { is_origin: true } : { is_return: true }),
+    }
+  }
+
+  const pick = (
+    explicit: any,
+    defaultFlag: (p: TravelPlace) => boolean,
+    kind: 'origin' | 'return'
+  ): DailyStop | null => {
+    // 1) 그 날 명시 지정
+    if (explicit !== null && explicit !== undefined && String(explicit) !== '') {
+      const n = Number(explicit)
+      if (n === 0) return null            // "없음"을 명시적으로 선택
+      const p = byId.get(n)
+      if (p && p.lat !== null && p.lng !== null) return toStop(p, kind)
+      // 좌표 없는 장소를 지정한 경우는 경로에 넣을 수 없어 기본값으로 폴백합니다.
+    }
+    // 2) 본인 기본값 → 3) 공용 기본값
+    const mineDefault = mine.find(p => defaultFlag(p) && p.lat !== null && p.lng !== null)
+    if (mineDefault) return toStop(mineDefault, kind)
+    const sharedDefault = shared.find(p => defaultFlag(p) && p.lat !== null && p.lng !== null)
+    if (sharedDefault) return toStop(sharedDefault, kind)
+    // 4) 전역 설정
+    return globalStop(kind)
+  }
+
+  const origin = pick(log?.origin_place_id, p => p.is_default_origin, 'origin')
+
+  // 복귀지: 그 날 지정값이 없으면 기본 복귀지 → (없으면) include_return 설정에 따라 출발지로 복귀
+  let ret: DailyStop | null = null
+  const hasExplicitReturn = log?.return_place_id !== null && log?.return_place_id !== undefined
+    && String(log?.return_place_id) !== ''
+  if (hasExplicitReturn) {
+    ret = pick(log.return_place_id, p => p.is_default_return, 'return')
+  } else {
+    const mineDefault = mine.find(p => p.is_default_return && p.lat !== null && p.lng !== null)
+    const sharedDefault = shared.find(p => p.is_default_return && p.lat !== null && p.lng !== null)
+    if (mineDefault) ret = toStop(mineDefault, 'return')
+    else if (sharedDefault) ret = toStop(sharedDefault, 'return')
+    else if (settings.include_return && origin) {
+      // 기존 동작: 출발지로 되돌아옴
+      ret = { ...origin, is_origin: false, is_return: true }
+    }
+  }
+  return { origin, ret }
 }
 
 export type DailyRoute = {
@@ -393,6 +556,9 @@ export async function buildDailyRoutes(
   const userIds = Array.from(new Set(meetings.map(m => Number(m.user_id)).filter(x => x > 0)))
   const vehicleMap = await loadVehicles(db, userIds)
 
+  // 출발지/복귀지 후보 장소 (담당자별 집·사무실 + 전사 공용)
+  const places = await loadPlaces(db, userIds)
+
   const days: DailyRoute[] = []
   const sortedKeys = Array.from(groups.keys()).sort()
 
@@ -404,19 +570,11 @@ export async function buildDailyRoutes(
     const missing: string[] = []
     const stops: DailyStop[] = []
 
-    // 출발지(사무실) 설정이 있으면 맨 앞에 붙입니다.
-    const hasOrigin = settings.origin_lat !== null && settings.origin_lng !== null
-    if (hasOrigin) {
-      stops.push({
-        hospital_id: null,
-        name: settings.origin_name || '출발지',
-        region: '',
-        address: settings.origin_address,
-        lat: settings.origin_lat,
-        lng: settings.origin_lng,
-        is_origin: true,
-      })
-    }
+    // 출발지 / 복귀지는 날마다 다릅니다 (집 → 병원 → 사무실 등).
+    // 그 날 지정값 → 담당자 기본값 → 공용 기본값 → 전역 설정 순으로 결정합니다.
+    const dayLog = logMap.get(key) || null
+    const { origin, ret } = resolveEndpoints(places, first.user_id ?? null, dayLog, settings)
+    if (origin) stops.push({ ...origin })
 
     // 같은 날 같은 병원을 연속 방문한 기록은 경로상 한 지점으로 합칩니다.
     for (const m of list) {
@@ -446,18 +604,10 @@ export async function buildDailyRoutes(
       })
     }
 
-    // 복귀 구간
-    if (hasOrigin && settings.include_return && stops.length > 1) {
-      stops.push({
-        hospital_id: null,
-        name: settings.origin_name || '출발지',
-        region: '',
-        address: settings.origin_address,
-        lat: settings.origin_lat,
-        lng: settings.origin_lng,
-        is_return: true,
-      })
-    }
+    // 복귀 구간 — 출발지와 다른 곳일 수 있습니다 (집에서 출발 → 사무실 복귀 등).
+    // 방문지가 하나도 없으면 출발↔복귀만 남아 의미가 없으므로 붙이지 않습니다.
+    const hasVisit = stops.some(s => !s.is_origin && !s.is_return)
+    if (ret && hasVisit) stops.push({ ...ret })
 
     const vehicle = vehicleMap.get(Number(first.user_id)) || { ...EMPTY_VEHICLE }
     const day: DailyRoute = {
@@ -602,9 +752,15 @@ travel.get('/daily', async (c) => {
       .filter(Boolean)
   ))
 
+  // 화면에서 출발지/복귀지 셀렉트를 그리려면 장소 목록이 필요합니다.
+  const placeUserIds = Array.from(new Set(days.map(d => Number(d.user_id)).filter(x => x > 0)))
+  const places = await loadPlaces(c.env.DB, placeUserIds.length ? placeUserIds : [Number(c.get('userId')) || 0])
+
   return c.json({
     data: days.map(d => ({ ...d, amount: settleAmount(d.distance_km, settings, d.rule) })),
     settings,
+    places,
+    place_type_labels: PLACE_TYPE_LABEL,
     summary: {
       days: days.length,
       total_km: totalKm,
@@ -653,20 +809,46 @@ travel.put('/logs', async (c) => {
     return c.json({ error: '주행 후 계기판 값이 주행 전보다 작습니다.', message: '주행 후 계기판 값이 주행 전보다 작습니다.' }, 400)
   }
 
+  // 출발지/복귀지: 0 = "없음"을 명시적으로 선택, NULL = 미지정(기본값 적용)
+  const placeOrNull = (v: any) => {
+    if (v === undefined || v === null || String(v).trim() === '') return null
+    const n = Number(v)
+    return isFinite(n) && n >= 0 ? Math.round(n) : null
+  }
+  const originPlaceId = placeOrNull(b.origin_place_id)
+  const returnPlaceId = placeOrNull(b.return_place_id)
+
+  // 남의 장소를 지정하지 못하도록 소유권을 확인합니다 (본인 장소 또는 전사 공용만 허용).
+  for (const pid of [originPlaceId, returnPlaceId]) {
+    if (pid === null || pid === 0) continue
+    const own = await c.env.DB.prepare(
+      'SELECT id FROM travel_places WHERE id=? AND (user_id IS NULL OR user_id=?)'
+    ).bind(pid, userId).first().catch(() => null)
+    if (!own) {
+      return c.json({
+        error: '선택한 장소를 찾을 수 없습니다.',
+        message: '선택한 장소를 찾을 수 없습니다. 목록을 새로 불러온 뒤 다시 시도해주세요.',
+      }, 400)
+    }
+  }
+
   await c.env.DB.prepare(
-    `INSERT INTO travel_logs (log_date, user_id, vehicle_model, vehicle_plate, odo_start, odo_end, toll_amount, fuel_amount, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO travel_logs (log_date, user_id, vehicle_model, vehicle_plate, odo_start, odo_end, toll_amount, fuel_amount, note, origin_place_id, return_place_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(log_date, user_id) DO UPDATE SET
        vehicle_model=excluded.vehicle_model, vehicle_plate=excluded.vehicle_plate,
        odo_start=excluded.odo_start, odo_end=excluded.odo_end,
        toll_amount=excluded.toll_amount, fuel_amount=excluded.fuel_amount,
-       note=excluded.note, updated_at=CURRENT_TIMESTAMP`
+       note=excluded.note,
+       origin_place_id=excluded.origin_place_id, return_place_id=excluded.return_place_id,
+       updated_at=CURRENT_TIMESTAMP`
   ).bind(
     logDate, userId,
     b.vehicle_model || '', b.vehicle_plate || '',
     odoStart, odoEnd,
     intOrNull(b.toll_amount), intOrNull(b.fuel_amount),
-    b.note || ''
+    b.note || '',
+    originPlaceId, returnPlaceId
   ).run()
 
   const row = await c.env.DB.prepare(
@@ -702,13 +884,16 @@ travel.post('/route', async (c) => {
 
   const missing: string[] = []
   const stops: DailyStop[] = []
-  const hasOrigin = settings.origin_lat !== null && settings.origin_lng !== null
-  if (hasOrigin) {
-    stops.push({
-      hospital_id: null, name: settings.origin_name || '출발지', region: '',
-      address: settings.origin_address, lat: settings.origin_lat, lng: settings.origin_lng, is_origin: true,
-    })
-  }
+  // 일정 플래너용 즉석 계산 — 출발지/복귀지는 요청 본문으로 덮어쓸 수 있게 했습니다.
+  const uidForPlaces = Number(c.get('userId')) || 0
+  const placesForRoute = await loadPlaces(c.env.DB, [uidForPlaces])
+  const { origin: routeOrigin, ret: routeReturn } = resolveEndpoints(
+    placesForRoute,
+    uidForPlaces,
+    { origin_place_id: b.origin_place_id, return_place_id: b.return_place_id },
+    settings
+  )
+  if (routeOrigin) stops.push({ ...routeOrigin })
   for (const id of ids) {
     const h = byId.get(id)
     if (!h) continue
@@ -718,11 +903,8 @@ travel.post('/route', async (c) => {
       address: h.address || '', lat: Number(h.lat), lng: Number(h.lng),
     })
   }
-  if (hasOrigin && settings.include_return && stops.length > 1) {
-    stops.push({
-      hospital_id: null, name: settings.origin_name || '출발지', region: '',
-      address: settings.origin_address, lat: settings.origin_lat, lng: settings.origin_lng, is_return: true,
-    })
+  if (routeReturn && stops.some(s => !s.is_origin && !s.is_return)) {
+    stops.push({ ...routeReturn })
   }
 
   const points: NaviPoint[] = []
@@ -764,6 +946,182 @@ travel.post('/route', async (c) => {
       })),
     },
     settings,
+  })
+})
+
+// ============================================================================
+// 자주 쓰는 장소 CRUD (집 / 사무실 / 기타)
+//
+// 출발지·복귀지가 날마다 달라지므로, 장소를 등록해두고 일자별로 고릅니다.
+// 본인 장소만 수정/삭제할 수 있고, 전사 공용(user_id IS NULL)은 읽기만 합니다.
+// ============================================================================
+
+const PLACE_TYPES = ['home', 'office', 'other'] as const
+
+/** 장소 입력값 검증 — 좌표는 기관 폼과 동일한 한국 범위 체크 */
+function validatePlaceBody(b: any): { error: string } | null {
+  const name = String(b.name || '').trim()
+  if (!name) return { error: '장소 이름을 입력해주세요. (예: 집, 본사)' }
+  if (name.length > 50) return { error: '장소 이름은 50자 이내로 입력해주세요.' }
+
+  const type = String(b.place_type || 'other')
+  if (!PLACE_TYPES.includes(type as any)) return { error: '장소 종류 값이 올바르지 않습니다.' }
+
+  const hasLat = b.lat !== undefined && String(b.lat).trim() !== ''
+  const hasLng = b.lng !== undefined && String(b.lng).trim() !== ''
+  if (hasLat !== hasLng) return { error: '위도와 경도는 둘 다 입력하거나 둘 다 비워둬야 합니다.' }
+  if (hasLat && hasLng) {
+    const lat = Number(b.lat), lng = Number(b.lng)
+    if (!isFinite(lat) || !isFinite(lng)) return { error: '위도/경도는 숫자로 입력해주세요.' }
+    const inKorea = lat >= 33.0 && lat <= 38.7 && lng >= 124.5 && lng <= 131.9
+    if (!inKorea) {
+      const swapped = lng >= 33.0 && lng <= 38.7 && lat >= 124.5 && lat <= 131.9
+      return {
+        error: swapped
+          ? '위도와 경도가 반대로 입력된 것 같습니다. (위도 약 33~38.7, 경도 약 124.5~131.9)'
+          : '한국 범위를 벗어난 좌표입니다. (위도 약 33~38.7, 경도 약 124.5~131.9)',
+      }
+    }
+  }
+  return null
+}
+
+/** 기본값 플래그는 담당자별로 하나만 유지합니다. */
+async function clearDefaultFlags(
+  db: D1Database, userId: number, column: 'is_default_origin' | 'is_default_return', keepId?: number
+) {
+  await db.prepare(
+    `UPDATE travel_places SET ${column}=0, updated_at=CURRENT_TIMESTAMP
+     WHERE user_id=? AND ${column}=1 ${keepId ? 'AND id<>?' : ''}`
+  ).bind(...(keepId ? [userId, keepId] : [userId])).run()
+}
+
+// ── GET /api/travel/places ──────────────────────────────────────────────────
+travel.get('/places', async (c) => {
+  const uid = Number(c.get('userId')) || 0
+  const places = await loadPlaces(c.env.DB, [uid])
+  return c.json({
+    data: places,
+    place_type_labels: PLACE_TYPE_LABEL,
+    my_user_id: uid,
+  })
+})
+
+// ── POST /api/travel/places ─────────────────────────────────────────────────
+travel.post('/places', async (c) => {
+  const uid = Number(c.get('userId')) || 0
+  const b = await c.req.json().catch(() => ({} as any))
+  const bad = validatePlaceBody(b)
+  if (bad) return c.json({ error: bad.error, message: bad.error }, 400)
+
+  const hasCoord = b.lat !== undefined && String(b.lat).trim() !== ''
+  const defOrigin = b.is_default_origin ? 1 : 0
+  const defReturn = b.is_default_return ? 1 : 0
+
+  if (defOrigin) await clearDefaultFlags(c.env.DB, uid, 'is_default_origin')
+  if (defReturn) await clearDefaultFlags(c.env.DB, uid, 'is_default_return')
+
+  const r = await c.env.DB.prepare(
+    `INSERT INTO travel_places (user_id, name, place_type, address, lat, lng, is_default_origin, is_default_return, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    uid,
+    String(b.name).trim(),
+    String(b.place_type || 'other'),
+    String(b.address || '').trim(),
+    hasCoord ? Number(b.lat) : null,
+    hasCoord ? Number(b.lng) : null,
+    defOrigin, defReturn,
+    safeInt(b.sort_order, 0)
+  ).run()
+
+  const row = await c.env.DB.prepare('SELECT * FROM travel_places WHERE id=?')
+    .bind(r.meta.last_row_id).first()
+  await logActivity(c.env.DB, 'create', 'travel_place', Number(r.meta.last_row_id), String(b.name).trim(), '출장 장소 등록')
+  return c.json({ data: row ? rowToPlace(row) : null })
+})
+
+// ── PUT /api/travel/places/:id ──────────────────────────────────────────────
+travel.put('/places/:id', async (c) => {
+  const uid = Number(c.get('userId')) || 0
+  const id = safeInt(c.req.param('id'), 0)
+  if (id <= 0) return c.json({ error: '잘못된 요청입니다.', message: '잘못된 요청입니다.' }, 400)
+
+  const cur = await c.env.DB.prepare('SELECT * FROM travel_places WHERE id=?').bind(id).first()
+  if (!cur) return c.json({ error: '장소를 찾을 수 없습니다.', message: '장소를 찾을 수 없습니다.', code: 'NOT_FOUND' }, 404)
+  // 전사 공용 장소는 화면에서 읽기만 하도록 하고, 남의 장소는 건드릴 수 없습니다.
+  if (cur.user_id === null || Number(cur.user_id) !== uid) {
+    return c.json({
+      error: '이 장소는 수정할 수 없습니다.',
+      message: '전사 공용 장소이거나 다른 담당자의 장소입니다. 본인이 등록한 장소만 수정할 수 있습니다.',
+      code: 'FORBIDDEN',
+    }, 403)
+  }
+
+  const b = await c.req.json().catch(() => ({} as any))
+  const bad = validatePlaceBody(b)
+  if (bad) return c.json({ error: bad.error, message: bad.error }, 400)
+
+  const hasCoord = b.lat !== undefined && String(b.lat).trim() !== ''
+  const defOrigin = b.is_default_origin ? 1 : 0
+  const defReturn = b.is_default_return ? 1 : 0
+  if (defOrigin) await clearDefaultFlags(c.env.DB, uid, 'is_default_origin', id)
+  if (defReturn) await clearDefaultFlags(c.env.DB, uid, 'is_default_return', id)
+
+  await c.env.DB.prepare(
+    `UPDATE travel_places SET name=?, place_type=?, address=?, lat=?, lng=?,
+       is_default_origin=?, is_default_return=?, sort_order=?, updated_at=CURRENT_TIMESTAMP
+     WHERE id=? AND user_id=?`
+  ).bind(
+    String(b.name).trim(),
+    String(b.place_type || 'other'),
+    String(b.address || '').trim(),
+    hasCoord ? Number(b.lat) : null,
+    hasCoord ? Number(b.lng) : null,
+    defOrigin, defReturn,
+    safeInt(b.sort_order, 0),
+    id, uid
+  ).run()
+
+  const row = await c.env.DB.prepare('SELECT * FROM travel_places WHERE id=?').bind(id).first()
+  await logActivity(c.env.DB, 'update', 'travel_place', id, String(b.name).trim(), '출장 장소 수정')
+  return c.json({ data: row ? rowToPlace(row) : null })
+})
+
+// ── DELETE /api/travel/places/:id ───────────────────────────────────────────
+travel.delete('/places/:id', async (c) => {
+  const uid = Number(c.get('userId')) || 0
+  const id = safeInt(c.req.param('id'), 0)
+  if (id <= 0) return c.json({ error: '잘못된 요청입니다.', message: '잘못된 요청입니다.' }, 400)
+
+  const cur = await c.env.DB.prepare('SELECT * FROM travel_places WHERE id=?').bind(id).first()
+  if (!cur) return c.json({ error: '장소를 찾을 수 없습니다.', message: '장소를 찾을 수 없습니다.', code: 'NOT_FOUND' }, 404)
+  if (cur.user_id === null || Number(cur.user_id) !== uid) {
+    return c.json({
+      error: '이 장소는 삭제할 수 없습니다.',
+      message: '전사 공용 장소이거나 다른 담당자의 장소입니다.',
+      code: 'FORBIDDEN',
+    }, 403)
+  }
+
+  // 이미 이 장소를 지정한 과거 운행기록이 있으면 경로가 조용히 바뀌므로 알려줍니다.
+  const used = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS c FROM travel_logs WHERE origin_place_id=? OR return_place_id=?'
+  ).bind(id, id).first().catch(() => null)
+  const usedCount = used ? Number((used as any).c) || 0 : 0
+
+  // 참조를 NULL 로 되돌려 기본값이 적용되게 합니다 (문장별 개별 실행).
+  await c.env.DB.prepare('UPDATE travel_logs SET origin_place_id=NULL WHERE origin_place_id=?').bind(id).run()
+  await c.env.DB.prepare('UPDATE travel_logs SET return_place_id=NULL WHERE return_place_id=?').bind(id).run()
+  await c.env.DB.prepare('DELETE FROM travel_places WHERE id=? AND user_id=?').bind(id, uid).run()
+
+  await logActivity(c.env.DB, 'delete', 'travel_place', id, String((cur as any).name || ''), '출장 장소 삭제')
+  return c.json({
+    success: true,
+    affected_logs: usedCount,
+    message: usedCount > 0
+      ? `장소를 삭제했습니다. 이 장소를 쓰던 운행기록 ${usedCount}일은 기본 출발지/복귀지로 되돌아갑니다.`
+      : '장소를 삭제했습니다.',
   })
 })
 

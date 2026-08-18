@@ -20,7 +20,17 @@
 - **거리 자동 산출**: 방문 미팅(`meeting_type='방문'`) 기록을 (날짜, 담당자)로 묶어
   카카오모빌리티 길찾기 API의 **실제 도로 주행거리**를 계산 (직선거리 아님)
 - **방문 순서 정렬**: `visit_time`(am/full/pm) → `start_time` 기준
-- **출발지·복귀 구간**: 마이페이지 설정의 사무실 좌표를 경로 앞뒤에 붙임 (복귀 포함 옵션)
+- **출발지·복귀지 (날짜별 선택)**: 집·사무실 등 자주 쓰는 장소를 `travel_places`에 등록해두고,
+  일자별 표의 `출발 → 복귀` 셀렉트에서 그 날 실제로 쓴 곳을 각각 고릅니다.
+  출발지와 복귀지가 서로 다른 **비대칭 경로**(집 → 병원들 → 사무실)를 지원합니다.
+  - 장소 종류: `home`(집) / `office`(사무실) / `other`(기타)
+  - 담당자별로 **기본 출발지 / 기본 복귀지**를 1곳씩 지정 가능 (각각 1개만 유지)
+  - 결정 우선순위: ① 그 날 명시값(`travel_logs.origin_place_id`/`return_place_id`,
+    `0` = "없음" 명시 선택 / `NULL` = 미지정) → ② 담당자 본인 기본값 → ③ 전사 공용(`user_id IS NULL`) 기본값
+    → ④ 전역 설정(`travel_origin_*`)
+  - 좌표(위도·경도)가 없는 장소는 경로 계산에 쓸 수 없으며 셀렉트에서 제외됩니다
+  - 출발/복귀를 바꾸면 그 날 경로와 주행거리가 **즉시 재계산**됩니다
+  - 보고서에도 `출발지`·`복귀지` 열과 조합별 일수 요약이 들어갑니다
 - **계기판 입력**: 국세청 서식상 계기판 누적거리만 수동 입력 필요 → 일자별 입력 모달
   (차종/등록번호/주행전·후 계기판/실제 통행료/주유금액/비고)
 - **차량 형태별 정산 방식 자동 결정** (마이페이지에서 담당자별 설정):
@@ -183,9 +193,13 @@
 | GET | `/api/products/available-for-meeting` | 미팅 폼용 가용 유닛 |
 | POST | `/api/products/link-to-meeting` | 미팅-제품 일괄 연계 (자동 movement 생성) |
 | DELETE | `/api/products/meeting-product/:id` | 미팅-제품 연계 해제 |
-| GET/PUT | `/api/travel/settings` | 출장 정산 설정 (출발지 좌표·복귀구간·전역 단가) |
+| GET/PUT | `/api/travel/settings` | 출장 정산 설정 (전역 출발지 좌표·복귀구간·전역 단가) + 장소 목록 동봉 |
+| GET | `/api/travel/places` | 출발지·복귀지 장소 목록 (본인 + 전사 공용) |
+| POST | `/api/travel/places` | 장소 등록 (이름/종류/주소/좌표/기본 출발·복귀 플래그) |
+| PUT | `/api/travel/places/:id` | 장소 수정 (전사 공용·타인 장소는 403) |
+| DELETE | `/api/travel/places/:id` | 장소 삭제 (참조 운행기록은 기본값으로 되돌림) |
 | GET | `/api/travel/daily` | 일자별 운행기록 산출 (?from=&to=&user_id=&refresh=1) |
-| GET/PUT | `/api/travel/logs` | 계기판·실제 통행료·주유금액 입력 (upsert) |
+| GET/PUT | `/api/travel/logs` | 계기판·실제 통행료·주유금액 + 그 날 출발지·복귀지(`origin_place_id`/`return_place_id`) 입력 (upsert) |
 | POST | `/api/travel/route` | 임의 기관 목록의 경로 거리 계산 (hospital_ids[] 1~28) |
 | GET | `/api/export/report/travel` | 출장 정산 보고서 (?from=&to=&user_id=&format=csv\|xlsx) |
 | GET/PUT | `/api/mypage` | 내 프로필 + 차량 정보(형태·차종·번호·km단가·연비·유가) |
@@ -471,7 +485,7 @@ if (!f.currentPassword) { toast('...', 'warn'); release(); return }
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-08-18 (출장 거리 정산 기능 추가)
+- **Last Updated**: 2026-08-18 (출장 거리 정산 + 날짜별 출발지·복귀지 선택)
 
 ## 프론트엔드 빌드 (⚠️ 필수 확인)
 

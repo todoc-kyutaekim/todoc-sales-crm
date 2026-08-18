@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { buildReportData } from './dashboard'
 import { queryByIds } from '../helpers'
-import { buildDailyRoutes, settleAmount } from './travel'
+import { buildDailyRoutes, settleAmount, PLACE_TYPE_LABEL } from './travel'
 
 type Bindings = { DB: D1Database; KAKAO_REST_API_KEY?: string }
 const exports = new Hono<{ Bindings: Bindings }>()
@@ -1610,6 +1610,7 @@ exports.get('/report/travel', async (c) => {
   const dailyHeaders = [
     'No', '사용일자', '운전자', '차종', '자동차등록번호',
     '주행전 계기판(km)', '주행후 계기판(km)', '계기판 주행거리(km)',
+    '출발지', '복귀지',
     '방문 기관수', '행선지(방문 순서)', '방문 목적',
     'API 산출 주행거리(km)', '예상 소요시간(분)',
     '카카오 추정 통행료(원)', '실제 통행료(원)', '주유 금액(원)',
@@ -1645,6 +1646,18 @@ exports.get('/report/travel', async (c) => {
 
     // 실제 방문 기관만 (출발지/복귀 제외)
     const visits = d.stops.filter(s => !s.is_origin && !s.is_return)
+
+    // 출발지·복귀지는 날마다 다릅니다 (집에서 출발해 사무실로 복귀하는 등).
+    // 재무팀이 동선을 확인할 수 있도록 종류(집/사무실)까지 함께 표기합니다.
+    const originStop = d.stops.find(s => s.is_origin)
+    const returnStop = d.stops.find(s => s.is_return)
+    const endpointLabel = (s: typeof originStop) => {
+      if (!s) return ''
+      const t = s.place_type ? PLACE_TYPE_LABEL[s.place_type] : ''
+      return t && t !== '기타' ? `${s.name} (${t})` : s.name
+    }
+    const originLabel = originStop ? endpointLabel(originStop) : '(첫 방문지에서 시작)'
+    const returnLabel = returnStop ? endpointLabel(returnStop) : '(복귀 구간 없음)'
     const routeLabel = d.stops.map(s => s.name).join(' → ')
     const purposes = Array.from(new Set(visits.map(s => s.purpose).filter(Boolean))).join(' / ')
 
@@ -1683,6 +1696,8 @@ exports.get('/report/travel', async (c) => {
       odoStart,
       odoEnd,
       odoDist,
+      originLabel,
+      returnLabel,
       visits.length,
       routeLabel,
       purposes,
@@ -1729,16 +1744,36 @@ exports.get('/report/travel', async (c) => {
     .map((r, i) => [i + 1, ...r])
 
   // ── 요약 ──────────────────────────────────────────────────────────────────
+  // 출발지·복귀지가 날마다 다르므로 요약에는 실제로 쓰인 조합을 모아 보여줍니다.
+  const endpointPairs = new Map<string, number>()
+  for (const d of days) {
+    const o = d.stops.find(s => s.is_origin)
+    const r = d.stops.find(s => s.is_return)
+    const lbl = (s: any, none: string) => {
+      if (!s) return none
+      const t = s.place_type ? PLACE_TYPE_LABEL[s.place_type] : ''
+      return t && t !== '기타' ? `${s.name}(${t})` : s.name
+    }
+    const k = `${lbl(o, '첫 방문지')} → ${lbl(r, '복귀 없음')}`
+    endpointPairs.set(k, (endpointPairs.get(k) || 0) + 1)
+  }
+  const endpointSummary = endpointPairs.size
+    ? Array.from(endpointPairs.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, n]) => `${k} ${n}일`)
+        .join(' / ')
+    : '해당 없음'
+
   const summaryRows: any[][] = [
     ['보고서 기간', periodLabel],
     ['생성 일시', generatedAt],
     ['거리 산출 방식', '카카오모빌리티 길찾기 API — 실제 도로 주행거리 (직선거리 아님)'],
     ['통행료 산출 방식', '카카오 추정치 (실제 증빙은 하이패스 이용내역 기준)'],
     ['정산 방식', modeLabel],
-    ['출발지', settings.origin_lat !== null
+    ['출발지·복귀지', endpointSummary],
+    ['기본 출발지(전역 설정)', settings.origin_lat !== null
       ? `${settings.origin_name || '(이름 미설정)'} ${settings.origin_address || ''}`.trim()
-      : '미설정 — 그 날의 첫 방문지부터 계산했습니다'],
-    ['복귀 구간 포함', settings.include_return && settings.origin_lat !== null ? '포함' : '미포함'],
+      : '미설정 — 등록한 장소나 그 날의 첫 방문지를 기준으로 계산합니다'],
     ['운행 일수', days.length],
     ['총 주행거리(km)', totalKm],
     ['카카오 추정 통행료 합계(원)', totalTollEst],
