@@ -506,7 +506,9 @@ export async function buildDailyRoutes(
 ): Promise<{ days: DailyRoute[]; settings: TravelSettings }> {
   const settings = await loadSettings(db)
 
-  const where: string[] = ["m.meeting_type = '방문'"]
+  // 미팅 유형 '방문'만 집계합니다.
+  // DB 에는 영문 코드('visit')로 저장되며, 과거 한글로 입력된 레코드도 함께 허용합니다.
+  const where: string[] = ["m.meeting_type IN ('visit', '방문')"]
   const params: any[] = []
   if (opts.from) { where.push('m.meeting_date >= ?'); params.push(opts.from) }
   if (opts.to) { where.push('m.meeting_date <= ?'); params.push(opts.to) }
