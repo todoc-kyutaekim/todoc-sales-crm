@@ -1593,13 +1593,17 @@ exports.get('/report/travel', async (c) => {
   const periodLabel = (from || '전체') + ' ~ ' + (to || '전체')
   const generatedAt = new Date().toISOString().substring(0, 19).replace('T', ' ')
 
-  const modeLabel = settings.settlement_mode === 'mileage'
-    ? `km 단가 정산 (${settings.rate_per_km.toLocaleString()}원/km)`
-    : (settings.settlement_mode === 'fuel'
-      ? `실비 정산 (연비 ${settings.fuel_efficiency}km/L, 유가 ${settings.fuel_price.toLocaleString()}원/L)`
-      : '거리 증빙만 (금액 미산출)')
-
-  const showAmount = settings.settlement_mode !== 'none'
+  // 정산 방식은 담당자 차량 형태(마이페이지 입력)에 따라 달라집니다.
+  // 한 명이라도 금액 산출 대상이면 금액 열을 넣습니다.
+  const showAmount = days.some(d => d.rule && d.rule.mode !== 'none')
+  const modeLabels = Array.from(new Set(days.map(d => {
+    const label = d.rule?.label || '미설정'
+    return d.user_name ? `${d.user_name}: ${label}` : label
+  })))
+  const modeLabel = modeLabels.length ? modeLabels.join(' / ') : '해당 기간 운행 기록 없음'
+  const taxWarnings = Array.from(new Set(
+    days.filter(d => d.rule?.warning).map(d => `${d.user_name || '담당자 미지정'}: ${d.rule!.warning}`)
+  ))
 
   // ── ① 일자별 운행 내역 ────────────────────────────────────────────────────
   // 계기판 주행거리(사용자 입력)와 API 산출 거리를 나란히 두어 재무팀이 대조할 수 있게 합니다.
@@ -1644,7 +1648,7 @@ exports.get('/report/travel', async (c) => {
     const routeLabel = d.stops.map(s => s.name).join(' → ')
     const purposes = Array.from(new Set(visits.map(s => s.purpose).filter(Boolean))).join(' / ')
 
-    const amount = settleAmount(d.distance_km, settings)
+    const amount = settleAmount(d.distance_km, settings, d.rule)
 
     // 업무용 사용거리: 영업 방문이므로 전 구간 업무용으로 봅니다.
     // 계기판 값이 있으면 계기판 거리를, 없으면 API 거리를 기준으로 표기합니다.
@@ -1657,12 +1661,17 @@ exports.get('/report/travel', async (c) => {
     if (d.missing_coords.length) noteParts.push(`좌표 미등록: ${d.missing_coords.join(', ')}`)
     if (log.note) noteParts.push(String(log.note))
 
+    // 차종·등록번호는 마이페이지 차량 정보를 기본값으로 쓰고,
+    // 그 날 다른 차를 썼다면 운행기록(travel_logs)에 입력한 값이 우선합니다.
+    const vehModel = log.vehicle_model || d.vehicle?.vehicle_model || ''
+    const vehPlate = log.vehicle_plate || d.vehicle?.vehicle_plate || ''
+
     dailyRows.push([
       no,
       d.date,
       d.user_name || '',
-      log.vehicle_model || '',
-      log.vehicle_plate || '',
+      vehModel,
+      vehPlate,
       odoStart,
       odoEnd,
       odoDist,
@@ -1730,6 +1739,7 @@ exports.get('/report/travel', async (c) => {
     ...(showAmount ? [['정산 금액 합계(원)', totalAmount]] : []),
     ['거리 계산 실패 일자', failedDays.length ? failedDays.join(', ') : '없음'],
     ['좌표 미등록 기관', missingAll.size ? Array.from(missingAll).join(', ') : '없음'],
+    ...taxWarnings.map(w => ['⚠️ 확인 필요', w]),
   ]
 
   const fnBase = `todoc_travel_report_${ts()}`

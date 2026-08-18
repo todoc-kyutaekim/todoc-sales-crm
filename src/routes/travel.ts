@@ -85,10 +85,148 @@ export async function loadSettings(db: D1Database): Promise<TravelSettings> {
   }
 }
 
+// ============================================================================
+// 사용자별 차량 정보 (마이페이지에서 입력)
+//
+// 차량 형태·km당 단가는 사람마다 다를 수 있어 users 테이블에 개인값을 두고,
+// 비어 있으면 전역 설정(app_settings)을 기본값으로 씁니다.
+// ============================================================================
+
+export type VehicleType = '' | 'corporate' | 'private_allowance' | 'private_actual'
+
+export const VEHICLE_TYPE_LABEL: Record<string, string> = {
+  '': '미설정',
+  corporate: '법인차량',
+  private_allowance: '개인차량 + 자가운전보조금(월 20만원)',
+  private_actual: '개인차량 + 실비 정산',
+}
+
+export type UserVehicle = {
+  vehicle_type: VehicleType
+  vehicle_model: string
+  vehicle_plate: string
+  rate_per_km: number | null
+  fuel_efficiency: number | null
+  fuel_price: number | null
+}
+
+const EMPTY_VEHICLE: UserVehicle = {
+  vehicle_type: '', vehicle_model: '', vehicle_plate: '',
+  rate_per_km: null, fuel_efficiency: null, fuel_price: null,
+}
+
+/** users 테이블에서 차량 정보를 읽습니다. 컬럼이 없는 환경에서도 죽지 않습니다. */
+export async function loadVehicles(db: D1Database, userIds: number[]): Promise<Map<number, UserVehicle>> {
+  const map = new Map<number, UserVehicle>()
+  const ids = userIds.filter(x => Number.isFinite(x) && x > 0)
+  if (ids.length === 0) return map
+  // 담당자 수는 조직 인원 수준이라 IN 절 변수 상한(100)에 안전하지만,
+  // 만약을 위해 90개씩 나눠 조회합니다.
+  const num = (v: any) => (v === null || v === undefined || v === '' ? null : (isFinite(Number(v)) ? Number(v) : null))
+  for (let i = 0; i < ids.length; i += 90) {
+    const part = ids.slice(i, i + 90)
+    const ph = part.map(() => '?').join(',')
+    try {
+      const r = await db.prepare(
+        `SELECT id, vehicle_type, vehicle_model, vehicle_plate,
+                travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price
+         FROM users WHERE id IN (${ph})`
+      ).bind(...part).all()
+      for (const row of (r.results || []) as any[]) {
+        map.set(Number(row.id), {
+          vehicle_type: (row.vehicle_type || '') as VehicleType,
+          vehicle_model: row.vehicle_model || '',
+          vehicle_plate: row.vehicle_plate || '',
+          rate_per_km: num(row.travel_rate_per_km),
+          fuel_efficiency: num(row.vehicle_fuel_efficiency),
+          fuel_price: num(row.vehicle_fuel_price),
+        })
+      }
+    } catch {
+      // 마이그레이션 0045 미적용 환경 → 전역 설정만 사용
+    }
+  }
+  return map
+}
+
+/**
+ * 차량 형태에 따라 실제 적용할 정산 규칙을 결정합니다.
+ *
+ * ⚠️ 세무 주의 (private_allowance):
+ *    자가운전보조금 월 20만원은 비과세지만, 여기에 유류비·통행료를 실비로 **함께**
+ *    지급하면 그 20만원이 과세 대상으로 전환됩니다.
+ *    그래서 이 형태는 금액을 산출하지 않고 '거리 증빙만' 으로 고정하고 경고를 남깁니다.
+ *    (실비를 따로 받기로 회사가 정했다면 형태를 private_actual 로 바꿔야 합니다.)
+ */
+export function resolveSettlement(v: UserVehicle, g: TravelSettings): {
+  mode: 'none' | 'mileage' | 'fuel'
+  rate_per_km: number
+  fuel_efficiency: number
+  fuel_price: number
+  label: string
+  warning: string
+} {
+  const rate = v.rate_per_km !== null ? v.rate_per_km : g.rate_per_km
+  const eff = v.fuel_efficiency !== null ? v.fuel_efficiency : g.fuel_efficiency
+  const price = v.fuel_price !== null ? v.fuel_price : g.fuel_price
+
+  if (v.vehicle_type === 'corporate') {
+    return {
+      mode: 'none', rate_per_km: rate, fuel_efficiency: eff, fuel_price: price,
+      label: '법인차량 — 거리 증빙만 (업무용승용차 운행기록부)',
+      warning: '',
+    }
+  }
+  if (v.vehicle_type === 'private_allowance') {
+    return {
+      mode: 'none', rate_per_km: rate, fuel_efficiency: eff, fuel_price: price,
+      label: '개인차량 + 자가운전보조금 — 거리 증빙만 (금액 미산출)',
+      warning: '자가운전보조금(월 20만원 비과세)을 받는 경우 유류비·통행료를 실비로 함께 지급하면 20만원이 과세 대상으로 전환됩니다. 실비를 별도 지급받는 규정이라면 차량 형태를 "개인차량 + 실비 정산"으로 변경해주세요.',
+    }
+  }
+  if (v.vehicle_type === 'private_actual') {
+    // 단가가 정해져 있으면 km 단가 정산, 없으면 연비 기준 유류비
+    if (rate > 0) {
+      return {
+        mode: 'mileage', rate_per_km: rate, fuel_efficiency: eff, fuel_price: price,
+        label: `개인차량 실비 — km 단가 정산 (${rate.toLocaleString()}원/km)`,
+        warning: '',
+      }
+    }
+    return {
+      mode: 'fuel', rate_per_km: rate, fuel_efficiency: eff, fuel_price: price,
+      label: `개인차량 실비 — 연비 기준 유류비 (연비 ${eff}km/L, 유가 ${price.toLocaleString()}원/L)`,
+      warning: '',
+    }
+  }
+
+  // 미설정 → 전역 설정을 그대로 따릅니다.
+  const gLabel = g.settlement_mode === 'mileage'
+    ? `km 단가 정산 (${rate.toLocaleString()}원/km)`
+    : (g.settlement_mode === 'fuel'
+      ? `실비 정산 (연비 ${eff}km/L, 유가 ${price.toLocaleString()}원/L)`
+      : '거리 증빙만 (금액 미산출)')
+  return {
+    mode: g.settlement_mode, rate_per_km: rate, fuel_efficiency: eff, fuel_price: price,
+    label: gLabel,
+    warning: '차량 형태가 설정되지 않았습니다. 마이페이지에서 차량 정보를 입력하면 정산 방식이 자동으로 적용됩니다.',
+  }
+}
+
 // ── GET /api/travel/settings ────────────────────────────────────────────────
 travel.get('/settings', async (c) => {
   const s = await loadSettings(c.env.DB)
-  return c.json({ data: s, kakao_configured: !!c.env.KAKAO_REST_API_KEY })
+  const userId = c.get('userId')
+  const vmap = await loadVehicles(c.env.DB, [Number(userId)])
+  const vehicle = vmap.get(Number(userId)) || { ...EMPTY_VEHICLE }
+  const resolved = resolveSettlement(vehicle, s)
+  return c.json({
+    data: s,
+    vehicle,
+    resolved,
+    vehicle_type_labels: VEHICLE_TYPE_LABEL,
+    kakao_configured: !!c.env.KAKAO_REST_API_KEY,
+  })
 })
 
 // ── PUT /api/travel/settings ────────────────────────────────────────────────
@@ -184,6 +322,10 @@ export type DailyRoute = {
   cached?: boolean
   /** 사용자 입력 운행기록 */
   log?: any
+  /** 이 담당자에게 적용된 정산 규칙 (차량 형태 기반) */
+  rule?: ReturnType<typeof resolveSettlement>
+  /** 담당자 차량 정보 */
+  vehicle?: UserVehicle
 }
 
 function routeKeyOf(points: NaviPoint[]): string {
@@ -246,6 +388,10 @@ export async function buildDailyRoutes(
   } catch { /* 테이블 없음 */ }
   const logMap = new Map<string, any>()
   for (const l of logs) logMap.set(`${l.log_date}|${l.user_id ?? ''}`, l)
+
+  // 담당자별 차량 정보 (마이페이지 입력값) — 정산 방식·단가가 사람마다 다를 수 있음
+  const userIds = Array.from(new Set(meetings.map(m => Number(m.user_id)).filter(x => x > 0)))
+  const vehicleMap = await loadVehicles(db, userIds)
 
   const days: DailyRoute[] = []
   const sortedKeys = Array.from(groups.keys()).sort()
@@ -313,6 +459,7 @@ export async function buildDailyRoutes(
       })
     }
 
+    const vehicle = vehicleMap.get(Number(first.user_id)) || { ...EMPTY_VEHICLE }
     const day: DailyRoute = {
       date,
       user_id: first.user_id ?? null,
@@ -324,6 +471,8 @@ export async function buildDailyRoutes(
       toll: 0,
       legs: [],
       log: logMap.get(key) || null,
+      vehicle,
+      rule: resolveSettlement(vehicle, settings),
     }
 
     // 좌표가 있는 지점이 2곳 미만이면 이동거리 계산 불가
@@ -405,15 +554,22 @@ export async function buildDailyRoutes(
   return { days, settings }
 }
 
-/** 정산 금액 계산 */
-export function settleAmount(distanceKm: number, s: TravelSettings): number {
-  if (s.settlement_mode === 'mileage') {
-    return Math.round(distanceKm * s.rate_per_km)
-  }
-  if (s.settlement_mode === 'fuel') {
-    const eff = s.fuel_efficiency > 0 ? s.fuel_efficiency : 12
-    return Math.round((distanceKm / eff) * s.fuel_price)
-  }
+/**
+ * 정산 금액 계산.
+ * rule 은 resolveSettlement() 결과(사용자 차량 형태 반영)를 넘기고,
+ * 없으면 전역 설정만으로 계산합니다.
+ */
+export function settleAmount(
+  distanceKm: number,
+  s: TravelSettings,
+  rule?: { mode: 'none' | 'mileage' | 'fuel'; rate_per_km: number; fuel_efficiency: number; fuel_price: number }
+): number {
+  const mode = rule ? rule.mode : s.settlement_mode
+  const rate = rule ? rule.rate_per_km : s.rate_per_km
+  const eff = (rule ? rule.fuel_efficiency : s.fuel_efficiency) || 12
+  const price = rule ? rule.fuel_price : s.fuel_price
+  if (mode === 'mileage') return Math.round(distanceKm * rate)
+  if (mode === 'fuel') return Math.round((distanceKm / (eff > 0 ? eff : 12)) * price)
   return 0
 }
 
@@ -438,10 +594,16 @@ travel.get('/daily', async (c) => {
 
   const totalKm = Math.round(days.reduce((a, d) => a + d.distance_km, 0) * 10) / 10
   const totalToll = days.reduce((a, d) => a + d.toll, 0)
-  const totalAmount = days.reduce((a, d) => a + settleAmount(d.distance_km, settings), 0)
+  const totalAmount = days.reduce((a, d) => a + settleAmount(d.distance_km, settings, d.rule), 0)
+
+  // 차량 형태 미설정·세무 주의 등 담당자별 경고를 모아서 화면에 띄웁니다.
+  const warnings = Array.from(new Set(
+    days.map(d => (d.rule?.warning ? `${d.user_name || '담당자 미지정'}: ${d.rule.warning}` : ''))
+      .filter(Boolean)
+  ))
 
   return c.json({
-    data: days.map(d => ({ ...d, amount: settleAmount(d.distance_km, settings) })),
+    data: days.map(d => ({ ...d, amount: settleAmount(d.distance_km, settings, d.rule) })),
     settings,
     summary: {
       days: days.length,
@@ -450,6 +612,7 @@ travel.get('/daily', async (c) => {
       total_amount: totalAmount,
       failed: days.filter(d => d.error).length,
       missing_coords: Array.from(new Set(days.flatMap(d => d.missing_coords))),
+      warnings,
     },
   })
 })
@@ -581,6 +744,10 @@ travel.post('/route', async (c) => {
   const res = await findRoute(points, c.env.KAKAO_REST_API_KEY)
   if (!res.ok) return c.json({ error: res.message, message: res.message, code: res.code }, 502)
 
+  const uid = Number(c.get('userId'))
+  const vmap = await loadVehicles(c.env.DB, [uid])
+  const rule = resolveSettlement(vmap.get(uid) || { ...EMPTY_VEHICLE }, settings)
+
   const distanceKm = toKm(res.distance)
   return c.json({
     data: {
@@ -589,7 +756,8 @@ travel.post('/route', async (c) => {
       distance_km: distanceKm,
       duration_min: toMin(res.duration),
       toll: res.toll,
-      amount: settleAmount(distanceKm, settings),
+      amount: settleAmount(distanceKm, settings, rule),
+      rule,
       legs: res.legs.map(l => ({
         from: l.from, to: l.to,
         distance_km: toKm(l.distance), duration_min: toMin(l.duration),

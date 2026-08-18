@@ -8203,6 +8203,7 @@ function renderMypage() {
     '</div>';
 
   document.getElementById('content').innerHTML = html;
+  if (editMode) _mypVehicleToggle();
 }
 
 function _mypRenderProfileView(p) {
@@ -8227,6 +8228,7 @@ function _mypRenderProfileView(p) {
           _mypField('job_role', 'fa-briefcase', '담당 직무', p.job_role) +
         '</div>' +
         (p.bio ? '<div class="mt-3 p-3 rounded-lg bg-white/60 border border-slate-100 text-[12px] text-slate-600 leading-relaxed"><i class="fas fa-comment-dots text-slate-400 mr-1.5"></i>' + csEsc(p.bio).replace(/\n/g, '<br>') + '</div>' : '') +
+        _mypRenderVehicleView(p) +
       '</div>' +
       // 편집 버튼
       '<div class="flex-shrink-0">' +
@@ -8267,6 +8269,7 @@ function _mypRenderEditForm(p) {
           '<div><label class="input-label">직책</label><input name="position" type="text" value="' + csEsc(p.position || '') + '" class="input" placeholder="예: 팀장, 대리" maxlength="100"></div>' +
           '<div class="col-span-full"><label class="input-label">자기소개 / 메모</label><textarea name="bio" rows="3" class="input" maxlength="1000" placeholder="담당 업무, 관심 분야, 연락 가능한 시간대 등">' + csEsc(p.bio || '') + '</textarea></div>' +
         '</div>' +
+        _mypRenderVehicleForm(p) +
         '<div class="flex gap-2 mt-4 justify-end">' +
           '<button type="button" onclick="_mypCancelEdit()" class="btn btn-outline btn-sm">취소</button>' +
           '<button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-check mr-1"></i>저장</button>' +
@@ -8274,6 +8277,107 @@ function _mypRenderEditForm(p) {
       '</div>' +
     '</div>' +
   '</form>';
+}
+
+// ── 차량 정보 (출장 거리 정산용) ──
+var MYP_VEHICLE_TYPES = [
+  { v: '',                  label: '미설정',                    desc: '전역 정산 설정을 따릅니다.' },
+  { v: 'corporate',         label: '법인차량',                  desc: '거리 증빙만 산출합니다. (국세청 업무용승용차 운행기록부)' },
+  { v: 'private_allowance', label: '개인차량 + 자가운전보조금',  desc: '월 20만원 비과세 보조금 수령. 거리 증빙만 산출합니다.' },
+  { v: 'private_actual',    label: '개인차량 + 실비 정산',        desc: 'km당 단가(있으면) 또는 연비·유가 기준으로 금액을 계산합니다.' }
+];
+function _mypVehicleLabel(v) {
+  for (var i = 0; i < MYP_VEHICLE_TYPES.length; i++) if (MYP_VEHICLE_TYPES[i].v === (v || '')) return MYP_VEHICLE_TYPES[i].label;
+  return '미설정';
+}
+function _mypNum(v) { return (v === null || v === undefined || v === '') ? '' : String(v); }
+
+function _mypRenderVehicleForm(p) {
+  var vt = p.vehicle_type || '';
+  return '<div class="mt-6 pt-5 border-t border-slate-200">' +
+    '<div class="flex items-center gap-2 mb-3">' +
+      '<i class="fas fa-car text-slate-400"></i>' +
+      '<span class="text-[13px] font-bold text-slate-700">차량 정보</span>' +
+      '<span class="text-[11px] text-slate-400">출장 거리·유류비 정산에 사용됩니다</span>' +
+    '</div>' +
+    '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+      '<div class="col-span-full"><label class="input-label">차량 형태</label>' +
+        '<select name="vehicle_type" id="myp-vehicle-type" class="input" onchange="_mypVehicleToggle()">' +
+          MYP_VEHICLE_TYPES.map(function(o) {
+            return '<option value="' + csEsc(o.v) + '"' + (vt === o.v ? ' selected' : '') + '>' + csEsc(o.label) + '</option>';
+          }).join('') +
+        '</select>' +
+        '<div id="myp-vehicle-hint" class="text-[11px] mt-1.5"></div>' +
+      '</div>' +
+      '<div><label class="input-label">차종</label><input name="vehicle_model" type="text" value="' + csEsc(p.vehicle_model || '') + '" class="input" placeholder="예: 아이오닉5" maxlength="200"></div>' +
+      '<div><label class="input-label">자동차 등록번호</label><input name="vehicle_plate" type="text" value="' + csEsc(p.vehicle_plate || '') + '" class="input" placeholder="예: 12가 3456" maxlength="200"></div>' +
+      '<div id="myp-veh-rate" class="col-span-full grid grid-cols-1 sm:grid-cols-3 gap-3">' +
+        '<div><label class="input-label">km당 단가 (원)</label><input name="travel_rate_per_km" type="number" step="1" min="0" max="100000" value="' + csEsc(_mypNum(p.travel_rate_per_km)) + '" class="input" placeholder="예: 300"><div class="text-[10px] text-slate-400 mt-1">입력 시 이 단가로 정산</div></div>' +
+        '<div><label class="input-label">연비 (km/L)</label><input name="vehicle_fuel_efficiency" type="number" step="0.1" min="0" max="100" value="' + csEsc(_mypNum(p.vehicle_fuel_efficiency)) + '" class="input" placeholder="예: 12"><div class="text-[10px] text-slate-400 mt-1">단가 미입력 시 사용</div></div>' +
+        '<div><label class="input-label">유가 (원/L)</label><input name="vehicle_fuel_price" type="number" step="1" min="0" max="100000" value="' + csEsc(_mypNum(p.vehicle_fuel_price)) + '" class="input" placeholder="예: 1700"><div class="text-[10px] text-slate-400 mt-1">비우면 전역 설정 사용</div></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function _mypVehicleToggle() {
+  var sel = document.getElementById('myp-vehicle-type');
+  var hint = document.getElementById('myp-vehicle-hint');
+  var rate = document.getElementById('myp-veh-rate');
+  if (!sel) return;
+  var v = sel.value || '';
+  var meta = null;
+  for (var i = 0; i < MYP_VEHICLE_TYPES.length; i++) if (MYP_VEHICLE_TYPES[i].v === v) meta = MYP_VEHICLE_TYPES[i];
+  if (hint && meta) {
+    if (v === 'private_allowance') {
+      hint.className = 'text-[11px] mt-1.5 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 leading-relaxed';
+      hint.innerHTML = '<i class="fas fa-triangle-exclamation mr-1"></i><b>세무 주의</b> — 자가운전보조금(월 20만원 비과세)을 받는 경우 유류비·통행료를 실비로 <b>함께</b> 지급하면 20만원 전액이 과세 대상으로 전환됩니다. 이 형태는 금액 정산 없이 <b>거리 증빙만</b> 산출합니다.';
+    } else if (v === '') {
+      hint.className = 'text-[11px] mt-1.5 text-slate-500';
+      hint.innerHTML = '<i class="fas fa-circle-info mr-1 text-slate-400"></i>' + csEsc(meta.desc) + ' 정확한 증빙을 위해 형태를 선택해 주세요.';
+    } else {
+      hint.className = 'text-[11px] mt-1.5 text-slate-500';
+      hint.innerHTML = '<i class="fas fa-circle-info mr-1 text-slate-400"></i>' + csEsc(meta.desc);
+    }
+  }
+  // 실비 정산일 때만 단가/연비/유가 입력 노출
+  if (rate) rate.style.display = (v === 'private_actual') ? '' : 'none';
+}
+
+function _mypRenderVehicleView(p) {
+  var vt = p.vehicle_type || '';
+  var badgeCls = vt === 'corporate' ? 'bg-blue-50 text-blue-700 border-blue-200'
+    : vt === 'private_allowance' ? 'bg-amber-50 text-amber-700 border-amber-200'
+    : vt === 'private_actual' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+    : 'bg-slate-100 text-slate-500 border-slate-200';
+  var money = function(n) { return Number(n).toLocaleString('ko-KR'); };
+  var settle = '';
+  if (vt === 'private_actual') {
+    if (p.travel_rate_per_km !== null && p.travel_rate_per_km !== undefined && Number(p.travel_rate_per_km) > 0) {
+      settle = 'km당 ' + money(p.travel_rate_per_km) + '원';
+    } else if (p.vehicle_fuel_efficiency || p.vehicle_fuel_price) {
+      settle = '연비 기준 ' + (p.vehicle_fuel_efficiency ? p.vehicle_fuel_efficiency + 'km/L' : '전역') + ' · ' + (p.vehicle_fuel_price ? money(p.vehicle_fuel_price) + '원/L' : '전역 유가');
+    } else {
+      settle = '전역 설정(연비 기준)';
+    }
+  } else if (vt === '') {
+    settle = '전역 설정';
+  } else {
+    settle = '거리 증빙만';
+  }
+  return '<div class="mt-4 pt-3 border-t border-slate-200/70">' +
+    '<div class="flex items-center flex-wrap gap-2 text-[12px]">' +
+      '<i class="fas fa-car text-slate-400 text-[11px]"></i>' +
+      '<span class="text-slate-500 font-medium">차량</span>' +
+      '<span class="px-2 py-0.5 rounded-full border text-[11px] font-semibold ' + badgeCls + '">' + csEsc(_mypVehicleLabel(vt)) + '</span>' +
+      (p.vehicle_model ? '<span class="text-slate-700 font-semibold">' + csEsc(p.vehicle_model) + '</span>' : '') +
+      (p.vehicle_plate ? '<span class="font-mono text-[11px] text-slate-600 bg-white/70 border border-slate-200 rounded px-1.5 py-0.5">' + csEsc(p.vehicle_plate) + '</span>' : '') +
+      '<span class="text-slate-400">·</span>' +
+      '<span class="text-slate-600">정산: ' + csEsc(settle) + '</span>' +
+    '</div>' +
+    (vt === 'private_allowance' ? '<div class="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 leading-relaxed"><i class="fas fa-triangle-exclamation mr-1"></i>자가운전보조금 수령 중 — 유류비·통행료 실비를 함께 받으면 월 20만원이 과세 전환됩니다.</div>' : '') +
+    (vt === '' ? '<div class="mt-2 text-[11px] text-slate-500"><i class="fas fa-circle-info mr-1 text-slate-400"></i>차량 형태를 설정하면 출장 정산 보고서에 차종·등록번호·정산 방식이 자동 반영됩니다.</div>' : '') +
+  '</div>';
 }
 
 function _mypStartEdit() { _mypageEditing = true; renderMypage(); }

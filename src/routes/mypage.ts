@@ -26,9 +26,12 @@ mypage.get('/', async (c) => {
   if (auth instanceof Response) return auth
   const { userId, sessionId } = auth as any
 
-  // 1) 프로필
+  // 1) 프로필 (차량 정보 포함 — 출장 거리 정산용)
   const profile = await c.env.DB.prepare(`
-    SELECT id, name, email, phone, department, position, job_role, avatar_url, bio, created_at, updated_at
+    SELECT id, name, email, phone, department, position, job_role, avatar_url, bio,
+           vehicle_type, vehicle_model, vehicle_plate,
+           travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
+           created_at, updated_at
     FROM users WHERE id=?
   `).bind(userId).first()
   if (!profile) return apiError(c, 404, '사용자를 찾을 수 없습니다', ErrorCodes.NOT_FOUND)
@@ -113,8 +116,14 @@ mypage.get('/', async (c) => {
 // ─────────────────────────────────────────────────────────────
 // PUT /api/mypage — 프로필 수정
 //   허용 필드: name, phone, department, position, job_role, avatar_url, bio
+//   차량 정보(출장 거리 정산용): vehicle_type, vehicle_model, vehicle_plate,
+//     travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price
 //   (email은 로그인 계정이라 별도 프로세스 필요 — 여기선 수정 불가)
 // ─────────────────────────────────────────────────────────────
+
+/** 차량 형태 허용값 — 이 외의 값이 들어오면 거부합니다. */
+const VEHICLE_TYPES = ['', 'corporate', 'private_allowance', 'private_actual']
+
 mypage.put('/', async (c) => {
   const auth = await requireUser(c)
   if (auth instanceof Response) return auth
@@ -122,6 +131,31 @@ mypage.put('/', async (c) => {
 
   const body = await c.req.json().catch(() => ({}))
   const { name, phone, department, position, job_role, avatar_url, bio } = body || {}
+  const {
+    vehicle_type, vehicle_model, vehicle_plate,
+    travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
+  } = body || {}
+
+  // 차량 형태 검증
+  if (vehicle_type !== undefined && vehicle_type !== null) {
+    if (!VEHICLE_TYPES.includes(String(vehicle_type))) {
+      return apiError(c, 400, '차량 형태 값이 올바르지 않습니다.', ErrorCodes.VALIDATION)
+    }
+  }
+
+  // 숫자 필드 검증 — 빈 문자열은 "전역 설정 따름"(NULL) 으로 처리합니다.
+  const numFields: [string, any, number][] = [
+    ['km당 단가', travel_rate_per_km, 100000],
+    ['연비', vehicle_fuel_efficiency, 100],
+    ['유가', vehicle_fuel_price, 100000],
+  ]
+  for (const [label, v, max] of numFields) {
+    if (v === undefined || v === null || String(v).trim() === '') continue
+    const n = Number(v)
+    if (!isFinite(n)) return apiError(c, 400, `${label}는 숫자로 입력해주세요.`, ErrorCodes.VALIDATION)
+    if (n < 0) return apiError(c, 400, `${label}는 0 이상이어야 합니다.`, ErrorCodes.VALIDATION)
+    if (n > max) return apiError(c, 400, `${label} 값이 너무 큽니다.`, ErrorCodes.VALIDATION)
+  }
 
   // 이름 검증
   if (name !== undefined) {
@@ -142,7 +176,8 @@ mypage.put('/', async (c) => {
   // 길이 검증 (간단)
   const strFields: [string, any][] = [
     ['phone', phone], ['department', department], ['position', position],
-    ['job_role', job_role], ['bio', bio]
+    ['job_role', job_role], ['bio', bio],
+    ['vehicle_model', vehicle_model], ['vehicle_plate', vehicle_plate]
   ]
   for (const [k, v] of strFields) {
     if (v !== undefined && v !== null && typeof v !== 'string') {
@@ -161,6 +196,13 @@ mypage.put('/', async (c) => {
     sets.push(`${col} = ?`)
     params.push(val === '' ? null : (typeof val === 'string' ? val.trim() : val))
   }
+  // 숫자 컬럼 전용 — 빈 값은 NULL(= 전역 설정 따름), 값이 있으면 Number 로 저장
+  const pushNum = (col: string, val: any) => {
+    if (val === undefined) return
+    const empty = val === null || String(val).trim() === ''
+    sets.push(`${col} = ?`)
+    params.push(empty ? null : Number(val))
+  }
   push('name', name)
   push('phone', phone)
   push('department', department)
@@ -168,6 +210,13 @@ mypage.put('/', async (c) => {
   push('job_role', job_role)
   push('avatar_url', avatar_url)
   push('bio', bio)
+  push('vehicle_type', vehicle_type)
+  push('vehicle_model', vehicle_model)
+  push('vehicle_plate', vehicle_plate)
+  // 숫자 필드: 빈 문자열 → NULL (전역 설정 따름). push() 가 '' 를 NULL 로 바꿔주므로 그대로 전달.
+  pushNum('travel_rate_per_km', travel_rate_per_km)
+  pushNum('vehicle_fuel_efficiency', vehicle_fuel_efficiency)
+  pushNum('vehicle_fuel_price', vehicle_fuel_price)
 
   if (!sets.length) {
     return c.json({ data: { updated: false } })
@@ -183,7 +232,10 @@ mypage.put('/', async (c) => {
   } catch (_) {}
 
   const updated = await c.env.DB.prepare(`
-    SELECT id, name, email, phone, department, position, job_role, avatar_url, bio, created_at, updated_at
+    SELECT id, name, email, phone, department, position, job_role, avatar_url, bio,
+           vehicle_type, vehicle_model, vehicle_plate,
+           travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
+           created_at, updated_at
     FROM users WHERE id=?
   `).bind(userId).first()
   return c.json({ data: updated })
