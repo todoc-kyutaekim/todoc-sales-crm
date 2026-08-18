@@ -462,6 +462,7 @@ function nav(p) {
     cistats: loadCIStats,
     activity: loadActivity,
     schedule: loadSchedule,
+    travel: loadTravel,
     products: loadProducts,
     customers: loadCustomers,
     cs_dashboard: loadCsDash,
@@ -13859,4 +13860,422 @@ function _csDashSetPeriod(p) {
 function _csDashToggleMine() {
   _csDashState.mine = !_csDashState.mine;
   _csDashFetchAndRender();
+}
+
+// ============================================================
+// ===== 출장 거리 정산 (유류비·톨게이트 증빙) =====
+// ============================================================
+// 재무팀 제출용 운행기록부를 만드는 화면입니다.
+// 거리는 카카오모빌리티 길찾기 API 로 실제 도로 주행거리를 산출하고,
+// API 로 알 수 없는 값(계기판 누적거리·실제 통행료·주유금액)만 사용자가 채웁니다.
+// 정산 방식(금액 산출 여부·단가)은 담당자의 차량 형태에 따라 자동 결정되며,
+// 차량 형태는 마이페이지에서 입력합니다.
+var _trvState = {
+  from: '', to: '', userId: '',
+  days: null, summary: null, settings: null,
+  users: [], loading: false
+};
+
+function _trvFmtDate(d) {
+  var pad = function(n) { return String(n).padStart(2, '0'); };
+  return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+// 재무 정산은 '지난 달' 마감이 가장 흔하므로 기본값을 지난 달로 둡니다.
+function _trvDefaultRange() {
+  var t = new Date();
+  var start = new Date(t.getFullYear(), t.getMonth() - 1, 1);
+  var end = new Date(t.getFullYear(), t.getMonth(), 0);
+  return { from: _trvFmtDate(start), to: _trvFmtDate(end) };
+}
+function _trvPresets() {
+  var t = new Date();
+  var f = _trvFmtDate;
+  return {
+    thisMonth:  { from: f(new Date(t.getFullYear(), t.getMonth(), 1)), to: f(t), label: '이번 달' },
+    lastMonth:  { from: f(new Date(t.getFullYear(), t.getMonth() - 1, 1)), to: f(new Date(t.getFullYear(), t.getMonth(), 0)), label: '지난 달' },
+    thisQuarter:{ from: f(new Date(t.getFullYear(), Math.floor(t.getMonth() / 3) * 3, 1)), to: f(t), label: '이번 분기' },
+    thisYear:   { from: f(new Date(t.getFullYear(), 0, 1)), to: f(t), label: '올해' }
+  };
+}
+function trvSetPreset(k) {
+  var p = _trvPresets()[k];
+  if (!p) return;
+  document.getElementById('trv-from').value = p.from;
+  document.getElementById('trv-to').value = p.to;
+}
+
+async function loadTravel() {
+  var c = document.getElementById('content');
+  document.getElementById('page-title').textContent = '출장 거리 정산';
+  document.getElementById('page-subtitle').textContent = '유류비·통행료 증빙용 운행기록부';
+
+  if (!_trvState.from) {
+    var r = _trvDefaultRange();
+    _trvState.from = r.from; _trvState.to = r.to;
+  }
+  c.innerHTML = '<div class="p-4 lg:p-6 max-w-6xl mx-auto"><div class="card p-8 text-center text-slate-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>불러오는 중...</div></div>';
+
+  // 설정(출발지·정산 방식)과 담당자 목록을 함께 읽습니다.
+  try {
+    var res = await Promise.all([ API.get('/travel/settings'), API.get('/users') ]);
+    _trvState.settings = res[0].data.data;
+    _trvState.resolved = res[0].data.resolved;
+    _trvState.vehicle = res[0].data.vehicle;
+    _trvState.kakao = res[0].data.kakao_configured;
+    _trvState.users = res[1].data.data || [];
+  } catch (e) {
+    _trvState.settings = null;
+  }
+  renderTravel();
+}
+
+function renderTravel() {
+  var c = document.getElementById('content');
+  var s = _trvState.settings;
+  var userOpts = '<option value="">전체 담당자</option>' +
+    _trvState.users.map(function(u) {
+      return '<option value="' + u.id + '"' + (String(_trvState.userId) === String(u.id) ? ' selected' : '') + '>' + csEsc(u.name) + '</option>';
+    }).join('');
+
+  var html = '<div class="p-4 lg:p-6 max-w-6xl mx-auto">';
+
+  // 카카오 키 미설정 경고
+  if (_trvState.kakao === false) {
+    html += '<div class="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[12px] text-red-700">' +
+      '<i class="fas fa-triangle-exclamation mr-1.5"></i><b>거리 계산을 할 수 없습니다.</b> 카카오 길찾기 API 키가 서버에 설정되지 않았습니다. 관리자에게 문의해주세요.' +
+    '</div>';
+  }
+
+  // ── 조회 조건 카드 ──
+  html += '<div class="card p-5 lg:p-6 mb-5">' +
+    '<div class="flex items-center gap-3 mb-5">' +
+      '<div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#0ea5e9,#0369a1)">' +
+        '<i class="fas fa-gas-pump text-white"></i>' +
+      '</div>' +
+      '<div class="min-w-0">' +
+        '<h3 class="font-bold text-slate-800 text-[15px]">출장 거리 정산</h3>' +
+        '<p class="text-xs text-slate-400">방문 미팅 기록으로 일자별 실제 도로 주행거리를 산출합니다 · <span class="text-sky-600 font-medium">카카오모빌리티 길찾기</span></p>' +
+      '</div>' +
+    '</div>' +
+    '<div class="flex flex-col sm:flex-row gap-3 mb-3">' +
+      '<div class="flex-1 min-w-0">' +
+        '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">정산 기간</label>' +
+        '<div class="flex items-center gap-1.5">' +
+          '<input type="date" id="trv-from" class="input w-full !min-w-0" value="' + csEsc(_trvState.from) + '">' +
+          '<span class="text-slate-400 text-xs flex-shrink-0">~</span>' +
+          '<input type="date" id="trv-to" class="input w-full !min-w-0" value="' + csEsc(_trvState.to) + '">' +
+        '</div>' +
+        '<div class="flex flex-wrap gap-1 mt-1.5">' +
+          Object.keys(_trvPresets()).map(function(k) {
+            return '<button type="button" class="text-[10px] px-2 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-slate-600" onclick="trvSetPreset(\'' + k + '\')">' + _trvPresets()[k].label + '</button>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      '<div class="sm:w-48">' +
+        '<label class="text-xs font-semibold text-slate-500 mb-1.5 block">담당자</label>' +
+        '<select id="trv-user" class="input w-full">' + userOpts + '</select>' +
+      '</div>' +
+      '<div class="flex items-end gap-2">' +
+        '<button onclick="trvFetch()" class="btn btn-primary whitespace-nowrap h-[42px]"><i class="fas fa-calculator mr-1.5"></i>거리 산출</button>' +
+      '</div>' +
+    '</div>' +
+    // 출발지 / 내 정산 방식 요약
+    '<div class="flex flex-wrap items-center gap-x-4 gap-y-2 pt-3 border-t border-slate-100 text-[11px]">' +
+      '<span class="text-slate-500"><i class="fas fa-location-dot text-slate-400 mr-1"></i>출발지 ' +
+        (s && s.origin_name ? '<b class="text-slate-700">' + csEsc(s.origin_name) + '</b>' : '<span class="text-amber-600 font-semibold">미설정</span> <span class="text-slate-400">(그 날 첫 방문지부터 계산)</span>') +
+      '</span>' +
+      (s ? '<span class="text-slate-500"><i class="fas fa-rotate-left text-slate-400 mr-1"></i>복귀 구간 ' + (s.include_return ? '<b class="text-slate-700">포함</b>' : '<span class="text-slate-400">미포함</span>') + '</span>' : '') +
+      (_trvState.resolved ? '<span class="text-slate-500"><i class="fas fa-car text-slate-400 mr-1"></i>내 정산 <b class="text-slate-700">' + csEsc(_trvState.resolved.label) + '</b></span>' : '') +
+      '<button onclick="trvOpenSettings()" class="text-[11px] text-sky-600 hover:text-sky-700 font-semibold ml-auto"><i class="fas fa-gear mr-1"></i>출발지 설정</button>' +
+      '<button onclick="nav(\'mypage\')" class="text-[11px] text-slate-500 hover:text-slate-700 font-semibold"><i class="fas fa-user-circle mr-1"></i>내 차량 정보</button>' +
+    '</div>' +
+  '</div>';
+
+  html += '<div id="trv-result">' + _trvRenderResult() + '</div>';
+  html += '</div>';
+  c.innerHTML = html;
+}
+
+function _trvRenderResult() {
+  if (_trvState.loading) {
+    return '<div class="card p-10 text-center text-slate-400 text-sm"><i class="fas fa-spinner fa-spin mr-2"></i>카카오 길찾기로 실제 주행거리를 계산하고 있습니다...</div>';
+  }
+  if (!_trvState.days) {
+    return '<div class="card p-10 text-center">' +
+      '<i class="fas fa-route text-3xl text-slate-200 mb-3 block"></i>' +
+      '<div class="text-sm text-slate-500 font-medium">정산 기간을 선택하고 <b>거리 산출</b>을 눌러주세요</div>' +
+      '<div class="text-[11px] text-slate-400 mt-1.5">미팅 관리에 <b>방문</b>으로 기록된 일정만 집계됩니다</div>' +
+    '</div>';
+  }
+  if (_trvState.days.length === 0) {
+    return '<div class="card p-10 text-center">' +
+      '<i class="fas fa-calendar-xmark text-3xl text-slate-200 mb-3 block"></i>' +
+      '<div class="text-sm text-slate-500 font-medium">해당 기간에 방문 기록이 없습니다</div>' +
+      '<div class="text-[11px] text-slate-400 mt-1.5">미팅 유형이 <b>방문</b>인 기록만 집계합니다. 기간이나 담당자를 바꿔보세요.</div>' +
+    '</div>';
+  }
+
+  var sm = _trvState.summary || {};
+  var showAmount = _trvState.days.some(function(d) { return d.rule && d.rule.mode !== 'none'; });
+  var h = '';
+
+  // ── 요약 통계 ──
+  var cards = [
+    { label: '운행 일수', val: sm.days + '일', icon: 'fa-calendar-day', color: '#3b82f6' },
+    { label: '총 주행거리', val: fmtNum(sm.total_km) + ' km', icon: 'fa-road', color: '#0ea5e9' },
+    { label: '추정 통행료', val: fmtNum(sm.total_toll) + '원', icon: 'fa-ticket', color: '#8b5cf6' }
+  ];
+  if (showAmount) cards.push({ label: '정산 금액', val: fmtNum(sm.total_amount) + '원', icon: 'fa-won-sign', color: '#10b981' });
+  h += '<div class="grid grid-cols-2 ' + (showAmount ? 'lg:grid-cols-4' : 'lg:grid-cols-3') + ' gap-3 mb-4">' +
+    cards.map(function(c) {
+      return '<div class="card p-4">' +
+        '<div class="flex items-center gap-2 mb-1.5"><i class="fas ' + c.icon + ' text-[11px]" style="color:' + c.color + '"></i>' +
+        '<span class="text-[11px] text-slate-400 font-medium">' + c.label + '</span></div>' +
+        '<div class="text-[19px] font-bold text-slate-800">' + c.val + '</div>' +
+      '</div>';
+    }).join('') +
+  '</div>';
+
+  // ── 세무 경고 ──
+  if (sm.warnings && sm.warnings.length) {
+    h += '<div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">' +
+      '<div class="text-[12px] font-bold text-amber-800 mb-1.5"><i class="fas fa-triangle-exclamation mr-1.5"></i>확인이 필요합니다</div>' +
+      sm.warnings.map(function(w) { return '<div class="text-[11px] text-amber-700 leading-relaxed mt-1">· ' + csEsc(w) + '</div>'; }).join('') +
+    '</div>';
+  }
+  // ── 좌표 미등록 기관 ──
+  if (sm.missing_coords && sm.missing_coords.length) {
+    h += '<div class="mb-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">' +
+      '<div class="text-[12px] font-bold text-orange-800 mb-1"><i class="fas fa-location-crosshairs mr-1.5"></i>좌표가 없어 경로에서 제외된 기관 ' + sm.missing_coords.length + '곳</div>' +
+      '<div class="text-[11px] text-orange-700 leading-relaxed">' + sm.missing_coords.map(csEsc).join(', ') + '</div>' +
+      '<div class="text-[11px] text-orange-600 mt-1.5">기관 관리에서 위도·경도를 입력하면 다음 산출에 반영됩니다. <button onclick="nav(\'hospitals\')" class="underline font-semibold">기관 관리로 이동</button></div>' +
+    '</div>';
+  }
+  // ── 계산 실패 ──
+  if (sm.failed) {
+    h += '<div class="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] text-red-700">' +
+      '<i class="fas fa-circle-exclamation mr-1.5"></i><b>' + sm.failed + '일</b>의 거리 계산이 실패했습니다. 아래 표의 비고를 확인해주세요.' +
+    '</div>';
+  }
+
+  // ── 다운로드 ──
+  h += '<div class="card p-4 mb-4 flex flex-wrap items-center gap-2">' +
+    '<span class="text-[12px] font-semibold text-slate-600 mr-1"><i class="fas fa-file-export text-slate-400 mr-1.5"></i>재무팀 제출용 보고서</span>' +
+    '<button onclick="trvDownload(\'xlsx\')" class="btn btn-primary btn-sm"><i class="fas fa-file-excel mr-1"></i>엑셀 (XLSX)</button>' +
+    '<button onclick="trvDownload(\'csv\')" class="btn btn-outline btn-sm"><i class="fas fa-file-csv mr-1"></i>CSV</button>' +
+    '<span class="text-[10px] text-slate-400 ml-auto">국세청 업무용승용차 운행기록부 항목 포함</span>' +
+  '</div>';
+
+  // ── 일자별 표 ──
+  h += '<div class="card overflow-hidden mb-4">' +
+    '<div class="px-4 py-3 border-b border-slate-100 flex items-center justify-between">' +
+      '<span class="text-[13px] font-bold text-slate-700">일자별 운행기록</span>' +
+      '<span class="text-[10px] text-slate-400">계기판 값은 직접 입력해야 합니다</span>' +
+    '</div>' +
+    '<div class="overflow-x-auto"><table class="w-full text-[12px]">' +
+      '<thead><tr class="bg-slate-50 text-slate-500 text-[11px]">' +
+        '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">사용일자</th>' +
+        '<th class="px-3 py-2 text-left font-semibold whitespace-nowrap">운전자</th>' +
+        '<th class="px-3 py-2 text-left font-semibold">행선지 (방문 순서)</th>' +
+        '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">주행거리</th>' +
+        '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">계기판</th>' +
+        '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">통행료</th>' +
+        (showAmount ? '<th class="px-3 py-2 text-right font-semibold whitespace-nowrap">정산액</th>' : '') +
+        '<th class="px-3 py-2 text-center font-semibold whitespace-nowrap">입력</th>' +
+      '</tr></thead><tbody>' +
+      _trvState.days.map(_trvRow).join('') +
+    '</tbody></table></div>' +
+  '</div>';
+
+  h += '<div class="text-[10px] text-slate-400 leading-relaxed px-1">' +
+    '· 주행거리는 카카오모빌리티 길찾기 API 의 <b>실제 도로 경로</b> 기준입니다 (직선거리 아님).<br>' +
+    '· 통행료는 카카오 <b>추정치</b>입니다. 재무팀 증빙은 하이패스 이용내역을 기준으로 하고, 실제 금액은 <b>입력</b> 버튼으로 채워주세요.<br>' +
+    '· 좌표가 없는 기관은 경로에서 제외되므로 실제보다 거리가 짧게 나올 수 있습니다.' +
+  '</div>';
+  return h;
+}
+
+function _trvRow(d, i) {
+  var log = d.log || {};
+  var showAmount = _trvState.days.some(function(x) { return x.rule && x.rule.mode !== 'none'; });
+  var odoDist = (log.odo_start != null && log.odo_end != null) ? (log.odo_end - log.odo_start) : null;
+  // 계기판 거리가 경로 산출 거리보다 짧으면 입력 오류 가능성이 높습니다 (업무사용비율 100% 초과 방지).
+  var odoShort = odoDist != null && d.distance_km > 0 && odoDist < d.distance_km;
+  var odo = odoDist != null
+    ? fmtNum(odoDist) + ' km' + (odoShort ? '<div class="text-[9px] text-amber-600 font-semibold">경로보다 짧음</div>' : '')
+    : '<span class="text-amber-600 font-semibold text-[11px]">미입력</span>';
+  var stops = (d.stops || []).map(function(s) {
+    var cls = s.is_origin || s.is_return ? 'text-slate-400' : 'text-slate-700';
+    return '<span class="' + cls + '">' + csEsc(s.name) + '</span>';
+  }).join('<i class="fas fa-angle-right text-slate-300 mx-1 text-[9px]"></i>');
+  var tollCell = d.toll ? fmtNum(d.toll) + '원' : '-';
+  if (log.toll_amount != null) tollCell = '<b class="text-slate-800">' + fmtNum(log.toll_amount) + '원</b><div class="text-[9px] text-slate-400">실제</div>';
+  else if (d.toll) tollCell = '<span class="text-slate-500">' + fmtNum(d.toll) + '원</span><div class="text-[9px] text-slate-400">추정</div>';
+
+  return '<tr class="border-t border-slate-50 hover:bg-slate-50/60">' +
+    '<td class="px-3 py-2.5 whitespace-nowrap font-semibold text-slate-700">' + csEsc(d.date) + '</td>' +
+    '<td class="px-3 py-2.5 whitespace-nowrap">' +
+      '<div class="text-slate-700">' + csEsc(d.user_name || '-') + '</div>' +
+      (d.vehicle && d.vehicle.vehicle_model ? '<div class="text-[10px] text-slate-400">' + csEsc(d.vehicle.vehicle_model) + '</div>' : '') +
+    '</td>' +
+    '<td class="px-3 py-2.5 min-w-[240px]">' + stops +
+      (d.error ? '<div class="text-[10px] text-red-600 mt-1"><i class="fas fa-circle-exclamation mr-1"></i>' + csEsc(d.error) + '</div>' : '') +
+      (d.missing_coords && d.missing_coords.length ? '<div class="text-[10px] text-orange-600 mt-1"><i class="fas fa-location-crosshairs mr-1"></i>좌표 없어 제외: ' + d.missing_coords.map(csEsc).join(', ') + '</div>' : '') +
+      (odoShort ? '<div class="text-[10px] text-amber-600 mt-1"><i class="fas fa-triangle-exclamation mr-1"></i>계기판 거리(' + fmtNum(odoDist) + 'km)가 경로 거리(' + d.distance_km + 'km)보다 짧습니다</div>' : '') +
+    '</td>' +
+    '<td class="px-3 py-2.5 text-right whitespace-nowrap">' +
+      (d.distance_km ? '<b class="text-slate-800">' + d.distance_km + '</b> <span class="text-[10px] text-slate-400">km</span>' : '<span class="text-slate-300">-</span>') +
+      (d.duration_min ? '<div class="text-[9px] text-slate-400">' + d.duration_min + '분</div>' : '') +
+    '</td>' +
+    '<td class="px-3 py-2.5 text-right whitespace-nowrap">' + odo + '</td>' +
+    '<td class="px-3 py-2.5 text-right whitespace-nowrap">' + tollCell + '</td>' +
+    (showAmount ? '<td class="px-3 py-2.5 text-right whitespace-nowrap">' + (d.amount ? '<b class="text-emerald-700">' + fmtNum(d.amount) + '원</b>' : '<span class="text-slate-300">-</span>') + '</td>' : '') +
+    '<td class="px-3 py-2.5 text-center whitespace-nowrap">' +
+      '<button onclick="trvOpenLog(' + i + ')" class="text-[11px] px-2 py-1 rounded-lg ' +
+        (log.id ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : 'bg-sky-50 text-sky-700 hover:bg-sky-100 font-semibold') + '">' +
+        '<i class="fas ' + (log.id ? 'fa-pen' : 'fa-plus') + ' mr-1"></i>' + (log.id ? '수정' : '입력') +
+      '</button>' +
+    '</td>' +
+  '</tr>';
+}
+
+async function trvFetch() {
+  var from = document.getElementById('trv-from').value;
+  var to = document.getElementById('trv-to').value;
+  var uid = document.getElementById('trv-user').value;
+  if (!from || !to) { toast('정산 기간을 선택해주세요', 'error'); return; }
+  if (from > to) { toast('시작일이 종료일보다 늦습니다', 'error'); return; }
+  _trvState.from = from; _trvState.to = to; _trvState.userId = uid;
+  _trvState.loading = true;
+  document.getElementById('trv-result').innerHTML = _trvRenderResult();
+  try {
+    var qs = 'from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to) + (uid ? '&user_id=' + encodeURIComponent(uid) : '');
+    var r = await API.get('/travel/daily?' + qs);
+    _trvState.days = r.data.data || [];
+    _trvState.summary = r.data.summary || {};
+    _trvState.settings = r.data.settings || _trvState.settings;
+  } catch (e) {
+    var msg = (e && e.response && e.response.data && (e.response.data.message || e.response.data.error)) || '거리 산출에 실패했습니다';
+    toast(msg, 'error');
+    _trvState.days = null;
+  }
+  _trvState.loading = false;
+  document.getElementById('trv-result').innerHTML = _trvRenderResult();
+}
+
+function trvDownload(format) {
+  var qs = 'from=' + encodeURIComponent(_trvState.from) + '&to=' + encodeURIComponent(_trvState.to) +
+    (_trvState.userId ? '&user_id=' + encodeURIComponent(_trvState.userId) : '') + '&format=' + format;
+  window.open('/api/export/report/travel?' + _withSid(qs), '_blank');
+}
+
+// ── 계기판·실제 통행료·주유금액 입력 ──
+function trvOpenLog(i) {
+  var d = _trvState.days[i];
+  if (!d) return;
+  var log = d.log || {};
+  var veh = d.vehicle || {};
+  var v = function(x) { return (x === null || x === undefined) ? '' : String(x); };
+  openModal(csEsc(d.date) + ' 운행기록 입력',
+    '<form id="trv-log-form" onsubmit="return trvSaveLog(event,' + i + ')">' +
+      '<div class="rounded-xl bg-slate-50 px-3 py-2.5 mb-4 text-[11px] text-slate-600 leading-relaxed">' +
+        '<div><b class="text-slate-700">' + csEsc(d.user_name || '-') + '</b> · API 산출 주행거리 <b class="text-slate-700">' + (d.distance_km || 0) + ' km</b>' +
+        (d.toll ? ' · 카카오 추정 통행료 <b class="text-slate-700">' + fmtNum(d.toll) + '원</b>' : '') + '</div>' +
+        '<div class="mt-1 text-slate-500">' + (d.stops || []).map(function(s) { return csEsc(s.name); }).join(' → ') + '</div>' +
+      '</div>' +
+      '<div class="grid grid-cols-2 gap-3">' +
+        '<div><label class="input-label">차종</label><input name="vehicle_model" type="text" class="input" value="' + csEsc(v(log.vehicle_model) || v(veh.vehicle_model)) + '" placeholder="예: 아이오닉5" maxlength="200"></div>' +
+        '<div><label class="input-label">자동차 등록번호</label><input name="vehicle_plate" type="text" class="input" value="' + csEsc(v(log.vehicle_plate) || v(veh.vehicle_plate)) + '" placeholder="예: 12가 3456" maxlength="200"></div>' +
+        '<div><label class="input-label">주행 전 계기판 (km)</label><input name="odo_start" type="number" step="1" min="0" class="input" value="' + csEsc(v(log.odo_start)) + '" placeholder="예: 51230"></div>' +
+        '<div><label class="input-label">주행 후 계기판 (km)</label><input name="odo_end" type="number" step="1" min="0" class="input" value="' + csEsc(v(log.odo_end)) + '" placeholder="예: 51304"></div>' +
+        '<div><label class="input-label">실제 통행료 (원)</label><input name="toll_amount" type="number" step="1" min="0" class="input" value="' + csEsc(v(log.toll_amount)) + '" placeholder="하이패스 내역 기준"></div>' +
+        '<div><label class="input-label">주유 금액 (원)</label><input name="fuel_amount" type="number" step="1" min="0" class="input" value="' + csEsc(v(log.fuel_amount)) + '" placeholder="영수증 기준"></div>' +
+        '<div class="col-span-2"><label class="input-label">비고</label><input name="note" type="text" class="input" value="' + csEsc(v(log.note)) + '" placeholder="특이사항" maxlength="500"></div>' +
+      '</div>' +
+      '<div class="text-[10px] text-slate-400 mt-3 leading-relaxed">' +
+        '· 계기판 누적거리는 국세청 운행기록부 필수 항목입니다. 차량 계기판을 직접 확인해 입력해주세요.<br>' +
+        '· 실제 통행료를 입력하면 보고서에 추정치 대신 이 값이 증빙으로 들어갑니다.' +
+      '</div>' +
+      '<div class="flex gap-2 mt-5 justify-end">' +
+        '<button type="button" onclick="closeModal()" class="btn btn-outline btn-sm">취소</button>' +
+        '<button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-check mr-1"></i>저장</button>' +
+      '</div>' +
+    '</form>');
+}
+
+async function trvSaveLog(e, i) {
+  e.preventDefault();
+  var d = _trvState.days[i];
+  var fm = document.getElementById('trv-log-form');
+  if (!d || !fm) return false;
+  var f = Object.fromEntries(new FormData(fm));
+  f.log_date = d.date;
+  if (d.user_id) f.user_id = d.user_id;
+  // 계기판 역순은 서버에서도 막지만, 먼저 알려주는 편이 낫습니다.
+  if (f.odo_start !== '' && f.odo_end !== '' && Number(f.odo_end) < Number(f.odo_start)) {
+    toast('주행 후 계기판 값이 주행 전보다 작습니다', 'error');
+    return false;
+  }
+  try {
+    var r = await API.put('/travel/logs', f);
+    _trvState.days[i].log = r.data.data;
+    closeModal();
+    toast('운행기록이 저장되었습니다', 'success');
+    document.getElementById('trv-result').innerHTML = _trvRenderResult();
+  } catch (err) {
+    var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '저장 실패';
+    toast(msg, 'error');
+  }
+  return false;
+}
+
+// ── 출발지(사무실) 설정 ──
+function trvOpenSettings() {
+  var s = _trvState.settings || {};
+  var v = function(x) { return (x === null || x === undefined) ? '' : String(x); };
+  openModal('출장 정산 설정',
+    '<form id="trv-set-form" onsubmit="return trvSaveSettings(event)">' +
+      '<div class="text-[11px] text-slate-500 mb-4 leading-relaxed">' +
+        '출발지를 설정하면 매일 <b>사무실 → 첫 방문지</b> 구간이 주행거리에 포함됩니다. 비워두면 그 날 첫 방문지부터 계산합니다.' +
+      '</div>' +
+      '<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
+        '<div class="col-span-full"><label class="input-label">출발지 이름</label><input name="travel_origin_name" type="text" class="input" value="' + csEsc(v(s.origin_name)) + '" placeholder="예: 토닥 본사" maxlength="200"></div>' +
+        '<div class="col-span-full"><label class="input-label">출발지 주소</label><input name="travel_origin_address" type="text" class="input" value="' + csEsc(v(s.origin_address)) + '" placeholder="예: 서울특별시 강남구 …" maxlength="300"></div>' +
+        '<div><label class="input-label">위도 (lat)</label><input name="travel_origin_lat" type="number" step="0.0000001" class="input" value="' + csEsc(v(s.origin_lat)) + '" placeholder="37.5012"></div>' +
+        '<div><label class="input-label">경도 (lng)</label><input name="travel_origin_lng" type="number" step="0.0000001" class="input" value="' + csEsc(v(s.origin_lng)) + '" placeholder="127.0396"></div>' +
+      '</div>' +
+      '<div class="text-[10px] text-slate-400 mt-1.5 mb-4">카카오맵에서 장소를 우클릭 → <b>좌표 복사</b>로 확인할 수 있습니다. 위도·경도는 둘 다 입력하거나 둘 다 비워주세요.</div>' +
+      '<label class="flex items-center gap-2 text-[12px] text-slate-600 cursor-pointer">' +
+        '<input type="checkbox" name="travel_include_return" value="1" class="rounded"' + (s.include_return ? ' checked' : '') + '>' +
+        '<span>마지막 방문지 → 출발지 <b>복귀 구간</b>도 주행거리에 포함</span>' +
+      '</label>' +
+      '<div class="rounded-xl bg-sky-50 border border-sky-100 px-3 py-2.5 mt-4 text-[11px] text-sky-800 leading-relaxed">' +
+        '<i class="fas fa-circle-info mr-1"></i>정산 방식(금액 산출 여부·km당 단가·연비)은 담당자별 <b>차량 형태</b>에 따라 결정됩니다. ' +
+        '<button type="button" onclick="closeModal();nav(\'mypage\')" class="underline font-semibold">마이페이지</button>에서 입력해주세요.' +
+      '</div>' +
+      '<div class="flex gap-2 mt-5 justify-end">' +
+        '<button type="button" onclick="closeModal()" class="btn btn-outline btn-sm">취소</button>' +
+        '<button type="submit" class="btn btn-primary btn-sm"><i class="fas fa-check mr-1"></i>저장</button>' +
+      '</div>' +
+    '</form>');
+}
+
+async function trvSaveSettings(e) {
+  e.preventDefault();
+  var fm = document.getElementById('trv-set-form');
+  if (!fm) return false;
+  var f = Object.fromEntries(new FormData(fm));
+  // 체크박스는 해제 시 FormData 에 아예 없으므로 명시적으로 0 을 넣습니다.
+  f.travel_include_return = fm.travel_include_return.checked ? '1' : '0';
+  try {
+    var r = await API.put('/travel/settings', f);
+    _trvState.settings = r.data.data;
+    closeModal();
+    toast('설정이 저장되었습니다', 'success');
+    renderTravel();
+  } catch (err) {
+    var msg = (err && err.response && err.response.data && (err.response.data.message || err.response.data.error)) || '저장 실패';
+    toast(msg, 'error');
+  }
+  return false;
 }

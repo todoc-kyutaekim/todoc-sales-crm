@@ -237,6 +237,7 @@ const HTML = `<!DOCTYPE html>
     <div onclick="nav('doctors')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('doctors')}" id="n-doctors" class="nav-item" role="link" tabindex="0" aria-label="의료진 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-user-doctor"></i></span>의료진 관리</div>
     <div onclick="nav('meetings')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('meetings')}" id="n-meetings" class="nav-item" role="link" tabindex="0" aria-label="미팅 관리"><span class="nav-icon" aria-hidden="true"><i class="fas fa-calendar-check"></i></span>미팅 관리</div>
     <div onclick="nav('schedule')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('schedule')}" id="n-schedule" class="nav-item" role="link" tabindex="0" aria-label="일정 플래너"><span class="nav-icon" aria-hidden="true"><i class="fas fa-route"></i></span>일정 플래너</div>
+    <div onclick="nav('travel')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('travel')}" id="n-travel" class="nav-item" role="link" tabindex="0" aria-label="출장 거리 정산"><span class="nav-icon" aria-hidden="true"><i class="fas fa-gas-pump"></i></span>출장 거리 정산</div>
     <!-- 제품 관리 메뉴 — 임시 숨김 (코드/API/DB는 보존, 되살릴 때 hidden 만 제거) -->
     <div onclick="nav('products')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();nav('products')}" id="n-products" class="nav-item hidden" role="link" tabindex="0" aria-label="제품 관리" aria-hidden="true"><span class="nav-icon" aria-hidden="true"><i class="fas fa-box-archive"></i></span>제품 관리</div>
     <div class="h-px mx-5 my-3" style="background:linear-gradient(90deg,transparent,rgba(148,163,184,.12),transparent)" aria-hidden="true"></div>
@@ -339,6 +340,10 @@ const HTML = `<!DOCTYPE html>
     <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();nav('cistats')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();nav('cistats')}">
       <span class="fab-menu-label">CI 통계</span>
       <div class="fab-menu-icon bg-violet-500"><i class="fas fa-chart-bar" aria-hidden="true"></i></div>
+    </div>
+    <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();nav('travel')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();nav('travel')}">
+      <span class="fab-menu-label">출장 정산</span>
+      <div class="fab-menu-icon bg-sky-500"><i class="fas fa-gas-pump" aria-hidden="true"></i></div>
     </div>
     <div class="fab-menu-item" role="menuitem" tabindex="0" onclick="closeFabMenu();nav('activity')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();closeFabMenu();nav('activity')}">
       <span class="fab-menu-label">활동 로그</span>

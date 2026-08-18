@@ -1651,14 +1651,22 @@ exports.get('/report/travel', async (c) => {
     const amount = settleAmount(d.distance_km, settings, d.rule)
 
     // 업무용 사용거리: 영업 방문이므로 전 구간 업무용으로 봅니다.
-    // 계기판 값이 있으면 계기판 거리를, 없으면 API 거리를 기준으로 표기합니다.
+    // 총 주행거리는 계기판 값이 있으면 계기판 기준(국세청 서식 원칙), 없으면 API 거리입니다.
+    // 업무사용비율은 정의상 100%를 넘을 수 없으므로 업무용 거리를 총 주행거리로 상한 처리합니다.
     const baseDist = odoDist !== '' ? Number(odoDist) : d.distance_km
-    const bizDist = d.distance_km || ''
-    const bizRatio = (baseDist && d.distance_km) ? Math.round((d.distance_km / baseDist) * 1000) / 10 : ''
+    const odoShort = odoDist !== '' && d.distance_km > 0 && Number(odoDist) < d.distance_km
+    const bizDistNum = baseDist ? Math.min(d.distance_km || baseDist, baseDist) : 0
+    const bizDist = bizDistNum ? Math.round(bizDistNum * 10) / 10 : ''
+    const bizRatio = baseDist ? Math.min(100, Math.round((bizDistNum / baseDist) * 1000) / 10) : ''
 
     const noteParts: string[] = []
     if (d.error) noteParts.push(`거리 계산 실패: ${d.error}`)
     if (d.missing_coords.length) noteParts.push(`좌표 미등록: ${d.missing_coords.join(', ')}`)
+    if (odoShort) {
+      noteParts.push(
+        `계기판 주행거리(${odoDist}km)가 경로 산출 거리(${d.distance_km}km)보다 짧습니다 — 계기판 입력값 확인 필요`
+      )
+    }
     if (log.note) noteParts.push(String(log.note))
 
     // 차종·등록번호는 마이페이지 차량 정보를 기본값으로 쓰고,
