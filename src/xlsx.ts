@@ -16,8 +16,19 @@
 export type XlsxCell = {
   /** 값. number 는 숫자셀, string 은 inlineStr 로 씁니다. */
   v?: string | number | null
-  /** 수식 (앞의 '=' 는 제외). 값 대신 이걸 넣으면 엑셀이 열 때 계산합니다. */
+  /**
+   * 수식 (앞의 '=' 는 제외).
+   *
+   * 수식만 넣고 계산값을 비워두면 엑셀은 열 때 재계산해 주지만,
+   * 구글시트·미리보기·openpyxl(data_only) 같은 다른 도구는 빈칸으로 봅니다.
+   * 그래서 가능한 경우 `cv` 에 서버에서 계산한 값을 함께 넣습니다.
+   */
   f?: string
+  /**
+   * 수식의 계산 결과 캐시. 엑셀이 저장하는 `<v>` 와 같은 역할입니다.
+   * 값을 알 수 없으면 생략하세요 (엑셀은 열 때 재계산합니다).
+   */
+  cv?: number | string | null
   /** styles 배열의 인덱스 (0 = 기본) */
   s?: number
   /** 날짜 serial 로 저장할지. true 면 v 에 'YYYY-MM-DD' 를 주세요. */
@@ -331,7 +342,16 @@ function buildSheetXml(sh: XlsxSheet): string {
       const ref = colName(ci) + rn
       const sAttr = cell.s ? ` s="${cell.s}"` : ''
       if (cell.f) {
-        cells += `<c r="${ref}"${sAttr}><f>${xmlEsc(cell.f)}</f></c>`
+        // 계산값을 알면 함께 저장합니다 — 엑셀 밖(구글시트·미리보기)에서도 숫자가 보이도록.
+        const cv = cell.cv
+        if (typeof cv === 'number' && isFinite(cv)) {
+          cells += `<c r="${ref}"${sAttr}><f>${xmlEsc(cell.f)}</f><v>${cv}</v></c>`
+        } else if (typeof cv === 'string' && cv !== '') {
+          cells += `<c r="${ref}"${sAttr} t="str"><f>${xmlEsc(cell.f)}</f>` +
+            `<v>${xmlEsc(cv)}</v></c>`
+        } else {
+          cells += `<c r="${ref}"${sAttr}><f>${xmlEsc(cell.f)}</f></c>`
+        }
       } else if (!hasV) {
         cells += `<c r="${ref}"${sAttr}/>`
       } else if (cell.date) {

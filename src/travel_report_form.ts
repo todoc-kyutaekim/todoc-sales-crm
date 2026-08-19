@@ -141,7 +141,14 @@ export function fuelKindLabel(fuel?: string | null): string {
 // ── 셀 헬퍼 ──────────────────────────────────────────────────────────────────
 
 export const c = (v: string | number | null | undefined, s?: number): XlsxCell => ({ v, s })
-export const cf = (f: string, s?: number): XlsxCell => ({ f, s })
+/**
+ * 수식 셀. `cv` 에 서버에서 계산한 값을 함께 넣습니다.
+ *
+ * 수식만 넣으면 엑셀은 열 때 재계산하지만 구글시트·파일 미리보기·다른 도구에서는
+ * 빈칸으로 보입니다. 재무팀이 어디서 열어도 숫자가 보이도록 값을 같이 저장합니다.
+ */
+export const cf = (f: string, s?: number, cv?: number | null): XlsxCell =>
+  ({ f, s, cv: (typeof cv === 'number' && isFinite(cv)) ? cv : undefined })
 export const cd = (v: string, s?: number): XlsxCell => ({ v, s, date: true })
 export const blank = (s?: number): XlsxCell => ({ s })
 
@@ -241,22 +248,25 @@ function writeVehicleBlock(
   put(kindRow, COL_R, c(v ? fuelKindLabel(v.fuel) : (isEv ? '전기차' : '휘발유'), S.BLK_IN))
   put(kindRow, COL_S, c('휘발유/경유/LPG/전기차 중 택일', S.GUIDE))
 
-  // 값이 비어 있으면 J열 유류비 수식이 0 으로 나와 조용히 틀립니다.
-  // 해당 연료 차량 기록이 없으면 사용자가 알아보고 채우도록 안내를 넣습니다.
+  // 이 칸은 J열 유류비 수식이 나눗셈으로 참조합니다.
+  // 문자열('직접 입력')을 넣으면 수식이 오류가 되고 IFERROR 가 그걸 0 으로 삼켜
+  // 「유류비 0원」이 조용히 맞는 값처럼 보입니다. 그래서 비었으면 셀을 비워 두고
+  // 안내는 옆 칸(S열)에만 둡니다. J열 수식은 별도로 미입력을 감지해 경고를 냅니다.
   put(effRow, COL_Q, c(isEv ? '전비 (km/kWh)' : '연비 (km/L)', S.BLK_LBL))
-  put(effRow, COL_R, v && v.efficiency > 0 ? c(v.efficiency, S.BLK_NUM) : c('직접 입력', S.BLK_IN))
+  put(effRow, COL_R, v && v.efficiency > 0 ? c(v.efficiency, S.BLK_NUM) : blank(S.BLK_IN))
   put(effRow, COL_S, c(
     (v && v.efficiency > 0)
       ? (isEv ? '자동차등록증에 표기된 전비' : '자동차등록증에 표기된 연비')
-      : '⚠️ 미입력 — 이 칸을 채우기 전까지 유류비가 0 으로 계산됩니다',
+      : (isEv ? '⚠️ 전비를 입력하세요 (자동차등록증 표기값)'
+              : '⚠️ 연비를 입력하세요 (자동차등록증 표기값)'),
     S.GUIDE))
 
   put(priceRow, COL_Q, c(isEv ? '충전요금 (원/kWh)' : '기준유가 (원/L)', S.BLK_LBL))
-  put(priceRow, COL_R, v && v.price > 0 ? c(v.price, S.BLK_NUM) : c('직접 입력', S.BLK_IN))
+  put(priceRow, COL_R, v && v.price > 0 ? c(v.price, S.BLK_NUM) : blank(S.BLK_IN))
   put(priceRow, COL_S, c(
     (v && v.price > 0)
       ? "(하단 '기준유가 산정방법' 참조)"
-      : "⚠️ 미입력 — '기준유가 산정방법'을 보고 채우세요 (미입력 시 유류비 0)",
+      : "⚠️ 값을 입력하세요 (하단 '기준유가 산정방법' 참조)",
     S.GUIDE))
 
   put(depRow, COL_Q, c('월 감가상각비', S.BLK_LBL))
@@ -326,6 +336,20 @@ export function buildFormSheet(input: FormSheetInput): XlsxSheet {
   const minRows = Math.max(input.minRows || 0, legs.length)
   const lastData = DATA_ROW + Math.max(minRows, 1) - 1
 
+  // 수식과 같은 계산을 서버에서도 해 값을 함께 저장합니다 (엑셀 밖에서도 보이도록).
+  // 연비·기준유가가 비어 있으면 계산할 수 없으므로 값 없이 수식만 남깁니다.
+  const unitCost = (fuel?: string): number | null => {
+    const isEv = formVehicleKind(fuel) === '전기차'
+    const v = isEv ? input.ev : input.ice
+    if (!v || !(v.efficiency > 0) || !(v.price > 0)) return null
+    return v.price / v.efficiency
+  }
+
+  // 합계 검산용 누적값 — 하나라도 계산 불가면 null 로 두어 합계도 비웁니다.
+  let sumDist = 0
+  let sumFuel: number | null = 0
+  let sumToll = 0, sumPark = 0, sumEtc = 0
+
   for (let i = 0; i < Math.max(minRows, 1); i++) {
     const r = DATA_ROW + i
     const l = legs[i]
@@ -340,15 +364,34 @@ export function buildFormSheet(input: FormSheetInput): XlsxSheet {
     put(r, 8, l ? c(round1(l.distance_km), S.DIST) : blank(S.DIST))
 
     // J열 유류비 = 기준유가 ÷ 연비 × 주행거리. 차종 문자열로 블록을 골라 참조합니다.
+    const dist = l ? round1(l.distance_km) : 0
+    const unit = l ? unitCost(l.fuel) : 0
+    const fuelAmt = (l && unit !== null) ? unit * dist : (l ? null : 0)
+    if (fuelAmt === null) sumFuel = null
+    else if (sumFuel !== null) sumFuel += fuelAmt
+
+    // 연비·기준유가가 비어 있으면 0 원이 아니라 '연비/유가 입력' 이라고 알려 줍니다.
+    // 원본은 IFERROR 로 0 을 냈지만, 그러면 미입력과 실제 0 원을 구분할 수 없습니다.
+    const evOk = `AND(ISNUMBER($R$${evRef.priceRow}),ISNUMBER($R$${evRef.effRow}))`
+    const iceOk = `AND(ISNUMBER($R$${iceRef.priceRow}),ISNUMBER($R$${iceRef.effRow}))`
     put(r, 9, cf(
-      `IFERROR(IF(TRIM(H${r})="전기차",$R$${evRef.priceRow}/$R$${evRef.effRow}*I${r},` +
-      `IF(TRIM(H${r})="내연기관",$R$${iceRef.priceRow}/$R$${iceRef.effRow}*I${r},0)),0)`,
-      S.NUM_CALC
+      `IF(N(I${r})=0,0,` +
+      `IF(TRIM(H${r})="전기차",` +
+        `IF(${evOk},$R$${evRef.priceRow}/$R$${evRef.effRow}*I${r},"연비/유가 입력"),` +
+      `IF(TRIM(H${r})="내연기관",` +
+        `IF(${iceOk},$R$${iceRef.priceRow}/$R$${iceRef.effRow}*I${r},"연비/유가 입력"),` +
+      `0)))`,
+      S.NUM_CALC, fuelAmt
     ))
-    put(r, 10, l && l.toll ? c(l.toll, S.NUM) : blank(S.NUM))
-    put(r, 11, l && l.parking ? c(l.parking, S.NUM) : blank(S.NUM))
-    put(r, 12, l && l.etc ? c(l.etc, S.NUM) : blank(S.NUM))
-    put(r, 13, cf(`SUM(L${r}:M${r})`, S.NUM))
+    const toll = (l && l.toll) ? l.toll : 0
+    const park = (l && l.parking) ? l.parking : 0
+    const etc = (l && l.etc) ? l.etc : 0
+    sumDist += dist; sumToll += toll; sumPark += park; sumEtc += etc
+
+    put(r, 10, toll ? c(toll, S.NUM) : blank(S.NUM))
+    put(r, 11, park ? c(park, S.NUM) : blank(S.NUM))
+    put(r, 12, etc ? c(etc, S.NUM) : blank(S.NUM))
+    put(r, 13, cf(`SUM(L${r}:M${r})`, S.NUM, park + etc))
     put(r, 14, c(l?.note ?? '', S.NOTE))
   }
 
@@ -359,10 +402,19 @@ export function buildFormSheet(input: FormSheetInput): XlsxSheet {
   for (let ci = 2; ci <= 6; ci++) put(sumRow, ci, blank(S.TOTAL_LBL))
   put(sumRow, 7, blank(S.TOTAL_LBL))
   merges.push(`B${sumRow}:G${sumRow}`)
-  put(sumRow, 8, cf(`SUM(I${DATA_ROW}:I${lastData})`, S.DIST_TOT))
+  put(sumRow, 8, cf(`SUM(I${DATA_ROW}:I${lastData})`, S.DIST_TOT, round1(sumDist)))
+  const sumVals: Record<number, number | null> = {
+    9: sumFuel, 10: sumToll, 11: sumPark, 12: sumEtc, 13: sumPark + sumEtc,
+  }
   for (const ci of [9, 10, 11, 12, 13]) {
     const col = colName(ci)
-    put(sumRow, ci, cf(`SUM(${col}${DATA_ROW}:${col}${lastData})`, S.TOTAL))
+    const range = `${col}${DATA_ROW}:${col}${lastData}`
+    // 유류비 열은 미입력 시 '연비/유가 입력' 문자열이 섞입니다. SUM 은 문자열을
+    // 그냥 무시하므로 합계가 조용히 작아집니다 — 그런 칸이 있으면 합계도 경고를 냅니다.
+    const f = ci === 9
+      ? `IF(COUNTIF(${range},"연비/유가 입력")>0,"연비/유가 입력 필요",SUM(${range}))`
+      : `SUM(${range})`
+    put(sumRow, ci, cf(f, S.TOTAL, sumVals[ci]))
   }
   put(sumRow, 14, blank(S.TOTAL_LBL))
 
@@ -370,9 +422,13 @@ export function buildFormSheet(input: FormSheetInput): XlsxSheet {
   // 감가상각비는 차량정보 블록(내연기관)의 값을 참조합니다 — 한 곳만 고치면 되도록.
   const claimRow = sumRow + 1
   put(claimRow, 4, c('월 감가상각비', S.TOTAL_LBL))
-  put(claimRow, 5, cf(`$R$${iceRef.depRow}`, S.TOTAL))
+  put(claimRow, 5, cf(`$R$${iceRef.depRow}`, S.TOTAL, MONTHLY_DEPRECIATION))
   put(claimRow, 8, c('월 청구액', S.TOTAL_LBL))
-  put(claimRow, 9, cf(`J${sumRow}+K${sumRow}+F${claimRow}`, S.CLAIM))
+  // J 합계가 경고 문자열이면 더하기가 #VALUE! 로 깨집니다 — 같은 경고로 넘깁니다.
+  put(claimRow, 9, cf(
+    `IF(ISNUMBER(J${sumRow}),J${sumRow}+K${sumRow}+F${claimRow},"연비/유가 입력 필요")`,
+    S.CLAIM,
+    sumFuel === null ? null : sumFuel + sumToll + MONTHLY_DEPRECIATION))
   for (let ci = 10; ci <= 13; ci++) put(claimRow, ci, blank(S.CLAIM))
   merges.push(`K${claimRow}:N${claimRow}`)
 
