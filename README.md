@@ -58,6 +58,8 @@
   - 통행료는 카카오가 **일 총액만** 제공하므로 그 날 마지막 구간 행에만 기재하고,
     실제 하이패스 내역과 대조하라는 안내를 비고에 넣습니다
   - 의존성 없이 OOXML(ZIP)을 직접 만들어 출력합니다 (`src/xlsx.ts`, `src/travel_report_form.ts`)
+  - 주차비·기타(법인카드)는 시스템에 원천 데이터가 없어 빈칸으로 내보내며 담당자가 직접 입력합니다
+  - 해당 기간에 운행 기록이 없으면 빈 양식 1장(수식·안내문 포함)을 내보냅니다
 - **업무사용비율은 100% 상한**: 계기판 거리가 경로 산출 거리보다 짧으면 비율을 100%로 고정하고
   비고에 확인 안내를 넣습니다 (서식상 100% 초과는 불가능)
 - **경로 캐시**: `travel_route_cache` (동일 구간 재조회 시 API 호출 절감, `?refresh=1`로 무효화)
@@ -511,7 +513,7 @@ if (!f.currentPassword) { toast('...', 'warn'); release(); return }
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-08-18 (출장 거리 정산 + 날짜별 출발지·복귀지 + 좌표 자동 조회)
+- **Last Updated**: 2026-08-19 (재무팀 제출용 월 교통비 정산내역 양식 .xlsx 출력)
 
 ## 프론트엔드 빌드 (⚠️ 필수 확인)
 
