@@ -39,13 +39,12 @@ export const S = {
   GUIDE: 15,       // 지급기준 설명 / 안내문
   GUIDE_T: 16,     // 안내문 제목 (bold)
   NOTE: 17,        // 비고 (줄바꿈)
-  DIST: 18,        // 주행거리 (소수 1자리 회계)
+  DIST: 18,        // 주행거리 (정수 km 회계)
   DIST_TOT: 19,    // 주행거리 합계 (bold)
 } as const
 
 /** 회계 형식 — 업로드 양식과 동일한 서식 코드 */
 const ACCT = '_-* #,##0_-;\\-* #,##0_-;_-* "-"_-;_-@'
-const ACCT2 = '_-* #,##0.0_-;\\-* #,##0.0_-;_-* "-"_-;_-@'
 
 export const FORM_STYLES: XlsxStyle[] = [
   /* 1  TITLE     */ { bold: true, size: 14, valign: 'center' },
@@ -65,8 +64,8 @@ export const FORM_STYLES: XlsxStyle[] = [
   /* 15 GUIDE     */ { size: 9, valign: 'center', wrap: true },
   /* 16 GUIDE_T   */ { bold: true, size: 9, valign: 'center' },
   /* 17 NOTE      */ { size: 9, valign: 'center', wrap: true, border: true },
-  /* 18 DIST      */ { numFmt: ACCT2, size: 10, valign: 'center', border: true },
-  /* 19 DIST_TOT  */ { numFmt: ACCT2, size: 10, bold: true, valign: 'center', border: true, fill: 'FFF2F2F2' },
+  /* 18 DIST      */ { numFmt: ACCT, size: 10, valign: 'center', border: true },
+  /* 19 DIST_TOT  */ { numFmt: ACCT, size: 10, bold: true, valign: 'center', border: true, fill: 'FFF2F2F2' },
 ]
 
 // ── 주소 → 지역(시/군/구) ────────────────────────────────────────────────────
@@ -361,10 +360,10 @@ export function buildFormSheet(input: FormSheetInput): XlsxSheet {
     put(r, 5, c(l?.to_region ?? '', S.TEXT))
     put(r, 6, c(l ? '편도' : '', S.TEXT))
     put(r, 7, c(l ? formVehicleKind(l.fuel) : '', S.TEXT))
-    put(r, 8, l ? c(round1(l.distance_km), S.DIST) : blank(S.DIST))
+    put(r, 8, l ? c(roundKm(l.distance_km), S.DIST) : blank(S.DIST))
 
     // J열 유류비 = 기준유가 ÷ 연비 × 주행거리. 차종 문자열로 블록을 골라 참조합니다.
-    const dist = l ? round1(l.distance_km) : 0
+    const dist = l ? roundKm(l.distance_km) : 0
     const unit = l ? unitCost(l.fuel) : 0
     const fuelAmt = (l && unit !== null) ? unit * dist : (l ? null : 0)
     if (fuelAmt === null) sumFuel = null
@@ -402,7 +401,9 @@ export function buildFormSheet(input: FormSheetInput): XlsxSheet {
   for (let ci = 2; ci <= 6; ci++) put(sumRow, ci, blank(S.TOTAL_LBL))
   put(sumRow, 7, blank(S.TOTAL_LBL))
   merges.push(`B${sumRow}:G${sumRow}`)
-  put(sumRow, 8, cf(`SUM(I${DATA_ROW}:I${lastData})`, S.DIST_TOT, round1(sumDist)))
+  // sumDist 는 이미 정수(반올림된 행별 거리)의 합이므로 그대로 씁니다.
+  // 다시 반올림하면 엑셀의 SUM(I열) 결과와 어긋날 수 있습니다.
+  put(sumRow, 8, cf(`SUM(I${DATA_ROW}:I${lastData})`, S.DIST_TOT, sumDist))
   const sumVals: Record<number, number | null> = {
     9: sumFuel, 10: sumToll, 11: sumPark, 12: sumEtc, 13: sumPark + sumEtc,
   }
@@ -442,8 +443,14 @@ export function buildFormSheet(input: FormSheetInput): XlsxSheet {
   }
 }
 
-function round1(n: number): number {
-  return Math.round((Number(n) || 0) * 10) / 10
+/**
+ * 주행거리를 정수 km 로 반올림합니다 (0.5 → 1, 0.4 → 0).
+ *
+ * 유류비도 이 반올림한 값으로 계산합니다 — 양식의 I열을 그대로 곱하는 수식이므로
+ * 화면에 보이는 거리와 금액의 근거가 어긋나지 않게 합니다.
+ */
+function roundKm(n: number): number {
+  return Math.round(Number(n) || 0)
 }
 
 /**
