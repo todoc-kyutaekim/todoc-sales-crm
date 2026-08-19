@@ -333,6 +333,13 @@ export type DailyStop = {
   place_id?: number | null
   /** home | office | other */
   place_type?: string
+  /**
+   * 그 날만 쓴 임시 장소(숙소 등)인지.
+   *
+   * 장소 목록에 등록하지 않고 그 날 기록에만 주소·좌표를 남긴 경우 true 입니다.
+   * 재무팀이 자택 출발(출퇴근)과 숙소 출발(출장)을 구분할 수 있게 보고서에 표시합니다.
+   */
+  is_temp?: boolean
   visit_time?: string
   purpose?: string
   doctors?: string
@@ -403,9 +410,37 @@ export async function loadPlaces(db: D1Database, userIds: number[]): Promise<Tra
 }
 
 /**
+ * 그 날 기록에 직접 적어 넣은 임시 장소(숙소 등)를 꺼냅니다.
+ *
+ * 좌표가 없으면 경로를 계산할 수 없으므로 없는 것으로 봅니다
+ * (그 경우 아래 우선순위 1) 이하가 적용됩니다).
+ */
+function tempStop(log: any, kind: 'origin' | 'return'): DailyStop | null {
+  if (!log) return null
+  const lat = Number(log[`${kind}_temp_lat`])
+  const lng = Number(log[`${kind}_temp_lng`])
+  if (!isFinite(lat) || !isFinite(lng)) return null
+  if (log[`${kind}_temp_lat`] === null || log[`${kind}_temp_lng`] === null) return null
+  const address = String(log[`${kind}_temp_address`] || '')
+  return {
+    hospital_id: null,
+    name: String(log[`${kind}_temp_name`] || '') || (kind === 'origin' ? '출발지(임시)' : '복귀지(임시)'),
+    region: '',
+    address,
+    lat,
+    lng,
+    place_id: null,
+    place_type: 'other',
+    is_temp: true,
+    ...(kind === 'origin' ? { is_origin: true } : { is_return: true }),
+  }
+}
+
+/**
  * 그 날 담당자가 쓸 출발지/복귀지를 결정합니다.
  *
  * 우선순위
+ *   0) 그 날 기록에 직접 적은 임시 장소 (숙소 등 — 좌표가 있을 때만)
  *   1) travel_logs 에 그 날 명시적으로 지정한 장소 (0 = "없음"을 고른 것도 존중)
  *   2) 담당자 본인 장소 중 기본값 플래그
  *   3) 전사 공용 장소 중 기본값 플래그
@@ -472,13 +507,19 @@ export function resolveEndpoints(
     return globalStop(kind)
   }
 
-  const origin = pick(log?.origin_place_id, p => p.is_default_origin, 'origin')
+  // 0) 그 날만 쓴 임시 장소(숙소 등)가 있으면 무엇보다 먼저 씁니다.
+  const tempOrigin = tempStop(log, 'origin')
+  const tempReturn = tempStop(log, 'return')
+
+  const origin = tempOrigin || pick(log?.origin_place_id, p => p.is_default_origin, 'origin')
 
   // 복귀지: 그 날 지정값이 없으면 기본 복귀지 → (없으면) include_return 설정에 따라 출발지로 복귀
   let ret: DailyStop | null = null
   const hasExplicitReturn = log?.return_place_id !== null && log?.return_place_id !== undefined
     && String(log?.return_place_id) !== ''
-  if (hasExplicitReturn) {
+  if (tempReturn) {
+    ret = tempReturn
+  } else if (hasExplicitReturn) {
     ret = pick(log.return_place_id, p => p.is_default_return, 'return')
   } else {
     const mineDefault = mine.find(p => p.is_default_return && p.lat !== null && p.lng !== null)
@@ -1043,12 +1084,52 @@ travel.put('/logs', async (c) => {
     const n = Number(v)
     return isFinite(n) && n >= 0 ? Math.round(n) : null
   }
-  const originPlaceId = placeOrNull(b.origin_place_id)
-  const returnPlaceId = placeOrNull(b.return_place_id)
+  // 요청에 키가 아예 없으면 "이 요청은 출발지/복귀지를 건드리지 않는다"는 뜻입니다.
+  // (메모만 고치는 저장 요청이 그 날 지정해 둔 출발지를 지워버리면 안 됩니다.)
+  // 빈 문자열은 "기본값 사용" 을 고른 것이므로 NULL 로 저장합니다 — 구분해야 합니다.
+  const originPlaceId = b.origin_place_id === undefined ? undefined : placeOrNull(b.origin_place_id)
+  const returnPlaceId = b.return_place_id === undefined ? undefined : placeOrNull(b.return_place_id)
+
+  // ── 그 날만 쓰는 임시 장소(숙소 등) ──────────────────────────────────────
+  // 숙소는 매번 바뀌어 장소 목록에 등록하면 목록이 늘어나고, 나중에 지우면
+  // 지난 달 정산 기록의 출발지가 사라집니다. 그래서 그 날 기록에 직접 남깁니다.
+  //
+  // 좌표는 반드시 한국 범위 안이어야 합니다 — 위경도를 바꿔 넣거나 오타가 나면
+  // 카카오 길찾기가 엉뚱한 거리를 돌려주고 그대로 재무팀 정산서에 올라갑니다.
+  const inKoreaCoord = (lat: number, lng: number) =>
+    isFinite(lat) && isFinite(lng) && lat >= 33 && lat <= 38.7 && lng >= 124.5 && lng <= 131.9
+
+  type TempPlace = { name: string | null; address: string | null; lat: number | null; lng: number | null }
+  const tempOrNull = (raw: any, kind: string): TempPlace | { error: string } | null => {
+    // 키 자체가 없으면 "이 요청은 임시 장소를 건드리지 않는다"는 뜻 → null 로 구분
+    if (raw === undefined) return null
+    // 명시적으로 null/빈값을 보내면 지우기
+    if (raw === null || (typeof raw === 'object' && !raw.lat && !raw.lng && !raw.address && !raw.name)) {
+      return { name: null, address: null, lat: null, lng: null }
+    }
+    if (typeof raw !== 'object') return { error: `${kind} 임시 장소 형식이 올바르지 않습니다.` }
+    const lat = Number(raw.lat)
+    const lng = Number(raw.lng)
+    if (!inKoreaCoord(lat, lng)) {
+      return { error: `${kind} 좌표가 올바르지 않습니다. 지도에서 위치를 다시 지정해주세요.` }
+    }
+    const address = String(raw.address || '').trim().slice(0, 300)
+    const name = String(raw.name || '').trim().slice(0, 50)
+    if (!address && !name) {
+      return { error: `${kind} 이름이나 주소를 입력해주세요.` }
+    }
+    return { name: name || null, address: address || null, lat, lng }
+  }
+
+  const originTemp = tempOrNull(b.origin_temp, '출발지')
+  const returnTemp = tempOrNull(b.return_temp, '복귀지')
+  for (const t of [originTemp, returnTemp]) {
+    if (t && 'error' in t) return c.json({ error: t.error, message: t.error }, 400)
+  }
 
   // 남의 장소를 지정하지 못하도록 소유권을 확인합니다 (본인 장소 또는 전사 공용만 허용).
   for (const pid of [originPlaceId, returnPlaceId]) {
-    if (pid === null || pid === 0) continue
+    if (pid === null || pid === undefined || pid === 0) continue
     const own = await c.env.DB.prepare(
       'SELECT id FROM travel_places WHERE id=? AND (user_id IS NULL OR user_id=?)'
     ).bind(pid, userId).first().catch(() => null)
@@ -1064,7 +1145,10 @@ travel.put('/logs', async (c) => {
   // (출발지 셀렉트만 바꾸는 저장 요청이 지도에서 찍어둔 경유지를 날려버리면 안 됩니다.)
   // upsert 안에서 이를 표현하기가 까다로워, 기존 행을 먼저 읽어 최종값을 확정합니다.
   const prev = await c.env.DB.prepare(
-    'SELECT route_priority, route_waypoints_json FROM travel_logs WHERE log_date=? AND user_id IS ?'
+    `SELECT route_priority, route_waypoints_json, origin_place_id, return_place_id,
+            origin_temp_name, origin_temp_address, origin_temp_lat, origin_temp_lng,
+            return_temp_name, return_temp_address, return_temp_lat, return_temp_lng
+       FROM travel_logs WHERE log_date=? AND user_id IS ?`
   ).bind(logDate, userId).first().catch(() => null) as any
 
   const routePriority = b.route_priority === undefined
@@ -1080,9 +1164,28 @@ travel.put('/logs', async (c) => {
     routeWaypointsJson = wps.length ? JSON.stringify(wps) : null
   }
 
+  // 임시 장소도 마찬가지로, 요청에 키가 없으면 기존 값을 그대로 지킵니다.
+  const keepTemp = (t: any, kind: 'origin' | 'return'): TempPlace => {
+    if (t && !('error' in t)) return t as TempPlace
+    return {
+      name: prev?.[`${kind}_temp_name`] ?? null,
+      address: prev?.[`${kind}_temp_address`] ?? null,
+      lat: prev?.[`${kind}_temp_lat`] ?? null,
+      lng: prev?.[`${kind}_temp_lng`] ?? null,
+    }
+  }
+  const oTmp = keepTemp(originTemp, 'origin')
+  const rTmp = keepTemp(returnTemp, 'return')
+
+  // 출발지/복귀지도 요청에 키가 없으면 기존 값을 그대로 지킵니다.
+  const oPid = originPlaceId === undefined ? (prev?.origin_place_id ?? null) : originPlaceId
+  const rPid = returnPlaceId === undefined ? (prev?.return_place_id ?? null) : returnPlaceId
+
   await c.env.DB.prepare(
-    `INSERT INTO travel_logs (log_date, user_id, vehicle_model, vehicle_plate, odo_start, odo_end, toll_amount, fuel_amount, note, origin_place_id, return_place_id, route_priority, route_waypoints_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO travel_logs (log_date, user_id, vehicle_model, vehicle_plate, odo_start, odo_end, toll_amount, fuel_amount, note, origin_place_id, return_place_id, route_priority, route_waypoints_json,
+       origin_temp_name, origin_temp_address, origin_temp_lat, origin_temp_lng,
+       return_temp_name, return_temp_address, return_temp_lat, return_temp_lng)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(log_date, user_id) DO UPDATE SET
        vehicle_model=excluded.vehicle_model, vehicle_plate=excluded.vehicle_plate,
        odo_start=excluded.odo_start, odo_end=excluded.odo_end,
@@ -1091,6 +1194,10 @@ travel.put('/logs', async (c) => {
        origin_place_id=excluded.origin_place_id, return_place_id=excluded.return_place_id,
        route_priority=excluded.route_priority,
        route_waypoints_json=excluded.route_waypoints_json,
+       origin_temp_name=excluded.origin_temp_name, origin_temp_address=excluded.origin_temp_address,
+       origin_temp_lat=excluded.origin_temp_lat, origin_temp_lng=excluded.origin_temp_lng,
+       return_temp_name=excluded.return_temp_name, return_temp_address=excluded.return_temp_address,
+       return_temp_lat=excluded.return_temp_lat, return_temp_lng=excluded.return_temp_lng,
        updated_at=CURRENT_TIMESTAMP`
   ).bind(
     logDate, userId,
@@ -1098,8 +1205,10 @@ travel.put('/logs', async (c) => {
     odoStart, odoEnd,
     intOrNull(b.toll_amount), intOrNull(b.fuel_amount),
     b.note || '',
-    originPlaceId, returnPlaceId,
-    routePriority, routeWaypointsJson
+    oPid, rPid,
+    routePriority, routeWaypointsJson,
+    oTmp.name, oTmp.address, oTmp.lat, oTmp.lng,
+    rTmp.name, rTmp.address, rTmp.lat, rTmp.lng
   ).run()
 
   const row = await c.env.DB.prepare(

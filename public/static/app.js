@@ -13963,7 +13963,54 @@ function _trvPendKey(d) {
 /** 대기분 객체에 실제 변경이 담겨 있는지 */
 function _trvHasPend(p) {
   return !!p && (p.origin !== undefined || p.return !== undefined ||
-                 p.priority !== undefined || p.waypoints !== undefined);
+                 p.priority !== undefined || p.waypoints !== undefined ||
+                 p.originTemp !== undefined || p.returnTemp !== undefined);
+}
+
+// ── 그 날만 쓰는 임시 장소 (숙소 등) ────────────────────────────────────────
+// 숙소는 매번 바뀌므로 장소 목록에 등록하지 않고 그 날 기록에만 주소·좌표를 남깁니다.
+// 목록이 늘어나지 않고, 나중에 장소를 정리해도 지난 달 정산 기록이 깨지지 않습니다.
+// 셀렉트에서 이 값을 고르면 아래 문자열이 값으로 들어옵니다.
+var TRV_TEMP_OPT = '__temp__';
+
+/**
+ * 그 날 화면에 표시할 임시 장소 — 대기분이 있으면 대기분을, 없으면 저장된 값을 씁니다.
+ * 반환: {name, address, lat, lng} 또는 null (임시 장소 없음)
+ */
+function _trvEffectiveTemp(d, kind) {
+  var p = _trvState.pending[_trvPendKey(d)];
+  var pk = kind + 'Temp';
+  // 대기분에 null 이 담겨 있으면 "임시 장소 지움" 을 뜻합니다.
+  if (p && p[pk] !== undefined) return p[pk];
+  var log = d.log || {};
+  var lat = log[kind + '_temp_lat'], lng = log[kind + '_temp_lng'];
+  if (lat === null || lat === undefined || lng === null || lng === undefined) return null;
+  return {
+    name: log[kind + '_temp_name'] || '',
+    address: log[kind + '_temp_address'] || '',
+    lat: Number(lat), lng: Number(lng)
+  };
+}
+
+/** 저장된 임시 장소 (대기분 무시) — 되돌림 판정용 */
+function _trvSavedTemp(d, kind) {
+  var log = d.log || {};
+  var lat = log[kind + '_temp_lat'], lng = log[kind + '_temp_lng'];
+  if (lat === null || lat === undefined || lng === null || lng === undefined) return null;
+  return {
+    name: log[kind + '_temp_name'] || '',
+    address: log[kind + '_temp_address'] || '',
+    lat: Number(lat), lng: Number(lng)
+  };
+}
+
+/** 임시 장소 두 개가 같은지 (좌표는 약 1m 오차까지 같은 것으로 봅니다) */
+function _trvTempSame(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return (a.name || '') === (b.name || '') && (a.address || '') === (b.address || '') &&
+    Math.abs(Number(a.lat) - Number(b.lat)) < 0.00001 &&
+    Math.abs(Number(a.lng) - Number(b.lng)) < 0.00001;
 }
 
 /** 대기 중인 변경 건수 */
@@ -14288,6 +14335,12 @@ function _trvEndpointCell(d, i) {
   }
   var badge = function(s, none) {
     if (!s) return '<span class="text-slate-300">' + none + '</span>';
+    // 그 날만 쓴 임시 장소(숙소 등)는 집·사무실과 눈으로 구분되게 표시합니다.
+    if (s.is_temp) {
+      return '<span class="inline-flex items-center gap-1 text-teal-700 font-semibold" title="' +
+        csEsc(s.address || '') + '">' +
+        '<i class="fas fa-bed text-teal-500 text-[9px]"></i>' + csEsc(s.name) + '</span>';
+    }
     var m = _trvPlaceMeta(s.place_type || 'other');
     return '<span class="inline-flex items-center gap-1 text-slate-600">' +
       '<i class="fas ' + m.icon + ' text-slate-400 text-[9px]"></i>' + csEsc(s.name) + '</span>';
@@ -14305,11 +14358,49 @@ function _trvEndpointCell(d, i) {
     '<div class="flex gap-1">' +
       '<select onchange="trvStageEndpoint(' + i + ', \'origin\', this.value)" ' +
         'class="' + selCls + '" title="출발지">' +
-        _trvPlaceOptions(_trvEffectiveEndpoint(d, 'origin'), 'origin') + '</select>' +
+        _trvPlaceOptions(_trvEffectiveEndpoint(d, 'origin'), 'origin', _trvEffectiveTemp(d, 'origin')) + '</select>' +
       '<select onchange="trvStageEndpoint(' + i + ', \'return\', this.value)" ' +
         'class="' + selCls + '" title="복귀지">' +
-        _trvPlaceOptions(_trvEffectiveEndpoint(d, 'return'), 'return') + '</select>' +
-    '</div>';
+        _trvPlaceOptions(_trvEffectiveEndpoint(d, 'return'), 'return', _trvEffectiveTemp(d, 'return')) + '</select>' +
+    '</div>' +
+    _trvTempHint(d, i);
+}
+
+/**
+ * 임시 장소(숙소 등)를 쓴 날에 주소와 보조 버튼을 보여줍니다.
+ *
+ * 같은 숙소에 여러 날 머무는 경우가 흔하므로, 바로 위 날짜에 임시 장소가 있으면
+ * '전날과 같음' 버튼으로 그대로 복사할 수 있게 합니다.
+ */
+function _trvTempHint(d, i) {
+  var days = _trvState.days || [];
+  var oT = _trvEffectiveTemp(d, 'origin');
+  var rT = _trvEffectiveTemp(d, 'return');
+  var h = '';
+
+  if (oT || rT) {
+    var lines = [];
+    if (oT) lines.push('출발 ' + csEsc(oT.address || oT.name || ''));
+    if (rT && !_trvTempSame(oT, rT)) lines.push('복귀 ' + csEsc(rT.address || rT.name || ''));
+    h += '<div class="mt-1 text-[9px] text-teal-700 leading-snug">' +
+      '<i class="fas fa-bed mr-0.5"></i>' + lines.join('<br>') + '</div>';
+  }
+
+  // 전날(표에서 바로 위 행)에 임시 장소가 있고 이 날은 아직 없으면 복사 버튼
+  var prev = i > 0 ? days[i - 1] : null;
+  if (prev && !oT && !rT) {
+    var pO = _trvEffectiveTemp(prev, 'origin');
+    var pR = _trvEffectiveTemp(prev, 'return');
+    if (pO || pR) {
+      h += '<div class="mt-1">' +
+        '<button onclick="trvCopyPrevTemp(' + i + ')" ' +
+          'class="text-[9px] px-1.5 py-0.5 rounded bg-teal-50 text-teal-700 hover:bg-teal-100 font-semibold" ' +
+          'title="' + csEsc(prev.date) + ' 과 같은 숙소를 쓴 경우">' +
+          '<i class="fas fa-copy mr-0.5"></i>전날과 같음</button>' +
+        '</div>';
+    }
+  }
+  return h;
 }
 
 /**
@@ -14322,6 +14413,13 @@ function trvStageEndpoint(i, kind, value) {
   if (!d) return;
   var key = _trvPendKey(d);
   var log = d.log || {};
+
+  // '이번만 직접 입력' — 그 날만 쓰는 숙소 등. 지도에서 위치를 지정합니다.
+  if (String(value) === TRV_TEMP_OPT) {
+    trvOpenTempPlace(i, kind);
+    return;
+  }
+
   var saved = kind === 'origin' ? log.origin_place_id : log.return_place_id;
   saved = (saved === null || saved === undefined) ? '' : String(saved);
 
@@ -14329,12 +14427,260 @@ function trvStageEndpoint(i, kind, value) {
   if (String(value) === saved) delete p[kind];   // 원래 값으로 되돌렸으면 대기분에서 제거
   else p[kind] = String(value);
 
-  if (p.origin === undefined && p.return === undefined) delete _trvState.pending[key];
+  // 등록된 장소(또는 기본값/없음)를 골랐으면 그 날의 임시 장소는 해제합니다.
+  // 둘이 함께 남으면 임시 장소가 우선이라 셀렉트에 보이는 값과 실제 경로가 어긋납니다.
+  if (_trvSavedTemp(d, kind)) p[kind + 'Temp'] = null;   // 저장돼 있던 것을 지움
+  else delete p[kind + 'Temp'];                          // 저장된 게 없으면 대기분도 비움
+
+  if (!_trvHasPend(p)) delete _trvState.pending[key];
   else _trvState.pending[key] = p;
 
-  // 셀렉트 값은 이미 사용자가 바꿔둔 상태이므로 표시 갱신만 합니다.
+  // 임시 장소 표시(주소·전날복사 버튼)가 바뀌므로 셀을 다시 그립니다.
+  _trvRedrawEndpointCell(i);
   _trvRefreshApplyBar();
   _trvMarkPendingRows();
+}
+
+/** 출발/복귀 셀 하나만 다시 그립니다 (표 전체를 새로 그리지 않아 스크롤이 유지됩니다). */
+function _trvRedrawEndpointCell(i) {
+  var cell = document.getElementById('trv-ep-' + i);
+  var d = (_trvState.days || [])[i];
+  if (!cell || !d) return;
+  cell.innerHTML = _trvEndpointCell(d, i);
+}
+
+/**
+ * 그 날만 쓰는 임시 장소(숙소 등) 지정 창.
+ *
+ * 주소를 검색해 좌표를 찾거나, 검색이 안 되면 지도를 직접 클릭해 위치를 찍습니다.
+ * (카카오 로컬 검색이 막혀 있어도 OpenStreetMap 으로 폴백하고, 그마저 안 되면
+ *  지도 클릭으로 넣을 수 있게 두 경로를 모두 둡니다.)
+ *
+ * 여기서 '확인'을 눌러도 아직 저장되지 않고, 표의 '적용'을 눌러야 저장됩니다.
+ */
+var _trvTemp = { dayIndex: -1, kind: 'origin', map: null, marker: null, cands: [] };
+
+function trvOpenTempPlace(i, kind) {
+  var d = (_trvState.days || [])[i];
+  if (!d) return;
+  var cur = _trvEffectiveTemp(d, kind) || { name: '', address: '', lat: null, lng: null };
+  _trvTemp = { dayIndex: i, kind: kind, map: null, marker: null, cands: [],
+               lat: cur.lat, lng: cur.lng };
+
+  var kindLabel = kind === 'origin' ? '출발지' : '복귀지';
+  openModal(
+    '<i class="fas fa-bed text-teal-500 mr-2"></i>' + csEsc(d.date) + ' ' + kindLabel +
+      ' — 이번만 쓰는 장소',
+    '<div class="space-y-3">' +
+      '<div class="rounded-lg bg-teal-50 border border-teal-100 px-3 py-2 text-[11px] text-teal-900 leading-relaxed">' +
+        '숙소처럼 <b>그 날만 쓰는 곳</b>입니다. 장소 목록에는 추가되지 않고 이 날 기록에만 남습니다.<br>' +
+        '주소를 검색하거나, 결과가 없으면 <b>지도를 직접 클릭</b>해 위치를 찍어주세요.' +
+      '</div>' +
+      '<div>' +
+        '<label class="input-label">이름 <span class="text-[10px] font-normal text-slate-400">— 비워두면 주소로 표시됩니다</span></label>' +
+        '<input id="trv-temp-name" type="text" class="input" maxlength="50" ' +
+          'value="' + csEsc(cur.name || '') + '" placeholder="예: 대전 숙소">' +
+      '</div>' +
+      '<div>' +
+        '<label class="input-label">주소</label>' +
+        '<div class="flex gap-2">' +
+          '<input id="trv-temp-addr" type="text" class="input flex-1" maxlength="300" autocomplete="off" ' +
+            'value="' + csEsc(cur.address || '') + '" placeholder="예: 대전 유성구 대학로 99" ' +
+            'onkeydown="if(event.key===\'Enter\'){event.preventDefault();trvTempGeocode();}">' +
+          '<button type="button" onclick="trvTempGeocode()" class="btn btn-outline btn-sm whitespace-nowrap">' +
+            '<i class="fas fa-magnifying-glass-location mr-1"></i>좌표 찾기</button>' +
+        '</div>' +
+        '<div id="trv-temp-geo" class="mt-2"></div>' +
+      '</div>' +
+      '<div id="trv-temp-map" style="height:min(40vh,300px);border-radius:12px;overflow:hidden;' +
+        'border:1px solid #e2e8f0;background:#f8fafc"></div>' +
+      '<div id="trv-temp-coord" class="text-[11px]"></div>' +
+      '<div class="flex gap-2 pt-1">' +
+        '<button onclick="closeModal()" class="btn btn-outline flex-1">취소</button>' +
+        (cur.lat !== null && cur.lat !== undefined
+          ? '<button onclick="trvTempClear()" class="btn btn-outline flex-1 text-rose-600">' +
+              '<i class="fas fa-trash-can mr-1"></i>임시 장소 해제</button>'
+          : '') +
+        '<button onclick="trvTempConfirm()" class="btn btn-primary flex-1">' +
+          '<i class="fas fa-check mr-1"></i>확인</button>' +
+      '</div>' +
+      '<div class="text-[10px] text-slate-400">· 여기서 <b>확인</b>을 눌러도 아직 저장되지 않습니다. 표의 <b>적용</b> 버튼을 눌러야 저장됩니다.</div>' +
+    '</div>', 'wide');
+
+  setTimeout(function() { _trvTempMapInit(); _trvTempRenderCoord(); }, 60);
+}
+
+function _trvTempMapInit() {
+  var el = document.getElementById('trv-temp-map');
+  if (!el) return;
+  if (typeof L === 'undefined') {
+    el.innerHTML = '<div class="p-3 text-[11px] text-amber-600">지도를 불러오지 못했습니다. ' +
+      '주소 검색으로 좌표를 찾아주세요.</div>';
+    return;
+  }
+  var hasCoord = _trvTemp.lat !== null && _trvTemp.lat !== undefined;
+  _trvTemp.map = L.map(el, {
+    center: hasCoord ? [_trvTemp.lat, _trvTemp.lng] : [36.3, 127.8],
+    zoom: hasCoord ? 15 : 7, scrollWheelZoom: true
+  });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19, subdomains: 'abcd',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
+  }).addTo(_trvTemp.map);
+  if (hasCoord) _trvTempSetMarker(_trvTemp.lat, _trvTemp.lng, false);
+  _trvTemp.map.on('click', function(ev) {
+    _trvTempSetMarker(ev.latlng.lat, ev.latlng.lng, false);
+  });
+}
+
+/** 지도에 위치 핀을 놓고 좌표를 기록합니다. recenter=true 면 그 지점으로 이동합니다. */
+function _trvTempSetMarker(lat, lng, recenter) {
+  _trvTemp.lat = Number(lat);
+  _trvTemp.lng = Number(lng);
+  if (_trvTemp.map) {
+    if (_trvTemp.marker) { try { _trvTemp.map.removeLayer(_trvTemp.marker); } catch (e) {} }
+    var icon = L.divIcon({
+      className: '',
+      html: '<div style="width:24px;height:24px;border-radius:50%;display:flex;align-items:center;' +
+        'justify-content:center;color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.3);' +
+        'background:#0d9488;font-size:11px"><i class="fas fa-bed"></i></div>',
+      iconSize: [24, 24], iconAnchor: [12, 12]
+    });
+    _trvTemp.marker = L.marker([_trvTemp.lat, _trvTemp.lng], { icon: icon }).addTo(_trvTemp.map);
+    if (recenter) _trvTemp.map.setView([_trvTemp.lat, _trvTemp.lng], 15);
+  }
+  _trvTempRenderCoord();
+}
+
+function _trvTempRenderCoord() {
+  var box = document.getElementById('trv-temp-coord');
+  if (!box) return;
+  if (_trvTemp.lat === null || _trvTemp.lat === undefined) {
+    box.innerHTML = '<span class="text-amber-600 font-semibold">' +
+      '<i class="fas fa-triangle-exclamation mr-1"></i>위치가 지정되지 않았습니다 — 지도를 클릭하거나 주소를 검색해주세요.</span>';
+  } else {
+    box.innerHTML = '<span class="text-slate-500"><i class="fas fa-location-crosshairs mr-1"></i>' +
+      '<span class="font-mono">' + Number(_trvTemp.lat).toFixed(6) + ', ' +
+      Number(_trvTemp.lng).toFixed(6) + '</span></span>';
+  }
+}
+
+/** 주소 → 좌표 검색 (장소 관리와 같은 서버 엔드포인트를 씁니다) */
+var _trvTempGeoBusy = false;
+async function trvTempGeocode() {
+  var box = document.getElementById('trv-temp-geo');
+  var input = document.getElementById('trv-temp-addr');
+  if (!box || !input) return;
+  var q = (input.value || '').trim();
+  if (q.length < 2) {
+    box.innerHTML = '<div class="text-[11px] text-amber-600">주소를 2자 이상 입력해주세요.</div>';
+    return;
+  }
+  if (_trvTempGeoBusy) return;
+  _trvTempGeoBusy = true;
+  box.innerHTML = '<div class="text-[11px] text-slate-400"><i class="fas fa-spinner fa-spin mr-1"></i>좌표를 찾고 있습니다…</div>';
+  try {
+    var r = await API.get('/travel/geocode', { params: { q: q } });
+    var list = (r.data && r.data.data) || [];
+    if (!list.length) {
+      box.innerHTML = '<div class="text-[11px] text-amber-600 leading-relaxed">' +
+        '결과가 없습니다. <b>지도에서 위치를 직접 클릭</b>해도 됩니다.</div>';
+      return;
+    }
+    _trvTemp.cands = list;
+    box.innerHTML = '<div class="rounded-xl border border-slate-100 divide-y divide-slate-50 overflow-hidden">' +
+      list.map(function(x, k) {
+        return '<button type="button" onclick="trvTempPickGeo(' + k + ')" ' +
+          'class="w-full text-left px-3 py-2 hover:bg-teal-50 transition">' +
+          '<div class="text-[12px] font-semibold text-slate-800 truncate">' + csEsc(x.name) + '</div>' +
+          (x.address ? '<div class="text-[10px] text-slate-500 truncate">' + csEsc(x.address) + '</div>' : '') +
+        '</button>';
+      }).join('') + '</div>';
+  } catch (err) {
+    box.innerHTML = '<div class="text-[11px] text-red-600">검색에 실패했습니다. 지도에서 직접 클릭해주세요.</div>';
+  } finally {
+    _trvTempGeoBusy = false;
+  }
+}
+
+function trvTempPickGeo(k) {
+  var x = _trvTemp.cands[k];
+  if (!x) return;
+  var addr = document.getElementById('trv-temp-addr');
+  if (addr && x.address) addr.value = x.address;
+  var nameEl = document.getElementById('trv-temp-name');
+  if (nameEl && !(nameEl.value || '').trim() && x.name) nameEl.value = String(x.name).slice(0, 50);
+  _trvTempSetMarker(x.lat, x.lng, true);
+  var box = document.getElementById('trv-temp-geo');
+  if (box) box.innerHTML = '<div class="text-[11px] text-teal-700"><i class="fas fa-check mr-1"></i>위치를 지정했습니다.</div>';
+}
+
+/** 임시 장소를 대기분에 담습니다 (저장은 표의 '적용' 에서) */
+function trvTempConfirm() {
+  if (_trvTemp.lat === null || _trvTemp.lat === undefined) {
+    toast('위치를 지정해주세요 — 지도를 클릭하거나 주소를 검색하세요', 'warn');
+    return;
+  }
+  var i = _trvTemp.dayIndex, kind = _trvTemp.kind;
+  var d = (_trvState.days || [])[i];
+  if (!d) { closeModal(); return; }
+
+  var nameEl = document.getElementById('trv-temp-name');
+  var addrEl = document.getElementById('trv-temp-addr');
+  var val = {
+    name: nameEl ? (nameEl.value || '').trim().slice(0, 50) : '',
+    address: addrEl ? (addrEl.value || '').trim().slice(0, 300) : '',
+    lat: Number(_trvTemp.lat), lng: Number(_trvTemp.lng)
+  };
+  if (!val.name && !val.address) {
+    toast('이름이나 주소 중 하나는 입력해주세요', 'warn');
+    return;
+  }
+  _trvStageTemp(i, kind, val);
+  closeModal();
+}
+
+/** 임시 장소 해제 → 원래 기본값/등록 장소로 되돌립니다 */
+function trvTempClear() {
+  _trvStageTemp(_trvTemp.dayIndex, _trvTemp.kind, null);
+  closeModal();
+}
+
+/** 임시 장소 변경을 대기분에 담습니다. val=null 이면 해제. */
+function _trvStageTemp(i, kind, val) {
+  var d = (_trvState.days || [])[i];
+  if (!d) return;
+  var key = _trvPendKey(d);
+  var p = _trvState.pending[key] || {};
+  var saved = _trvSavedTemp(d, kind);
+
+  if (_trvTempSame(saved, val)) delete p[kind + 'Temp'];   // 원래대로 되돌림
+  else p[kind + 'Temp'] = val;
+
+  // 임시 장소를 쓰는 동안에는 셀렉트의 장소 선택을 함께 바꾸지 않습니다.
+  // (해제하면 원래 고르던 장소/기본값이 그대로 살아납니다.)
+
+  if (!_trvHasPend(p)) delete _trvState.pending[key];
+  else _trvState.pending[key] = p;
+
+  _trvRedrawEndpointCell(i);
+  _trvRefreshApplyBar();
+  _trvMarkPendingRows();
+}
+
+/** 전날과 같은 숙소를 쓴 경우 — 바로 위 행의 임시 장소를 그대로 복사 */
+function trvCopyPrevTemp(i) {
+  var days = _trvState.days || [];
+  var prev = days[i - 1];
+  if (!prev) return;
+  var copied = 0;
+  ['origin', 'return'].forEach(function(kind) {
+    var t = _trvEffectiveTemp(prev, kind);
+    if (!t) return;
+    _trvStageTemp(i, kind, { name: t.name, address: t.address, lat: t.lat, lng: t.lng });
+    copied++;
+  });
+  if (copied) toast(prev.date + ' 의 장소를 가져왔습니다 — 적용을 눌러 저장하세요', 'ok');
 }
 
 /** 대기 중인 행에 강조 표시를 다시 입힙니다 (표 전체를 다시 그리지 않아 셀렉트 포커스가 유지됩니다). */
@@ -14407,10 +14753,6 @@ async function trvApplyEndpoints() {
     var p = _trvState.pending[_trvPendKey(d)];
     if (!_trvHasPend(p)) continue;
     var log = d.log || {};
-    var cur = function(kind) {
-      var v = kind === 'origin' ? log.origin_place_id : log.return_place_id;
-      return (v === null || v === undefined) ? '' : String(v);
-    };
     jobs.push({
       date: d.date,
       payload: {
@@ -14424,12 +14766,16 @@ async function trvApplyEndpoints() {
         toll_amount: log.toll_amount,
         fuel_amount: log.fuel_amount,
         note: log.note || '',
-        origin_place_id: p.origin !== undefined ? p.origin : cur('origin'),
-        return_place_id: p.return !== undefined ? p.return : cur('return'),
-        // 경로 방식·보정 경유지는 바꾼 것만 실어 보냅니다.
+        // 바꾼 것만 실어 보냅니다 — 키를 넣지 않으면 서버가 기존 값을 유지합니다.
+        origin_place_id: p.origin !== undefined ? p.origin : undefined,
+        return_place_id: p.return !== undefined ? p.return : undefined,
+        // 경로 방식·보정 경유지·임시 장소는 바꾼 것만 실어 보냅니다.
         // (키를 아예 넣지 않으면 서버가 기존 값을 그대로 유지합니다.)
         route_priority: p.priority !== undefined ? p.priority : undefined,
-        route_waypoints: p.waypoints !== undefined ? p.waypoints : undefined
+        route_waypoints: p.waypoints !== undefined ? p.waypoints : undefined,
+        // 그 날만 쓰는 장소(숙소 등). null 을 보내면 해제됩니다.
+        origin_temp: p.originTemp !== undefined ? p.originTemp : undefined,
+        return_temp: p.returnTemp !== undefined ? p.returnTemp : undefined
       }
     });
   }
@@ -15067,20 +15413,31 @@ function _trvDefaultLabel(kind) {
     : '<span class="text-slate-400">없음</span>';
 }
 
-/** 일자별 출발/복귀 셀렉트 옵션 */
-function _trvPlaceOptions(selected, kind) {
+/**
+ * 일자별 출발/복귀 셀렉트 옵션.
+ *
+ * `temp` 가 주어지면(그 날만 쓰는 숙소 등) 그 항목이 선택된 상태로 표시됩니다.
+ * 임시 장소는 장소 목록에 등록하지 않고 그 날 기록에만 남기므로 목록이 늘어나지 않습니다.
+ */
+function _trvPlaceOptions(selected, kind, temp) {
   var list = _trvMyPlaces().filter(function(p) { return p.lat !== null && p.lng !== null; });
   var sel = (selected === null || selected === undefined || selected === '') ? '' : String(selected);
-  var html = '<option value=""' + (sel === '' ? ' selected' : '') + '>기본값 사용</option>' +
-             '<option value="0"' + (sel === '0' ? ' selected' : '') + '>' +
+  var isTemp = !!temp;
+  var html = '<option value=""' + (!isTemp && sel === '' ? ' selected' : '') + '>기본값 사용</option>' +
+             '<option value="0"' + (!isTemp && sel === '0' ? ' selected' : '') + '>' +
              (kind === 'origin' ? '없음 (첫 방문지에서 시작)' : '없음 (복귀 구간 제외)') + '</option>';
   for (var i = 0; i < list.length; i++) {
     var p = list[i];
     var m = _trvPlaceMeta(p.place_type);
     var own = p.user_id === null ? ' · 공용' : '';
-    html += '<option value="' + p.id + '"' + (sel === String(p.id) ? ' selected' : '') + '>' +
+    html += '<option value="' + p.id + '"' + (!isTemp && sel === String(p.id) ? ' selected' : '') + '>' +
             csEsc(p.name) + ' (' + m.label + own + ')</option>';
   }
+  // 숙소처럼 그 날만 쓰는 곳 — 고르면 지도에서 위치를 지정하는 창이 열립니다.
+  var tempLabel = isTemp
+    ? '📍 ' + csEsc(temp.name || temp.address || '직접 지정한 위치')
+    : '＋ 이번만 직접 입력 (숙소 등)';
+  html += '<option value="' + TRV_TEMP_OPT + '"' + (isTemp ? ' selected' : '') + '>' + tempLabel + '</option>';
   return html;
 }
 

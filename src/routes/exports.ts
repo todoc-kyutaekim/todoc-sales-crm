@@ -1901,13 +1901,21 @@ exports.get('/report/travel', async (c) => {
       if (!d.legs.length) {
         // 거리 계산이 실패했거나 방문 1곳뿐이라 구간이 없는 날 — 사실을 남깁니다.
         const only = d.stops[0]
+        // 구간이 없어 거리는 0이지만, 그 날 숙소에 있었다는 사실은 남겨 둡니다.
+        // 이 행만 보고 "출장을 안 갔다"고 오해하면 숙박비 정산과 어긋납니다.
+        const emptyNotes: string[] = []
+        if (only?.is_temp) {
+          emptyNotes.push(`숙소 출발${only.address ? ` (${only.address})` : ''}`)
+        }
+        if (d.error) emptyNotes.push(`거리 계산 실패: ${d.error}`)
+        if (log.note) emptyNotes.push(String(log.note))
         legs.push({
           date: d.date,
           from_name: only?.name || '', from_region: regionLabel(only?.address, only?.region),
           to_name: '', to_region: '',
           distance_km: 0, toll: dayToll, parking: 0, etc: 0,
           fuel: String(d.fuel || 'GASOLINE'),
-          note: d.error ? `거리 계산 실패: ${d.error}` : (log.note || ''),
+          note: emptyNotes.join(' / '),
         })
         continue
       }
@@ -1919,6 +1927,15 @@ exports.get('/report/travel', async (c) => {
         const isLast = i === d.legs.length - 1
 
         const notes: string[] = []
+        // 숙소에서 출발/복귀한 날은 그 사실을 남깁니다.
+        // 자택→회사는 출퇴근(비과세 대상 아님)이지만 숙소→거래처는 출장 이동이라
+        // 재무팀이 구분해 처리해야 하는데, 이름만 봐서는 알 수 없습니다.
+        if (i === 0 && fromStop?.is_temp) {
+          notes.push(`숙소 출발${fromStop.address ? ` (${fromStop.address})` : ''}`)
+        }
+        if (isLast && toStop?.is_temp) {
+          notes.push(`숙소 복귀${toStop.address ? ` (${toStop.address})` : ''}`)
+        }
         if (isLast && tollIsEstimate && dayToll > 0) {
           notes.push('톨비는 카카오 추정치 — 하이패스 내역으로 확인 필요')
         }
