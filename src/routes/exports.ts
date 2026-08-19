@@ -1,6 +1,12 @@
 import { Hono } from 'hono'
 import { buildReportData } from './dashboard'
 import { queryByIds } from '../helpers'
+import { buildXlsx, XLSX_CONTENT_TYPE } from '../xlsx'
+import {
+  buildFormSheet, buildEvidenceSheet, buildTollEvidenceSheet,
+  FORM_STYLES, MONTHLY_DEPRECIATION, regionLabel,
+  type FormLeg, type FormSheetInput, type FormVehicle,
+} from '../travel_report_form'
 import { buildDailyRoutes, settleAmount, PLACE_TYPE_LABEL } from './travel'
 
 type Bindings = { DB: D1Database; KAKAO_REST_API_KEY?: string }
@@ -1842,22 +1848,147 @@ exports.get('/report/travel', async (c) => {
     return c.body(bom + lines.join('\n'))
   }
 
-  // XLSX (XML Spreadsheet)
-  const sheets = [
-    { name: '요약', headers: ['항목', '값'], rows: summaryRows },
-    { name: '일자별 운행기록', headers: dailyHeaders, rows: dailyRows },
-    { name: '구간별 이동상세', headers: legHeaders, rows: legRows },
-    { name: '방문기관 좌표', headers: coordHeaders, rows: coordRows },
-  ]
-  let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<?mso-application progid="Excel.Sheet"?>\n'
-  xml += '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">\n'
-  xml += '<Styles><Style ss:ID="header"><Font ss:Bold="1" ss:Size="11" ss:Color="#FFFFFF"/><Interior ss:Color="#2563EB" ss:Pattern="Solid"/></Style></Styles>\n'
-  for (const s of sheets) xml += buildSheet(s.name, s.headers, s.rows)
-  xml += '</Workbook>'
+  // ── 재무팀 제출 양식 (.xlsx) ──────────────────────────────────────────────
+  // 사내에서 쓰는 「월 교통비 정산내역」 양식과 동일한 레이아웃으로 만듭니다.
+  // 담당자 1명 = 시트 3장 (정산내역 / 증빙 / 증빙 톨게이트).
+  //
+  // 양식은 '편도 구간 1건 = 1행' 구조입니다. 우리 데이터는 하루 단위로
+  // 모여 있으므로 legs(구간)를 펼쳐서 행으로 만듭니다.
+  const byUser = new Map<string, typeof days>()
+  for (const d of days) {
+    const k = d.user_name || '담당자 미지정'
+    if (!byUser.has(k)) byUser.set(k, [] as any)
+    ;(byUser.get(k) as any).push(d)
+  }
 
-  c.header('Content-Type', 'application/vnd.ms-excel; charset=utf-8')
-  c.header('Content-Disposition', `attachment; filename="${fnBase}.xls"`)
-  return c.body('\uFEFF' + xml)
+  // 정산 월 — 기간이 한 달 안에 있을 때만 표기합니다.
+  const monthOf = (v: string) => {
+    const m = /^(\d{4})-(\d{2})/.exec(String(v || ''))
+    return m ? `${m[1]}-${m[2]}` : ''
+  }
+  const monthsUsed = Array.from(new Set(days.map(d => monthOf(d.date)).filter(Boolean)))
+  const reportMonth = monthsUsed.length === 1 ? Number(monthsUsed[0].substring(5, 7)) : null
+
+  const formSheets: any[] = []
+  for (const [userName, uDays] of byUser) {
+    const legs: FormLeg[] = []
+    let iceVeh: FormVehicle | null = null
+    let evVeh: FormVehicle | null = null
+    let department = ''
+
+    for (const d of uDays) {
+      const log: any = d.log || {}
+      department = department || String(d.vehicle?.department || '')
+
+      // 차량정보 블록 — 실제로 쓴 차량을 연료 종류별로 하나씩 채웁니다.
+      const veh: FormVehicle = {
+        model: log.vehicle_model || d.vehicle?.vehicle_model || '',
+        fuel: String(d.fuel || 'GASOLINE'),
+        efficiency: Number(d.rule?.fuel_efficiency || settings.fuel_efficiency || 0),
+        price: Number(d.rule?.fuel_price || settings.fuel_price || 0),
+      }
+      if (String(d.fuel || '').toUpperCase() === 'ELECTRIC') {
+        if (!evVeh) evVeh = veh
+      } else if (!iceVeh) {
+        iceVeh = veh
+      }
+
+      // 그 날 통행료는 구간별로 나눌 근거가 없습니다 (카카오는 하루 총액만 제공).
+      // 하이패스 증빙과 대조할 수 있도록 그 날 마지막 구간 행에만 총액을 넣습니다.
+      const dayToll = Number(log.toll_amount) || d.toll || 0
+      const tollIsEstimate = !(Number(log.toll_amount) > 0) && d.toll > 0
+
+      if (!d.legs.length) {
+        // 거리 계산이 실패했거나 방문 1곳뿐이라 구간이 없는 날 — 사실을 남깁니다.
+        const only = d.stops[0]
+        legs.push({
+          date: d.date,
+          from_name: only?.name || '', from_region: regionLabel(only?.address, only?.region),
+          to_name: '', to_region: '',
+          distance_km: 0, toll: dayToll, parking: 0, etc: 0,
+          fuel: String(d.fuel || 'GASOLINE'),
+          note: d.error ? `거리 계산 실패: ${d.error}` : (log.note || ''),
+        })
+        continue
+      }
+
+      for (let i = 0; i < d.legs.length; i++) {
+        const l = d.legs[i]
+        const fromStop = d.stops[i]
+        const toStop = d.stops[i + 1]
+        const isLast = i === d.legs.length - 1
+
+        const notes: string[] = []
+        if (isLast && tollIsEstimate && dayToll > 0) {
+          notes.push('톨비는 카카오 추정치 — 하이패스 내역으로 확인 필요')
+        }
+        if (isLast && d.missing_coords.length) {
+          notes.push(`좌표 미등록: ${d.missing_coords.join(', ')}`)
+        }
+        if (isLast && (d.route_waypoints || []).length) {
+          notes.push(`실제 동선 반영(보정 경유지 ${d.route_waypoints.length}곳)`)
+        }
+        if (isLast && d.route_priority_label && d.route_priority_label !== '추천') {
+          notes.push(`경로: ${d.route_priority_label}`)
+        }
+        if (isLast && log.note) notes.push(String(log.note))
+
+        legs.push({
+          date: d.date,
+          from_name: l.from,
+          from_region: regionLabel(fromStop?.address, fromStop?.region),
+          to_name: l.to,
+          to_region: regionLabel(toStop?.address, toStop?.region),
+          distance_km: l.distance_km,
+          // 톨비는 마지막 구간에만 (일 총액). 나머지 구간은 비웁니다.
+          toll: isLast ? dayToll : 0,
+          // 주차비·기타는 법인카드 항목으로 우리 데이터에 없습니다 — 담당자가 직접 입력합니다.
+          parking: 0,
+          etc: 0,
+          fuel: String(d.fuel || 'GASOLINE'),
+          note: notes.join(' / '),
+        })
+      }
+    }
+
+    const input: FormSheetInput = {
+      userName,
+      department: department || '영업팀',
+      month: reportMonth,
+      legs,
+      ice: iceVeh,
+      ev: evVeh,
+      // 양식처럼 빈 행도 수식을 유지해 담당자가 직접 추가 입력할 수 있게 합니다.
+      minRows: Math.max(legs.length + 6, 20),
+    }
+    formSheets.push(buildFormSheet(input))
+    formSheets.push(buildEvidenceSheet(userName))
+    formSheets.push(buildTollEvidenceSheet(userName, periodLabel))
+  }
+
+  // 산출 근거 — 재무팀이 거리·좌표를 역추적할 수 있도록 남깁니다.
+  const plain = (name: string, headers: string[], rows: any[][]) => ({
+    name,
+    cols: headers.map(h => Math.min(28, Math.max(10, h.length * 2.2))),
+    rows: [
+      headers.map(h => ({ v: h, s: 3 })),
+      ...rows.map(r => r.map(v => ({ v: (v === '' || v === null || v === undefined) ? '' : v, s: 5 }))),
+    ],
+    freeze: 'A2',
+  })
+
+  const sheets = [
+    ...formSheets,
+    plain('산출근거 요약', ['항목', '값'], summaryRows),
+    plain('산출근거 일자별', dailyHeaders, dailyRows),
+    plain('산출근거 구간별', legHeaders, legRows),
+    plain('산출근거 좌표', coordHeaders, coordRows),
+  ]
+
+  const bin = buildXlsx(sheets, FORM_STYLES)
+  c.header('Content-Type', XLSX_CONTENT_TYPE)
+  c.header('Content-Disposition', `attachment; filename="${fnBase}.xlsx"`)
+  return c.body(bin)
 })
 
 export default exports

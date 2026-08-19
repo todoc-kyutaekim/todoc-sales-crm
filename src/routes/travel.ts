@@ -106,6 +106,8 @@ export const VEHICLE_TYPE_LABEL: Record<string, string> = {
 }
 
 export type UserVehicle = {
+  /** 소속 부서 — 재무팀 제출 양식 머리글에 표기합니다. */
+  department?: string
   vehicle_type: VehicleType
   vehicle_model: string
   vehicle_plate: string
@@ -115,7 +117,7 @@ export type UserVehicle = {
   /**
    * 연료 종류 — 통행료 산출(카카오 car_fuel)에 사용합니다.
    * 전기차는 고속도로 통행료 감면이 적용되어 기름차보다 통행료가 낮습니다.
-   * 또한 전기차는 fuel_efficiency 를 km/kWh(전바), fuel_price 를 원/kWh 로 해석합니다.
+   * 또한 전기차는 fuel_efficiency 를 km/kWh(전비), fuel_price 를 원/kWh 로 해석합니다.
    */
   fuel: CarFuel
 }
@@ -139,13 +141,14 @@ export async function loadVehicles(db: D1Database, userIds: number[]): Promise<M
     const ph = part.map(() => '?').join(',')
     try {
       const r = await db.prepare(
-        `SELECT id, vehicle_type, vehicle_model, vehicle_plate,
+        `SELECT id, department, vehicle_type, vehicle_model, vehicle_plate,
                 travel_rate_per_km, vehicle_fuel_efficiency, vehicle_fuel_price,
                 vehicle_fuel
          FROM users WHERE id IN (${ph})`
       ).bind(...part).all()
       for (const row of (r.results || []) as any[]) {
         map.set(Number(row.id), {
+          department: row.department || '',
           vehicle_type: (row.vehicle_type || '') as VehicleType,
           vehicle_model: row.vehicle_model || '',
           vehicle_plate: row.vehicle_plate || '',
