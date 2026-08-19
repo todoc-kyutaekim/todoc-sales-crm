@@ -1966,6 +1966,27 @@ exports.get('/report/travel', async (c) => {
     formSheets.push(buildTollEvidenceSheet(userName, periodLabel))
   }
 
+  // 기간 내 운행 기록이 없으면 산출근거 시트만 남아 「양식이 없다」고
+  // 오해하기 쉬우므로, 빈 양식 1장을 넣어 수식과 안내문을 그대로 쓰게 합니다.
+  if (!formSheets.length) {
+    formSheets.push(buildFormSheet({
+      userName: '정산내역',
+      department: '',
+      month: reportMonth,
+      legs: [],
+      ice: {
+        model: '',
+        fuel: 'GASOLINE',
+        efficiency: Number(settings.fuel_efficiency || 0),
+        price: Number(settings.fuel_price || 0),
+      },
+      ev: null,
+      minRows: 20,
+    }))
+    formSheets.push(buildEvidenceSheet('정산내역'))
+    formSheets.push(buildTollEvidenceSheet('정산내역', periodLabel))
+  }
+
   // 산출 근거 — 재무팀이 거리·좌표를 역추적할 수 있도록 남깁니다.
   const plain = (name: string, headers: string[], rows: any[][]) => ({
     name,
