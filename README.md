@@ -33,6 +33,14 @@
   - 좌표(위도·경도)가 없는 장소는 경로 계산에 쓸 수 없으며 셀렉트에서 제외됩니다
   - 출발/복귀를 바꾸면 그 날 경로와 주행거리가 **즉시 재계산**됩니다
   - 보고서에도 `출발지`·`복귀지` 열과 조합별 일수 요약이 들어갑니다
+- **그 날만 쓰는 출발지·복귀지 (숙소 등)**: 지방 출장 숙소처럼 한 번만 쓰는 곳은
+  장소 목록에 등록하지 않고 그 날 기록에만 주소·좌표를 남깁니다.
+  - 드롭다운 맨 아래 `＋ 이번만 직접 입력 (숙소 등)` → 주소 검색 또는 **지도 클릭**으로 위치 지정
+  - 장소 목록이 늘어나지 않고, 나중에 장소를 지워도 지난 달 정산 기록이 깨지지 않습니다
+  - 같은 숙소를 이틀 이상 쓴 경우 **「전날과 같음」** 버튼으로 복사
+  - 보고서 「지역(시/군/구)」이 그 주소에서 자동 채워지고, 비고에 `숙소 출발/복귀 (주소)`가 남습니다
+  - 좌표는 한국 범위(위 33~38.7 / 경 124.5~131.9) 밖이면 저장을 거부합니다
+- **양식 주행거리는 정수 km**: 0.5 이상 올림 / 0.4 이하 내림 (재무팀 양식에 소수점 없음)
 - **계기판 입력**: 국세청 서식상 계기판 누적거리만 수동 입력 필요 → 일자별 입력 모달
   (차종/등록번호/주행전·후 계기판/실제 통행료/주유금액/비고)
 - **차량 형태별 정산 방식 자동 결정** (마이페이지에서 담당자별 설정):
@@ -227,7 +235,7 @@
 | PUT | `/api/travel/places/:id` | 장소 수정 (전사 공용·타인 장소는 403) |
 | DELETE | `/api/travel/places/:id` | 장소 삭제 (참조 운행기록은 기본값으로 되돌림) |
 | GET | `/api/travel/daily` | 일자별 운행기록 산출 (?from=&to=&user_id=&refresh=1) |
-| GET/PUT | `/api/travel/logs` | 계기판·실제 통행료·주유금액 + 그 날 출발지·복귀지(`origin_place_id`/`return_place_id`) 입력 (upsert) |
+| GET/PUT | `/api/travel/logs` | 계기판·실제 통행료·주유금액 + 그 날 출발지·복귀지(`origin_place_id`/`return_place_id`) + 그 날만 쓰는 임시 장소(`origin_temp`/`return_temp` = `{name,address,lat,lng}`, `null`로 해제) 입력 (upsert — 요청에 없는 키는 기존값 유지) |
 | POST | `/api/travel/route` | 임의 기관 목록의 경로 거리 계산 (hospital_ids[] 1~28) |
 | GET | `/api/export/report/travel` | 출장 정산 보고서 (?from=&to=&user_id=&format=csv\|xlsx) |
 | GET/PUT | `/api/mypage` | 내 프로필 + 차량 정보(형태·차종·번호·km단가·연비·유가) |
@@ -513,7 +521,7 @@ if (!f.currentPassword) { toast('...', 'warn'); release(); return }
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-08-19 (재무팀 제출용 월 교통비 정산내역 양식 .xlsx 출력)
+- **Last Updated**: 2026-08-19 (그 날만 쓰는 출발지·복귀지(숙소) 직접 입력, 양식 주행거리 정수화)
 
 ## 프론트엔드 빌드 (⚠️ 필수 확인)
 
