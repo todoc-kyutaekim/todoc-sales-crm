@@ -15,6 +15,15 @@ export type NaviPoint = {
   lat: number
   lng: number
   name?: string
+  /**
+   * 호출한 쪽이 이 지점을 자기 배열에서 다시 찾기 위한 표식.
+   *
+   * 보정 경유지를 끼워 넣으면 좌표열이 길어져 구간 순번이 원래 방문지 순번과
+   * 어긋납니다. 순번으로 되짚으면 재무팀 양식에서 업체명과 지역이 한 칸씩
+   * 밀리므로, 지점마다 출처를 달아 두고 그대로 돌려받습니다.
+   * 경유지처럼 방문지가 아닌 지점은 비어 있습니다.
+   */
+  ref?: number
 }
 
 /**
@@ -89,6 +98,10 @@ export type NaviLeg = {
   distance: number
   /** 구간 소요시간 (초) */
   duration: number
+  /** 출발 지점에 달려 있던 표식 (NaviPoint.ref). 경유지면 비어 있습니다. */
+  fromRef?: number
+  /** 도착 지점에 달려 있던 표식 (NaviPoint.ref). 경유지면 비어 있습니다. */
+  toRef?: number
 }
 
 export type NaviResult = {
@@ -267,6 +280,9 @@ function parseRoute(json: any, points: NaviPoint[], withPolyline?: boolean): Nav
     to: points[i + 1]?.name || `지점${i + 2}`,
     distance: Number(s.distance) || 0,
     duration: Number(s.duration) || 0,
+    // 호출한 쪽이 달아 둔 표식을 그대로 되돌려 줍니다 (경유지는 없음).
+    fromRef: points[i]?.ref,
+    toRef: points[i + 1]?.ref,
   }))
   const result: NaviResult = {
     ok: true,

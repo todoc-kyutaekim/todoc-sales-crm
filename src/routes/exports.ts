@@ -1920,20 +1920,61 @@ exports.get('/report/travel', async (c) => {
         continue
       }
 
-      for (let i = 0; i < d.legs.length; i++) {
-        const l = d.legs[i]
-        const fromStop = d.stops[i]
-        const toStop = d.stops[i + 1]
-        const isLast = i === d.legs.length - 1
+      // ── 구간을 "방문지 → 방문지" 단위로 합칩니다 ─────────────────────────────
+      //
+      // 🔴 보정 경유지가 끼면 카카오 구간이 방문지보다 많아집니다.
+      //    (집 → 병원A → 병원B 에 경유지 1곳을 넣으면 구간이 2개가 아니라 3개)
+      //    예전에는 구간 순번으로 방문지를 되짚어서 양식에
+      //      · 업체명은 '분당서울대병원' 인데 지역은 '서울시 강남구'
+      //      · 업체명 칸에 '경유지' 라는 행이 등장
+      //    처럼 어긋난 값이 실렸습니다.
+      //
+      //    경유지는 실제로 방문한 곳이 아니라 "이 길로 갔다" 는 표시일 뿐이므로,
+      //    경유지에서 끊긴 구간들을 앞의 방문지까지 이어 붙여 거리만 더합니다.
+      //    (총 주행거리는 그대로 보존되고, 행은 방문 순서와 정확히 일치합니다.)
+      type MergedLeg = {
+        fromIdx: number | null
+        toIdx: number | null
+        fromName: string
+        toName: string
+        distance_km: number
+      }
+      const merged: MergedLeg[] = []
+      for (const raw of d.legs) {
+        const last = merged[merged.length - 1]
+        // 앞 구간이 아직 방문지에 도착하지 못했다면(경유지에서 끊겼다면) 이어 붙입니다.
+        if (last && last.toIdx === null) {
+          last.distance_km = Math.round((last.distance_km + raw.distance_km) * 10) / 10
+          last.toIdx = raw.to_stop_index
+          last.toName = raw.to_stop_index === null ? last.toName : raw.to
+          continue
+        }
+        merged.push({
+          fromIdx: raw.from_stop_index,
+          toIdx: raw.to_stop_index,
+          fromName: raw.from,
+          toName: raw.to,
+          distance_km: raw.distance_km,
+        })
+      }
+
+      for (let i = 0; i < merged.length; i++) {
+        const l = merged[i]
+        // 경로 계산 때 각 구간에 달아 둔 방문지 위치를 그대로 씁니다 (순번 계산 금지).
+        const fromStop = l.fromIdx === null ? undefined : d.stops[l.fromIdx]
+        const toStop = l.toIdx === null ? undefined : d.stops[l.toIdx]
+        const isLast = i === merged.length - 1
 
         const notes: string[] = []
         // 숙소에서 출발/복귀한 날은 그 사실을 남깁니다.
         // 자택→회사는 출퇴근(비과세 대상 아님)이지만 숙소→거래처는 출장 이동이라
         // 재무팀이 구분해 처리해야 하는데, 이름만 봐서는 알 수 없습니다.
-        if (i === 0 && fromStop?.is_temp) {
+        // 숙소 표시는 구간 순번이 아니라 그 지점이 실제로 임시 장소인지로 판단합니다.
+        // (경유지 때문에 첫 구간·마지막 구간 번호가 밀려도 정확히 붙습니다.)
+        if (fromStop?.is_temp) {
           notes.push(`숙소 출발${fromStop.address ? ` (${fromStop.address})` : ''}`)
         }
-        if (isLast && toStop?.is_temp) {
+        if (toStop?.is_temp) {
           notes.push(`숙소 복귀${toStop.address ? ` (${toStop.address})` : ''}`)
         }
         if (isLast && tollIsEstimate && dayToll > 0) {
@@ -1952,9 +1993,11 @@ exports.get('/report/travel', async (c) => {
 
         legs.push({
           date: d.date,
-          from_name: l.from,
+          // 업체명은 방문지 이름을 우선 씁니다 — 지역과 같은 곳에서 나와야
+          // 두 칸이 어긋나지 않습니다.
+          from_name: fromStop?.name || l.fromName,
           from_region: regionLabel(fromStop?.address, fromStop?.region),
-          to_name: l.to,
+          to_name: toStop?.name || l.toName,
           to_region: regionLabel(toStop?.address, toStop?.region),
           distance_km: l.distance_km,
           // 톨비는 마지막 구간에만 (일 총액). 나머지 구간은 비웁니다.

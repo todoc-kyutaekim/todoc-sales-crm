@@ -544,7 +544,27 @@ export type DailyRoute = {
   distance_km: number
   duration_min: number
   toll: number
-  legs: { from: string; to: string; distance_km: number; duration_min: number }[]
+  /**
+   * 구간 목록.
+   *
+   * 🔴 legs 는 "보정 경유지가 끼워진 좌표열" 기준이라 stops 와 개수가 다릅니다.
+   *    (집 → 병원A → 병원B 에 경유지 1곳을 넣으면 구간은 2개가 아니라 3개)
+   *    그래서 legs[i] 를 stops[i] 와 짝지으면 지역·주소가 한 칸씩 밀립니다.
+   *    실제로 재무팀 양식에서 "업체명은 분당서울대병원인데 지역은 강남구" 같은
+   *    어긋남이 났습니다. 어느 방문지에서 온 구간인지를 여기 직접 남깁니다.
+   *
+   * 경유지는 방문지가 아니므로 인덱스가 null 입니다.
+   */
+  legs: {
+    from: string
+    to: string
+    distance_km: number
+    duration_min: number
+    /** stops 배열에서 이 구간의 출발 지점 위치 (경유지면 null) */
+    from_stop_index: number | null
+    /** stops 배열에서 이 구간의 도착 지점 위치 (경유지면 null) */
+    to_stop_index: number | null
+  }[]
   /** 계산 실패 시 이유 */
   error?: string
   /** 캐시 사용 여부 */
@@ -648,9 +668,23 @@ export function insertWaypoints(
  *    (전기차 감면은 거리가 같아도 금액이 달라지므로 특히 중요합니다.)
  *    기존 키로 생성된 행은 새 키와 맞지 않으므로 자연스럽게 폐기·재조회됩니다.
  */
+/**
+ * 구간에 딸려 온 표식을 stops 배열의 자리번호로 바꿉니다.
+ *
+ * 보정 경유지에는 표식이 없으므로 null 이 됩니다 (= 방문지가 아님).
+ * 0 번(첫 출발지)이 falsy 라서 사라지는 실수를 막으려고 명시적으로 비교합니다.
+ */
+function refToIndex(ref: any): number | null {
+  const n = Number(ref)
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
 function routeKeyOf(points: NaviPoint[], fuel: CarFuel, priority: RoutePriority): string {
   const coords = points.map(p => `${p.lng.toFixed(6)},${p.lat.toFixed(6)}`).join('|')
-  return `${coords}#${fuel}#${priority}`
+  // v2: 구간에 방문지 표식(fromRef/toRef)을 담기 시작했습니다. 이 표식이 없는
+  //     예전 캐시를 그대로 쓰면 양식의 지역(시/군/구)을 채울 근거가 사라지므로,
+  //     키를 바꿔 자연히 새로 조회되게 합니다.
+  return `${coords}#${fuel}#${priority}#v2`
 }
 
 /**
@@ -814,10 +848,15 @@ export async function buildDailyRoutes(
       route_waypoints: extraWaypoints,
     }
 
-    // 좌표가 있는 지점이 2곳 미만이면 이동거리 계산 불가
+    // 좌표가 있는 지점이 2곳 미만이면 이동거리 계산 불가.
+    //
+    // ref 에 stops 안에서의 자리번호를 달아 둡니다. 뒤에서 보정 경유지가 끼어들고
+    // 중복 좌표가 걸러져도 이 표식은 그대로 따라다니므로, 구간마다 "어느 방문지에서
+    // 온 것인지" 를 순번 계산 없이 정확히 되짚을 수 있습니다.
     const points: NaviPoint[] = stops
-      .filter(s => s.lat !== null && s.lng !== null)
-      .map(s => ({ lat: s.lat as number, lng: s.lng as number, name: s.name }))
+      .map((s, idx) => ({ s, idx }))
+      .filter(({ s }) => s.lat !== null && s.lng !== null)
+      .map(({ s, idx }) => ({ lat: s.lat as number, lng: s.lng as number, name: s.name, ref: idx }))
 
     // 보정 경유지 삽입 — 추천도 최단거리도 아닌 실제 동선(정체 때문에 탄 국도 등)을 재현합니다.
     const withWaypoints = insertWaypoints(points, extraWaypoints)
@@ -826,8 +865,17 @@ export async function buildDailyRoutes(
     const dedup: NaviPoint[] = []
     for (const p of withWaypoints) {
       const last = dedup[dedup.length - 1]
-      if (last && samePoint(last, p)) continue
-      dedup.push(p)
+      if (last && samePoint(last, p)) {
+        // 버리는 쪽이 방문지고 남는 쪽이 경유지면, 방문지 표식과 이름을 넘겨받습니다.
+        // (경유지를 방문지와 같은 위치에 찍은 경우 — 그냥 버리면 그 방문지가
+        //  양식에서 사라지고 뒤 구간의 지역이 밀립니다.)
+        if (p.ref !== undefined && last.ref === undefined) {
+          last.ref = p.ref
+          last.name = p.name
+        }
+        continue
+      }
+      dedup.push({ ...p })
     }
 
     if (dedup.length < 2) {
@@ -863,6 +911,8 @@ export async function buildDailyRoutes(
           from: l.from, to: l.to,
           distance_km: toKm(Number(l.distance) || 0),
           duration_min: toMin(Number(l.duration) || 0),
+          from_stop_index: refToIndex(l.fromRef),
+          to_stop_index: refToIndex(l.toRef),
         }))
       } catch { /* legs 파싱 실패 무시 */ }
       if (opts.withPolyline) {
@@ -896,6 +946,8 @@ export async function buildDailyRoutes(
       from: l.from, to: l.to,
       distance_km: toKm(l.distance),
       duration_min: toMin(l.duration),
+      from_stop_index: refToIndex(l.fromRef),
+      to_stop_index: refToIndex(l.toRef),
     }))
     if (opts.withPolyline) {
       day.polyline = res.polyline || []
@@ -1303,6 +1355,8 @@ travel.post('/route', async (c) => {
       legs: res.legs.map(l => ({
         from: l.from, to: l.to,
         distance_km: toKm(l.distance), duration_min: toMin(l.duration),
+        from_stop_index: refToIndex(l.fromRef),
+        to_stop_index: refToIndex(l.toRef),
       })),
     },
     settings,
