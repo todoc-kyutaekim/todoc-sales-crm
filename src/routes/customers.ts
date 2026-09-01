@@ -423,8 +423,12 @@ customers.get('/:id/external-devices', async (c) => {
 customers.post('/:id/external-devices', async (c) => {
   const id = c.req.param('id')
   const b = await c.req.json()
-  const side = normSide(b.side)
-  if (!side) return apiError(c, 400, '방향(side)은 left 또는 right 여야 합니다', ErrorCodes.VALIDATION)
+  // ⚠️ 외부기의 방향(side)은 더 이상 입력받지 않습니다.
+  //    자사 외부기는 좌우 구별 없이 착용할 수 있어 실무에서 쓰이지 않는 값이었습니다.
+  //    DB 컬럼이 NOT NULL CHECK(left|right) 이므로 미지정이면 'left' 로 채웁니다.
+  //    (컬럼 자체를 지우려면 SQLite 특성상 테이블 재생성이 필요해 보류했습니다.
+  //     방향이 다시 필요해지면 폼 입력칸만 되살리면 이 코드가 그대로 받습니다.)
+  const side = normSide(b.side) || 'left'
 
   const cust = await c.env.DB.prepare('SELECT id, name FROM customers WHERE id=?').bind(id).first() as any
   if (!cust) return apiError(c, 404, '고객을 찾을 수 없습니다', ErrorCodes.NOT_FOUND)
@@ -443,7 +447,8 @@ customers.post('/:id/external-devices', async (c) => {
     b.notes || null
   ).run()
 
-  await logActivity(c.env.DB, 'create', 'customer_external_device', r.meta.last_row_id as number, `${cust.name} · ${side === 'left' ? '좌측' : '우측'} 외부기`)
+  // 방향을 쓰지 않으므로 로그 문구에서도 좌/우 표기를 뺍니다.
+  await logActivity(c.env.DB, 'create', 'customer_external_device', r.meta.last_row_id as number, `${cust.name} · 외부기${b.initial ? ` (${b.initial})` : ''}`)
   return c.json({ data: { id: r.meta.last_row_id, customer_id: Number(id), side, is_active: isActive, ...b } }, 201)
 })
 
@@ -456,8 +461,8 @@ customers.put('/:id/external-devices/:did', async (c) => {
   const own = await c.env.DB.prepare('SELECT id, side FROM customer_external_devices WHERE id=? AND customer_id=?').bind(did, id).first() as any
   if (!own) return apiError(c, 404, '외부기를 찾을 수 없습니다', ErrorCodes.NOT_FOUND)
 
-  const newSide = b.side ? normSide(b.side) : own.side
-  if (b.side && !newSide) return apiError(c, 400, '방향(side)은 left 또는 right 여야 합니다', ErrorCodes.VALIDATION)
+  // 폼이 side 를 보내지 않으므로 기존 값을 그대로 지킵니다 (덮어써서 날리지 않도록).
+  const newSide = normSide(b.side) || own.side || 'left'
 
   const isActive = (b.is_active === false || b.is_active === 0 || b.is_active === '0') ? 0 : 1
 

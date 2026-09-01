@@ -1475,10 +1475,8 @@ function _custRenderExternalList(custId) {
 }
 
 function _custRenderExternalItem(custId, dev) {
-  var side = dev.side || 'left';
-  var sideLabel = SIDE_LABEL_LONG[side] || side;
-  var sideColor = side === 'left' ? '#2563eb' : '#7c3aed';
-  var sideBg    = side === 'left' ? '#dbeafe' : '#ede9fe';
+  // ⚠️ 좌/우 배지는 제거했습니다 — 자사 외부기는 좌우 구별 없이 씁니다.
+  //    (내부기는 수술 부위와 직결되므로 좌/우 슬롯을 그대로 유지합니다.)
   var active = dev.is_active === 1 || dev.is_active === true;
   var statusBadge = active
     ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:#dcfce7;color:#15803d"><i class="fas fa-check mr-1"></i>사용중</span>'
@@ -1487,7 +1485,6 @@ function _custRenderExternalItem(custId, dev) {
   return '<div class="mb-2 last:mb-0 p-3 rounded-md border bg-white" style="border-color:' + (active ? '#bbf7d0' : '#e2e8f0') + '">' +
     '<div class="flex items-center justify-between mb-2">' +
       '<div class="flex items-center gap-2 flex-wrap">' +
-        '<span class="text-[10px] font-bold px-2 py-0.5 rounded" style="background:' + sideBg + ';color:' + sideColor + '">' + sideLabel + '</span>' +
         statusBadge +
         // ⚠️ 제목에 쓰던 제조사 라벨을 제거했습니다(입력칸 제거와 동일 요청).
         //    이니셜이 있으면 제조사 대신 이니셜을 제목에 보여줍니다(현장 식별에 가장 유용).
@@ -1703,17 +1700,15 @@ function _custEditExternal(customerId, deviceId) {
     }
   }
   var isNew = !dev;
-  // 신규 등록시 surgery_side 값에 따라 side 기본값 결정
-  var defaultSide = 'left';
-  var sel = document.getElementById('cst-surgery-side');
-  if (sel && sel.value === 'right') defaultSide = 'right';
-  var data = dev || { side: defaultSide, manufacturer: '', model: '', serial: '', initial: '', security_key: '', supply_date: '', version: '', is_active: 1, notes: '' };
+  // ⚠️ '방향'(side) 입력칸은 사용자 요청으로 제거했습니다.
+  //    자사 외부기는 좌우 구별 없이 착용할 수 있어 방향이 실무에서 쓰이지 않습니다.
+  //    (제거 시점 프로덕션 7건 전부 left = 폼 기본값이 그대로 저장된 것뿐이었음)
+  //    DB 의 side 컬럼은 NOT NULL 이라 그대로 두고, 백엔드가 미지정 시 'left' 로 채웁니다.
+  //    방향이 다시 필요해지면 이 입력칸만 되살리면 됩니다.
+  var data = dev || { manufacturer: '', model: '', serial: '', initial: '', security_key: '', supply_date: '', version: '', is_active: 1, notes: '' };
 
   var body =
     '<form id="fm-ext-dev" class="grid grid-cols-1 sm:grid-cols-2 gap-3">' +
-      '<div><label class="input-label">방향 *</label><select name="side" class="input" required>' +
-        ['left','right'].map(function(s) { return '<option value="' + s + '"' + (data.side === s ? ' selected' : '') + '>' + SIDE_LABEL_LONG[s] + '</option>'; }).join('') +
-      '</select></div>' +
       '<div><label class="input-label">상태</label><select name="is_active" class="input">' +
         '<option value="1"' + (data.is_active ? ' selected' : '') + '>사용중</option>' +
         '<option value="0"' + (!data.is_active ? ' selected' : '') + '>보관 (교체됨)</option>' +
