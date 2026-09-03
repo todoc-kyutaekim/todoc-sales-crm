@@ -45,7 +45,10 @@ cistats.get('/', async (c) => {
     const totalAmount = yearlyData.reduce((a, b) => a + b.amount, 0)
     const totalAmountWon = totalAmount * 1000 // convert from 천원 to 원
     const amountBillions = (totalAmountWon / 100000000).toFixed(1) // 억원
-    insights.push({ icon: 'fa-won-sign', title: '6년간 총 진료금액', value: amountBillions + '억원', desc: '2019-2024 누적' })
+    // ⚠️ 연도를 하드코딩하지 않습니다 — 데이터가 있는 실제 기간에서 계산합니다.
+    //    (2025년 데이터가 추가되면 자동으로 '7년간 / 2019-2025 누적' 으로 바뀝니다)
+    const spanYears = last.year - first.year + 1
+    insights.push({ icon: 'fa-won-sign', title: spanYears + '년간 총 진료금액', value: amountBillions + '억원', desc: first.year + '-' + last.year + ' 누적' })
   }
 
   const latestYear = years[years.length - 1] as number
@@ -77,8 +80,12 @@ cistats.get('/', async (c) => {
         { year: 2009, event: '2세 미만 소아 양측 인공와우 건강보험 급여 인정' },
         { year: 2015, event: '건강보험 인정 기준 대폭 확대 (보장성 강화)' },
         { year: 2017, event: '건강보험 적용 연령 15세 → 19세 미만 확대' },
-        { year: 2018, event: '모든 어린이 건강보험 비용 전액 지원 시작' },
-        { year: 2025, event: '급여 기준 지속 확대 논의 중' }
+        { year: 2018, event: '모든 어린이 건강보험 비용 전액 지원 시작' }
+        // ⚠️ 2025년 항목은 제거했습니다.
+        //    기존에 '급여 기준 지속 확대 논의 중' 이라는 잠정 문구가 들어가 있었으나
+        //    2025년에 실제로 고시된 급여 기준 변경을 확인할 수 없었습니다.
+        //    확인되지 않은 내용을 정책 연혁에 남겨두면 영업 자료로 오용될 수 있어 삭제합니다.
+        //    실제 개정 사실이 확인되면 이 자리에 { year: 2025, event: '...' } 로 추가하세요.
       ]
     }
   })
