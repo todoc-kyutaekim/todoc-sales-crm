@@ -124,6 +124,208 @@ cistats.get('/', async (c) => {
     }
   }).sort((x: any, y3: any) => (y3.cagr ?? -999) - (x.cagr ?? -999))
 
+  // ─────────────────────────────────────────────────────────────────
+  // [확장 1] 환자당 수술건수 — 양측이식·재수술 대리지표
+  // ⚠️ HIRA 공개통계에는 양측/재수술 플래그가 없습니다.
+  //    "환자 1명당 청구된 수술 건수"는 양측이식 또는 재수술이 늘면 함께 오르므로
+  //    직접 지표가 아닌 '대리지표(proxy)'로만 해석해야 합니다.
+  const procPerPatient = yearlyData.map(d => ({
+    year: d.year, patients: d.patients, usage: d.usage,
+    ratio: d.patients ? +(d.usage / d.patients).toFixed(4) : 0,
+    excess: d.usage - d.patients            // 환자수를 초과하는 건수 (양측/재수술 추정 하한)
+  }))
+
+  // [확장 2] 연령 코호트별 성장 기여도 분해 (5세 구간 재집계)
+  //    최신연도 증가분(Δ) 중 각 연령대가 차지한 몫 = 어느 연령층이 성장을 만들었는지
+  const a5rows = (age5All.results as any[])
+  const A5 = {
+    '0-19': ['5세미만', '5_9세', '10_14세', '15_19세'],
+    '20-39': ['20_24세', '25_29세', '30_34세', '35_39세'],
+    '40-59': ['40_44세', '45_49세', '50_54세', '55_59세'],
+    '60-74': ['60_64세', '65_69세', '70_74세'],
+    '75+': ['75_79세', '80세이상']
+  } as Record<string, string[]>
+  const a5Sum = (y: number, gs: string[]) =>
+    a5rows.filter(r => r.year === y && gs.includes(r.age_group)).reduce((a, b) => a + b.patients, 0)
+  // 기여도 기준연도: 아래 [확장 5]에서 탐지한 구조 변화 시점(breakYear)을 그대로 씁니다.
+  //   ⚠️ breakYear 는 아래에서 계산되므로, 여기서는 계산을 미루고 함수로 감싸 둡니다.
+  //      (선언 순서 문제를 피하려고 ageContribution 은 breakYear 확정 후에 만듭니다)
+  // [확장 3] 기관 종별 집중도 (HHI + 상급종합 금액비중)
+  const instConcentration = years.map((y: any) => {
+    const rs = instData.filter((r: any) => r.year === y)
+    const tp = rs.reduce((a: number, b: any) => a + b.patients, 0)
+    const ta = rs.reduce((a: number, b: any) => a + b.amount, 0)
+    const tert = rs.find((r: any) => r.institution_type === '상급종합병원')
+    return {
+      year: y,
+      hhi: tp ? Math.round(rs.reduce((a: number, b: any) => a + Math.pow(b.patients / tp * 100, 2), 0)) : 0,
+      tertiaryPatientShare: tp && tert ? +(tert.patients / tp * 100).toFixed(1) : 0,
+      tertiaryAmountShare: ta && tert ? +(tert.amount / ta * 100).toFixed(1) : 0
+    }
+  })
+
+  // [확장 4] 성별 추이 (여성 비중)
+  const genderTrend = yearlyData.map(d => {
+    const t = d.male_patients + d.female_patients
+    return {
+      year: d.year, male: d.male_patients, female: d.female_patients,
+      femaleShare: t ? +(d.female_patients / t * 100).toFixed(1) : 0
+    }
+  })
+
+  // ─────────────────────────────────────────────────────────────────
+  // [확장 5] 구조 변화 탐지 (structural break)
+  // 시작연도를 뒤로 옮기며 선형 적합도(R²)를 재계산해, 추세가 안정화된 시점을 찾습니다.
+  // 16개년 전체 회귀는 R²가 낮은데(초기 등락) 특정 연도 이후부터 급격히 높아지면
+  //    그 지점을 '성장 국면 전환점'으로 보고 예측 기준구간으로 채택합니다.
+  // ─────────────────────────────────────────────────────────────────
+  const linreg = (xs: number[], ys: number[]) => {
+    const n = xs.length
+    if (n < 3) return null
+    const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n
+    const sxx = xs.reduce((a, x) => a + Math.pow(x - mx, 2), 0)
+    if (!sxx) return null
+    const sxy = xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0)
+    const slope = sxy / sxx, intercept = my - slope * mx
+    const sst = ys.reduce((a, y) => a + Math.pow(y - my, 2), 0)
+    const sse = ys.reduce((a, y, i) => a + Math.pow(y - (intercept + slope * xs[i]), 2), 0)
+    return {
+      slope, intercept,
+      r2: sst ? 1 - sse / sst : 0,
+      se: n > 2 ? Math.sqrt(sse / (n - 2)) : 0     // 잔차 표준오차 → 예측 밴드 폭
+    }
+  }
+
+  const patSeries = yearlyData.map(d => d.patients)
+  const breakScan = years.slice(0, Math.max(1, years.length - 4)).map((cut: any) => {
+    const idx = yearlyData.map((d, i) => ({ d, i })).filter(o => o.d.year >= cut)
+    const lr = linreg(idx.map(o => o.d.year), idx.map(o => o.d.patients))
+    return { fromYear: cut, n: idx.length, r2: lr ? +lr.r2.toFixed(4) : null, slope: lr ? +lr.slope.toFixed(1) : null }
+  })
+  // 전환점 선정 규칙 — ⚠️ "R²가 가장 높은 구간"을 그냥 고르면 안 됩니다.
+  //   표본이 적을수록 R²는 자동으로 높아지므로(과적합), 그렇게 뽑으면 항상 최근 4~5년만
+  //   남아 예측이 과격해집니다. 따라서 «적합도 임계치를 만족하는 가장 이른 연도»를 택해
+  //   표본 수를 최대한 확보합니다. (설명력 확보 + 표본 확보의 균형)
+  const R2_THRESHOLD = 0.95
+  const MIN_N = 6
+  const breakCand = breakScan.filter(b => b.n >= MIN_N && b.r2 !== null)
+  const qualified = breakCand.filter(b => (b.r2 as number) >= R2_THRESHOLD)
+  const breakYear = qualified.length
+    // 임계치를 넘는 구간 중 가장 이른(=표본이 가장 많은) 시작연도
+    ? qualified.reduce((best, cur) => (cur.fromYear < best.fromYear ? cur : best)).fromYear
+    // 임계치를 넘는 구간이 없으면 차선책으로 적합도 최대 구간
+    : (breakCand.length
+        ? breakCand.reduce((best, cur) => ((cur.r2 as number) > (best.r2 as number) ? cur : best)).fromYear
+        : years[0])
+  const breakRule = 'R² ≥ ' + R2_THRESHOLD + ' 을 만족하는 구간 중 표본이 가장 많은(가장 이른) 시작연도를 채택 — 표본이 적을수록 R²가 자동 상승하는 과적합을 피하기 위함'
+
+  // [확장 2 계속] 연령 기여도 — 기준연도를 breakYear 로 맞춰 구조 변화 이후의 성장 주체를 봅니다.
+  const contribBase = breakYear as number
+  const contribLast = latestYear
+  const cbTotal = Object.values(A5).reduce((a, gs) => a + a5Sum(contribBase, gs), 0)
+  const clTotal = Object.values(A5).reduce((a, gs) => a + a5Sum(contribLast, gs), 0)
+  const totalDelta = clTotal - cbTotal
+  const ageContribution = Object.keys(A5).map(k => {
+    const b = a5Sum(contribBase, A5[k]), l = a5Sum(contribLast, A5[k])
+    return {
+      band: k, base: b, last: l, delta: l - b,
+      // ⚠️ 총 증가분이 0이면 기여율이 정의되지 않으므로 null
+      contribution: totalDelta !== 0 ? +((l - b) / totalDelta * 100).toFixed(1) : null,
+      baseShare: cbTotal ? +(b / cbTotal * 100).toFixed(1) : 0,
+      lastShare: clTotal ? +(l / clTotal * 100).toFixed(1) : 0
+    }
+  })
+
+  // ─────────────────────────────────────────────────────────────────
+  // [확장 6] 2026~2030 전망 (forecast)
+  // 🔴 아래 값은 실측치가 아닌 «추정치»입니다. 3가지 방법을 병렬로 계산하고
+  //    회귀 잔차 표준오차(±1.96se)로 신뢰구간 밴드를 함께 제공합니다.
+  //    방법이 서로 다른 값을 내는 것 자체가 불확실성의 크기이므로 하나로 합치지 않습니다.
+  // ─────────────────────────────────────────────────────────────────
+  const HORIZON = 5
+  const buildForecast = (key: 'patients' | 'usage' | 'amount') => {
+    const base = yearlyData.filter(d => d.year >= breakYear)
+    const xs = base.map(d => d.year), ys = base.map(d => (d as any)[key] as number)
+    if (ys.length < 3 || ys.some(v => v <= 0)) return null
+    const lin = linreg(xs, ys)
+    const log = linreg(xs, ys.map(v => Math.log(v)))
+    if (!lin || !log) return null
+    const growth = Math.exp(log.slope) - 1                       // 로그선형 = 복리 성장률
+    const spanCagr = Math.pow(ys[ys.length - 1] / ys[0], 1 / (xs[xs.length - 1] - xs[0])) - 1
+    const lastY = xs[xs.length - 1], lastV = ys[ys.length - 1]
+    const points = [] as any[]
+    for (let i = 1; i <= HORIZON; i++) {
+      const fy = lastY + i
+      const linear = lin.intercept + lin.slope * fy
+      const loglinear = Math.exp(log.intercept + log.slope * fy)
+      const cagr = lastV * Math.pow(1 + spanCagr, i)
+      const cands = [linear, loglinear, cagr]
+      // 밴드: 선형회귀 예측구간(±1.96·se)과 3방법의 최소/최대를 함께 감싸 보수적으로 잡습니다.
+      const band = 1.96 * lin.se * Math.sqrt(1 + i / ys.length)
+      points.push({
+        year: fy,
+        linear: Math.round(linear),
+        loglinear: Math.round(loglinear),
+        cagr: Math.round(cagr),
+        mid: Math.round((linear + loglinear + cagr) / 3),
+        low: Math.round(Math.max(0, Math.min(...cands) - band)),
+        high: Math.round(Math.max(...cands) + band)
+      })
+    }
+    return {
+      metric: key, baseFrom: breakYear, baseTo: lastY, baseN: ys.length,
+      linearSlope: +lin.slope.toFixed(1), linearR2: +lin.r2.toFixed(4),
+      loglinearGrowth: +(growth * 100).toFixed(2), loglinearR2: +log.r2.toFixed(4),
+      baseCagr: +(spanCagr * 100).toFixed(2),
+      se: +lin.se.toFixed(1),
+      lastYear: lastY, lastValue: lastV,
+      points
+    }
+  }
+
+  const forecast = {
+    // ⚠️ 이 객체 전체가 추정치입니다. UI에서 반드시 «추정» 배지와 함께 노출하세요.
+    isEstimate: true,
+    method: '① 선형회귀(OLS) ② 로그선형(복리성장) ③ 기준구간 CAGR — 3방법 병렬 산출',
+    baseFrom: breakYear,
+    horizon: HORIZON,
+    caveat: 'HIRA 실측 추세의 외삽(extrapolation)이며, 급여기준 변경·신규 진입·수가 조정 등 정책 이벤트는 반영되지 않았습니다. 실적이 아닌 참고용 추정치입니다.',
+    patients: buildForecast('patients'),
+    usage: buildForecast('usage'),
+    amount: buildForecast('amount')
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // [확장 7] 기기 시장규모 추정 (가정 명시형)
+  // 🔴 HIRA 진료금액은 «요양급여비용» 이며 기기(디바이스) 매출액이 아닙니다.
+  //    아래는 "수술건수 × 세트단가" 라는 단순 가정으로 환산한 참고 추정치이며,
+  //    단가는 공개 보도 범위(약 2,000만원 내외)를 시나리오로 나눠 제시합니다.
+  //    실제 납품가·판매가는 확인되지 않았으므로 단일 값으로 확정하지 마세요.
+  // ─────────────────────────────────────────────────────────────────
+  const SET_PRICE_SCENARIOS = [
+    { label: '보수적', unitPriceWon: 15000000 },
+    { label: '기준', unitPriceWon: 20000000 },
+    { label: '적극적', unitPriceWon: 25000000 }
+  ]
+  const deviceMarket = {
+    isEstimate: true,
+    basis: '수술건수(HIRA 실측) × 세트단가(공개 보도 기준 가정)',
+    caveat: 'HIRA 진료금액(요양급여비용)과는 산식이 다른 별개 추정입니다. 세트단가는 확인된 실거래가가 아니며, 외부장치 단독 교체·부속품 매출은 제외되어 과소 추정될 수 있습니다.',
+    priceNote: '인공와우 1 set 비용 약 2,000만원 수준으로 보도된 값을 «기준» 시나리오로 두고 ±25% 범위를 함께 제시합니다.',
+    scenarios: SET_PRICE_SCENARIOS.map(sc => ({
+      label: sc.label,
+      unitPriceWon: sc.unitPriceWon,
+      // 최신 실측 수술건수 기준
+      latestYear: latestYear,
+      latestUsage: yearlyData.length ? yearlyData[yearlyData.length - 1].usage : 0,
+      latestMarketWon: yearlyData.length ? yearlyData[yearlyData.length - 1].usage * sc.unitPriceWon : 0,
+      // 전망 수술건수(추정) 기준 — 추정 × 가정이므로 불확실성이 이중으로 누적됩니다.
+      projected: (forecast.usage?.points || []).map((p: any) => ({
+        year: p.year, usageMid: p.mid, marketWon: p.mid * sc.unitPriceWon
+      }))
+    }))
+  }
+
   // 코호트 요약 인사이트 — 이 시장의 가장 큰 구조 변화
   if (cohortTrend.length >= 2) {
     const c0 = cohortTrend[0], c1 = cohortTrend[cohortTrend.length - 1]
@@ -165,15 +367,25 @@ cistats.get('/', async (c) => {
       // ⚠️ 원본 데이터를 직접 확인·갱신할 수 있는 공식 페이지입니다.
       //    (국민관심질병/행위통계 > 인공와우이식술 S5800, 매년 7월 갱신)
       //    화면 상단·하단 출처 표기에서 이 링크를 새 탭으로 엽니다.
-      sourceUrl: 'https://opendata.hira.or.kr/op/opc/olapMfrnIntrsIlnsInfoTab1.do',
+      sourceUrl: 'https://opendata.hira.or.kr/op/opc/olapDiagBhvInfoTab1.do',
       sourceHome: 'https://opendata.hira.or.kr/',
       sourceLicense: '공공누리 제1유형 (출처표시)',
       sourceUpdateCycle: '매년 7월 최신 데이터 갱신',
       code: 'S5800 (인공와우이식술)',
       period: yearlyData.length ? yearlyData[0].year + '-' + yearlyData[yearlyData.length - 1].year : '-',
       years, yearly: yearlyData, age10: age10All.results, age5: age5All.results, region: regionData, institution: instData, insights,
-      // 심층 분석 결과 (전부 HIRA 실측 기반 계산값)
-      analytics: { cohortTrend, concentration, amountDecomp, regionGrowth },
+      // 심층 분석 결과 (전부 HIRA 실측 기반 계산값 — 추정 없음)
+      analytics: {
+        cohortTrend, concentration, amountDecomp, regionGrowth,
+        // 확장 지표
+        procPerPatient, ageContribution, instConcentration, genderTrend,
+        // 구조 변화 탐지 결과 (예측 기준구간 선정 근거)
+        breakScan, breakYear, breakRule,
+        contribBase, contribLast
+      },
+      // 🔴 아래 두 블록은 «추정치»입니다. 실측(analytics)과 반드시 구분해 표기하세요.
+      forecast,
+      deviceMarket,
       policyChanges: [
         { year: 2005, event: '인공와우 이식술 요양급여 대상 최초 지정' },
         { year: 2009, event: '2세 미만 소아 양측 인공와우 건강보험 급여 인정' },

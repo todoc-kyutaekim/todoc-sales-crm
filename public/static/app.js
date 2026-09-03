@@ -9834,7 +9834,7 @@ function renderCITab(tab) {
   const tabIcons = { overview: 'fa-chart-pie', age: 'fa-cake-candles', region: 'fa-map-location-dot', institution: 'fa-hospital', amount: 'fa-won-sign', insight: 'fa-lightbulb' };
   // ⚠️ 원본 데이터 출처 링크 — 서버(/api/ci-stats)가 sourceUrl 을 내려주지만,
   //    구버전 응답(캐시)에도 대비해 같은 주소를 기본값으로 둡니다.
-  const srcUrl = (s && s.sourceUrl) || 'https://opendata.hira.or.kr/op/opc/olapMfrnIntrsIlnsInfoTab1.do';
+  const srcUrl = (s && s.sourceUrl) || 'https://opendata.hira.or.kr/op/opc/olapDiagBhvInfoTab1.do';
   const srcLicense = (s && s.sourceLicense) || '공공누리 제1유형 (출처표시)';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-6">' +
     '<div class="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl p-4 lg:p-5 flex flex-wrap items-center gap-4 border border-indigo-100">' +
@@ -9944,6 +9944,150 @@ function renderCIContent(tab, s) {
         return '<tr class="tr"><td class="px-4 py-3 font-semibold text-sm text-slate-700">' + r.region + '</td><td class="px-4 py-3 text-right text-sm text-slate-500">' + fmtNum(r.first) + '</td><td class="px-4 py-3 text-right text-sm text-slate-700 font-semibold">' + fmtNum(r.last) + '</td><td class="px-4 py-3 text-right text-sm text-slate-500">' + fmtNum(r.cumulative) + '</td><td class="px-4 py-3 text-right text-sm">' + cg + '</td></tr>';
       }).join('') + '</tbody></table></div>' +
       '<div class="px-4 lg:px-6 py-3 text-[10px] text-slate-400 border-t border-gray-50">※ 시작 연도 또는 최신 연도의 환자수가 0명인 지역은 연평균 성장률을 수학적으로 정의할 수 없어 「산출 불가」로 표시합니다.</div></div>';
+
+    // ═══════════════════════════════════════════════════════════════
+    // 확장 심층 분석 (전부 실측 기반)
+    // ═══════════════════════════════════════════════════════════════
+    const ppp = an.procPerPatient || [], agc = an.ageContribution || [];
+    const inc = an.instConcentration || [], gnd = an.genderTrend || [], brk = an.breakScan || [];
+
+    // ── ① 구조 변화 전환점
+    if (brk.length) {
+      const by = an.breakYear;
+      const chosen = brk.find(b => b.fromYear === by);
+      const full = brk[0];
+      html += '<div class="card-flat p-4 lg:p-6">' +
+        '<div class="flex items-center gap-2 mb-2"><div class="w-7 h-7 rounded-lg bg-violet-50 flex items-center justify-center"><i class="fas fa-wave-square text-violet-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">성장 국면 전환점 탐지 (structural break)</span><span class="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">실측</span></div>' +
+        '<div class="text-[11px] text-slate-500 mb-4 leading-relaxed">추세 시작연도를 한 해씩 뒤로 옮기며 선형 적합도(R²)를 다시 계산했습니다. ' +
+        (full ? '전체 ' + full.n + '개년 회귀는 R²=' + full.r2 + '에 불과하지만, ' : '') +
+        '<b class="text-violet-700">' + by + '년 이후</b> 구간은 R²=' + (chosen ? chosen.r2 : '-') + '로 급등합니다. 즉 이 시장은 ' + by + '년을 기점으로 <b>다른 성장 국면에 들어섰습니다.</b></div>' +
+        '<div class="bg-violet-50/60 border border-violet-100 rounded-xl p-3 mb-4 text-[11px] text-violet-900 leading-relaxed"><i class="fas fa-circle-info mr-1"></i>' + (an.breakRule || '') + '</div>' +
+        '<div style="height:260px"><canvas id="chart-break"></canvas></div>' +
+        '<div class="table-wrap mt-4"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-2.5 text-left">기준 시작연도</th><th class="px-4 py-2.5 text-right">표본수</th><th class="px-4 py-2.5 text-right">연간 증가 (명/년)</th><th class="px-4 py-2.5 text-right">설명력 R²</th><th class="px-4 py-2.5 text-center">채택</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+        brk.map(b => '<tr class="tr' + (b.fromYear === by ? ' bg-violet-50/40' : '') + '"><td class="px-4 py-2.5 font-semibold text-sm text-slate-700">' + b.fromYear + '년~</td><td class="px-4 py-2.5 text-right text-sm text-slate-500">' + b.n + '</td><td class="px-4 py-2.5 text-right text-sm text-slate-600">' + (b.slope === null ? '-' : '+' + b.slope) + '</td><td class="px-4 py-2.5 text-right text-sm font-semibold ' + (b.r2 !== null && b.r2 >= 0.95 ? 'text-emerald-600' : 'text-slate-400') + '">' + (b.r2 === null ? '-' : b.r2) + '</td><td class="px-4 py-2.5 text-center">' + (b.fromYear === by ? '<span class="text-[9px] font-bold text-violet-700 bg-violet-100 px-2 py-0.5 rounded">채택</span>' : '') + '</td></tr>').join('') +
+        '</tbody></table></div></div>';
+    }
+
+    // ── ② 연령 코호트별 성장 기여도
+    if (agc.length) {
+      const pos = agc.filter(r => r.delta > 0).sort((a, b) => b.delta - a.delta);
+      const top = pos[0];
+      html += '<div class="card-flat p-4 lg:p-6">' +
+        '<div class="flex items-center gap-2 mb-2"><div class="w-7 h-7 rounded-lg bg-orange-50 flex items-center justify-center"><i class="fas fa-chart-simple text-orange-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연령대별 성장 기여도 분해</span><span class="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">실측</span></div>' +
+        '<div class="text-[11px] text-slate-500 mb-4 leading-relaxed">' + an.contribBase + '년 → ' + an.contribLast + '년 환자수 순증분을 연령대별로 나눠, <b>누가 이 시장의 성장을 만들었는지</b>를 봅니다.' +
+        (top ? ' 최대 기여 연령대는 <b class="text-orange-700">' + top.band + '세(' + top.contribution + '%)</b>입니다.' : '') + '</div>' +
+        '<div style="height:260px"><canvas id="chart-contrib"></canvas></div>' +
+        '<div class="table-wrap mt-4"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-2.5 text-left">연령대</th><th class="px-4 py-2.5 text-right">' + an.contribBase + '년</th><th class="px-4 py-2.5 text-right">' + an.contribLast + '년</th><th class="px-4 py-2.5 text-right">증감</th><th class="px-4 py-2.5 text-right">순증분 기여율</th><th class="px-4 py-2.5 text-right">구성비 변화</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+        agc.map(r => '<tr class="tr"><td class="px-4 py-2.5 font-semibold text-sm text-slate-700">' + r.band + '세</td><td class="px-4 py-2.5 text-right text-sm text-slate-500">' + fmtNum(r.base) + '</td><td class="px-4 py-2.5 text-right text-sm text-slate-700 font-semibold">' + fmtNum(r.last) + '</td><td class="px-4 py-2.5 text-right text-sm ' + (r.delta >= 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (r.delta >= 0 ? '+' : '') + fmtNum(r.delta) + '</td><td class="px-4 py-2.5 text-right text-sm font-bold ' + (r.contribution === null ? 'text-slate-300' : (r.contribution >= 0 ? 'text-orange-600' : 'text-red-500')) + '">' + (r.contribution === null ? '산출 불가' : (r.contribution > 0 ? '+' : '') + r.contribution + '%') + '</td><td class="px-4 py-2.5 text-right text-[11px] text-slate-500">' + r.baseShare + '% → <b class="text-slate-700">' + r.lastShare + '%</b></td></tr>').join('') +
+        '</tbody></table></div>' +
+        '<div class="px-1 pt-3 text-[10px] text-slate-400">※ 기여율 합계는 100%입니다. 음수는 해당 연령대가 오히려 감소해 전체 성장을 상쇄했다는 뜻입니다.</div></div>';
+    }
+
+    // ── ③ 환자당 수술건수 (양측·재수술 대리지표)
+    if (ppp.length) {
+      const p0 = ppp[0], p1 = ppp[ppp.length - 1];
+      const peak = ppp.reduce((m, r) => r.ratio > m.ratio ? r : m, ppp[0]);
+      html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">' +
+        '<div class="card-flat p-4 lg:p-6">' +
+        '<div class="flex items-center gap-2 mb-2"><div class="w-7 h-7 rounded-lg bg-teal-50 flex items-center justify-center"><i class="fas fa-ear-listen text-teal-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">환자당 수술건수 (양측이식 대리지표)</span></div>' +
+        '<div class="text-[11px] text-slate-500 mb-4 leading-relaxed">' + p0.year + '년 <b>' + p0.ratio.toFixed(3) + '건</b> → ' + p1.year + '년 <b>' + p1.ratio.toFixed(3) + '건</b> (최고 ' + peak.year + '년 ' + peak.ratio.toFixed(3) + '건). ' + p1.year + '년 기준 환자수를 초과하는 건수는 <b class="text-teal-700">' + fmtNum(p1.excess) + '건</b>입니다.</div>' +
+        '<div style="height:240px"><canvas id="chart-ppp"></canvas></div>' +
+        '<div class="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-[10px] text-amber-900 leading-relaxed"><i class="fas fa-triangle-exclamation mr-1"></i><b>해석 주의</b> — HIRA 공개통계에는 양측/재수술 구분 항목이 없습니다. 이 비율은 양측이식·재수술이 늘면 함께 오르는 <b>간접 대리지표</b>이며, 양측이식률 자체가 아닙니다.</div></div>' +
+        // ── ④ 성별 추이
+        '<div class="card-flat p-4 lg:p-6">' +
+        '<div class="flex items-center gap-2 mb-2"><div class="w-7 h-7 rounded-lg bg-pink-50 flex items-center justify-center"><i class="fas fa-venus-mars text-pink-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">성별 구성 추이</span></div>' +
+        '<div class="text-[11px] text-slate-500 mb-4 leading-relaxed">' + (gnd.length ? '여성 비중 ' + gnd[0].femaleShare + '% → ' + gnd[gnd.length - 1].femaleShare + '%. 전 기간 45~53% 범위에서 안정적이며, <b>성별은 이 시장의 유의미한 세분화 축이 아닙니다.</b>' : '') + '</div>' +
+        '<div style="height:240px"><canvas id="chart-gender-trend"></canvas></div></div></div>';
+    }
+
+    // ── ⑤ 기관 종별 집중도
+    if (inc.length) {
+      const i0 = inc[0], i1 = inc[inc.length - 1];
+      html += '<div class="card-flat p-4 lg:p-6">' +
+        '<div class="flex items-center gap-2 mb-2"><div class="w-7 h-7 rounded-lg bg-sky-50 flex items-center justify-center"><i class="fas fa-hospital-user text-sky-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">기관 종별 집중도 — 상급종합병원 지배력</span><span class="text-[9px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">실측</span></div>' +
+        '<div class="text-[11px] text-slate-500 mb-4 leading-relaxed">상급종합병원 환자 비중 ' + i0.tertiaryPatientShare + '% → <b>' + i1.tertiaryPatientShare + '%</b>, 금액 비중 ' + i0.tertiaryAmountShare + '% → <b class="text-sky-700">' + i1.tertiaryAmountShare + '%</b>. 금액 비중이 환자 비중보다 높다는 것은 <b>고액 케이스가 상급종합에 더 쏠린다</b>는 뜻입니다. 기관 HHI는 ' + fmtNum(i0.hhi) + ' → ' + fmtNum(i1.hhi) + '로 여전히 극단적 독점 구간(2,500 이상)입니다.</div>' +
+        '<div style="height:260px"><canvas id="chart-inst-conc"></canvas></div>' +
+        '<div class="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-3 text-[10px] text-slate-600 leading-relaxed"><i class="fas fa-bullseye mr-1"></i><b>영업 시사점</b> — 전체 수요의 약 ' + i1.tertiaryAmountShare + '%가 상급종합병원 채널에서 발생합니다. 소수 대형병원의 채택 여부가 매출을 좌우하는 구조이므로, 채널 전략은 상급종합 집중이 합리적입니다.</div></div>';
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 🔴 여기서부터는 «추정치» 입니다 — 실측 구역과 시각적으로 완전히 분리합니다.
+    // ═══════════════════════════════════════════════════════════════
+    const fc = s.forecast, dvm = s.deviceMarket;
+    if (fc && (fc.patients || fc.usage || fc.amount)) {
+      html += '<div class="mt-2 rounded-2xl border-2 border-dashed border-amber-300 bg-amber-50/40 p-4 lg:p-5">' +
+        '<div class="flex items-start gap-3 mb-4">' +
+        '<div class="w-9 h-9 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center shrink-0"><i class="fas fa-chart-line text-amber-600 text-sm"></i></div>' +
+        '<div><div class="flex items-center gap-2 flex-wrap"><span class="font-bold text-[15px] text-amber-900">' + (fc.patients ? (fc.patients.points[0].year + '~' + fc.patients.points[fc.patients.points.length - 1].year) : '') + ' 시장 전망</span>' +
+        '<span class="text-[10px] text-amber-700 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded font-semibold">기준구간 ' + fc.baseFrom + '~' + (fc.patients ? fc.patients.baseTo : '') + '년 실측</span>' +
+        '<span class="text-[9px] font-bold text-white bg-amber-500 px-2 py-0.5 rounded">추정 · 실측 아님</span></div>' +
+        '<div class="text-[11px] text-amber-800 mt-1 leading-relaxed">' + fc.method + '</div></div></div>' +
+        '<div class="bg-white border border-amber-200 rounded-xl p-3.5 mb-4 text-[11px] text-slate-600 leading-relaxed"><i class="fas fa-triangle-exclamation text-amber-500 mr-1"></i><b class="text-amber-900">전제 및 한계</b><br>' + fc.caveat + '<br>기준구간은 구조 변화 탐지로 선정한 <b>' + fc.baseFrom + '년 이후</b>입니다. 3개 방법의 결과가 서로 다른 폭 자체가 불확실성의 크기이므로, 하나의 값으로 합치지 않고 <b>범위로 제시</b>합니다.</div>';
+
+      const metricMeta = [
+        { key: 'patients', label: '환자수', unit: '명', color: '#f59e0b', canvas: 'chart-fc-patients' },
+        { key: 'usage', label: '수술건수', unit: '건', color: '#fb923c', canvas: 'chart-fc-usage' },
+        { key: 'amount', label: '진료금액', unit: '', color: '#f97316', canvas: 'chart-fc-amount' }
+      ];
+
+      // 요약 카드
+      html += '<div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">' +
+        metricMeta.map(m => {
+          const f = fc[m.key];
+          if (!f) return '';
+          const lastP = f.points[f.points.length - 1];
+          const val = m.key === 'amount' ? fmtAmount(lastP.mid) : fmtNum(lastP.mid) + m.unit;
+          const lo = m.key === 'amount' ? fmtAmount(lastP.low) : fmtNum(lastP.low);
+          const hi = m.key === 'amount' ? fmtAmount(lastP.high) : fmtNum(lastP.high);
+          const cur = m.key === 'amount' ? fmtAmount(f.lastValue) : fmtNum(f.lastValue) + m.unit;
+          return '<div class="bg-white rounded-xl p-3.5 border border-amber-200">' +
+            '<div class="text-[10px] text-slate-400 mb-1">' + lastP.year + '년 ' + m.label + ' (추정)</div>' +
+            '<div class="text-[20px] font-extrabold text-amber-700">' + val + '</div>' +
+            '<div class="text-[10px] text-slate-500 mt-1">범위 ' + lo + ' ~ ' + hi + '</div>' +
+            '<div class="text-[10px] text-slate-400 mt-1.5 pt-1.5 border-t border-slate-100">' + f.lastYear + '년 실측 ' + cur + ' · 연 ' + f.loglinearGrowth + '% 가정</div></div>';
+        }).join('') + '</div>';
+
+      // 차트 3개
+      html += '<div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">' +
+        metricMeta.map(m => fc[m.key] ? '<div class="bg-white rounded-xl p-3.5 border border-amber-200"><div class="text-[11px] font-bold text-slate-700 mb-3">' + m.label + ' — 실측 vs 전망</div><div style="height:220px"><canvas id="' + m.canvas + '"></canvas></div></div>' : '').join('') + '</div>';
+
+      // 방법별 상세 표
+      html += '<div class="bg-white border border-amber-200 rounded-xl overflow-hidden">' +
+        '<div class="px-4 py-3 flex items-center gap-2 border-b border-amber-100"><i class="fas fa-table-columns text-amber-500 text-xs"></i><span class="font-bold text-[12px] text-slate-800">방법별 전망치 상세</span><span class="text-[9px] font-bold text-white bg-amber-500 px-1.5 py-0.5 rounded">추정</span></div>' +
+        metricMeta.map(m => {
+          const f = fc[m.key];
+          if (!f) return '';
+          const fmt = (v) => m.key === 'amount' ? fmtAmount(v) : fmtNum(v);
+          return '<div class="px-4 py-3 border-b border-slate-50 last:border-0">' +
+            '<div class="flex items-center gap-2 flex-wrap mb-2"><span class="text-[12px] font-bold text-slate-800">' + m.label + '</span>' +
+            '<span class="text-[10px] text-slate-500">기준 ' + f.baseFrom + '~' + f.baseTo + '년 (' + f.baseN + '개 표본)</span>' +
+            '<span class="text-[10px] text-slate-400">· 선형 R²=' + f.linearR2 + ' / 로그선형 R²=' + f.loglinearR2 + ' / 기준CAGR=' + f.baseCagr + '%</span></div>' +
+            '<div class="table-wrap"><table class="w-full"><thead><tr class="bg-slate-50 text-[10px] text-slate-400 font-semibold"><th class="px-3 py-2 text-left">연도</th><th class="px-3 py-2 text-right">①선형회귀</th><th class="px-3 py-2 text-right">②로그선형</th><th class="px-3 py-2 text-right">③CAGR</th><th class="px-3 py-2 text-right">3방법 평균</th><th class="px-3 py-2 text-right">하단~상단</th></tr></thead><tbody class="divide-y divide-slate-50">' +
+            f.points.map(p => '<tr><td class="px-3 py-2 font-semibold text-[12px] text-slate-700">' + p.year + '</td><td class="px-3 py-2 text-right text-[12px] text-slate-500">' + fmt(p.linear) + '</td><td class="px-3 py-2 text-right text-[12px] text-slate-500">' + fmt(p.loglinear) + '</td><td class="px-3 py-2 text-right text-[12px] text-slate-500">' + fmt(p.cagr) + '</td><td class="px-3 py-2 text-right text-[12px] font-bold text-amber-700">' + fmt(p.mid) + '</td><td class="px-3 py-2 text-right text-[11px] text-slate-400">' + fmt(p.low) + ' ~ ' + fmt(p.high) + '</td></tr>').join('') +
+            '</tbody></table></div></div>';
+        }).join('') + '</div></div>';
+    }
+
+    // ── 기기 시장규모 추정 (가정 명시형)
+    if (dvm && dvm.scenarios && dvm.scenarios.length) {
+      const won2eok = (w) => (w / 100000000).toFixed(0) + '억원';
+      html += '<div class="rounded-2xl border-2 border-dashed border-rose-300 bg-rose-50/40 p-4 lg:p-5">' +
+        '<div class="flex items-start gap-3 mb-4">' +
+        '<div class="w-9 h-9 rounded-xl bg-rose-100 border border-rose-300 flex items-center justify-center shrink-0"><i class="fas fa-cube text-rose-600 text-sm"></i></div>' +
+        '<div><div class="flex items-center gap-2 flex-wrap"><span class="font-bold text-[15px] text-rose-900">기기(디바이스) 시장규모 추정</span>' +
+        '<span class="text-[9px] font-bold text-white bg-rose-500 px-2 py-0.5 rounded">추정 · 가정 기반</span></div>' +
+        '<div class="text-[11px] text-rose-800 mt-1">산식: ' + dvm.basis + '</div></div></div>' +
+        '<div class="bg-white border border-rose-200 rounded-xl p-3.5 mb-4 text-[11px] text-slate-600 leading-relaxed">' +
+        '<i class="fas fa-circle-exclamation text-rose-500 mr-1"></i><b class="text-rose-900">HIRA 진료금액과 혼동 금지</b><br>' + dvm.caveat + '<br><span class="text-slate-500">' + dvm.priceNote + '</span></div>' +
+        '<div class="table-wrap bg-white border border-rose-200 rounded-xl overflow-hidden"><table class="w-full"><thead><tr class="bg-rose-50/70 text-[10px] text-rose-700 font-semibold border-b border-rose-100"><th class="px-3 py-2.5 text-left">시나리오</th><th class="px-3 py-2.5 text-right">세트 단가 가정</th><th class="px-3 py-2.5 text-right">' + dvm.scenarios[0].latestYear + '년 (실측 건수)</th>' +
+        dvm.scenarios[0].projected.map(p => '<th class="px-3 py-2.5 text-right">' + p.year + '년 (추정)</th>').join('') + '</tr></thead><tbody class="divide-y divide-slate-50">' +
+        dvm.scenarios.map(sc => '<tr' + (sc.label === '기준' ? ' class="bg-rose-50/30"' : '') + '><td class="px-3 py-2.5 font-bold text-[12px] ' + (sc.label === '기준' ? 'text-rose-700' : 'text-slate-600') + '">' + sc.label + '</td>' +
+          '<td class="px-3 py-2.5 text-right text-[11px] text-slate-500">' + (sc.unitPriceWon / 10000).toLocaleString('ko-KR') + '만원</td>' +
+          '<td class="px-3 py-2.5 text-right text-[12px] font-bold text-slate-800">' + won2eok(sc.latestMarketWon) + '<div class="text-[9px] text-slate-400 font-normal">' + fmtNum(sc.latestUsage) + '건</div></td>' +
+          sc.projected.map(p => '<td class="px-3 py-2.5 text-right text-[12px] ' + (sc.label === '기준' ? 'font-bold text-rose-700' : 'text-slate-500') + '">' + won2eok(p.marketWon) + '<div class="text-[9px] text-slate-400 font-normal">' + fmtNum(p.usageMid) + '건</div></td>').join('') +
+          '</tr>').join('') + '</tbody></table></div>' +
+        '<div class="mt-3 text-[10px] text-rose-800 leading-relaxed"><i class="fas fa-layer-group mr-1"></i><b>불확실성 이중 누적</b> — 전망 연도 값은 「추정 수술건수 × 가정 단가」이므로 오차가 두 번 겹칩니다. 실사·투자 자료에 인용할 때는 반드시 <b>단가 가정과 건수 추정 방법을 함께 명시</b>하세요.</div></div>';
+    }
     return html;
   }
   return '';
@@ -10050,6 +10194,153 @@ function renderCIChartsForTab(tab, s) {
           tooltip: { callbacks: { label: (x) => x.dataset.label + ': ' + (x.parsed.y > 0 ? '+' : '') + x.parsed.y + '%' } } },
         scales: { y: { stacked: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '%' } }, x: { stacked: true, grid: { display: false } } } }
     }));
+
+    // ── [확장 1] 구조 변화 전환점 — 시작연도별 회귀 설명력(R²)
+    const brk = an.breakScan || [];
+    if (brk.length && document.getElementById('chart-break')) {
+      ciCharts.push(new Chart(document.getElementById('chart-break'), {
+        type: 'bar',
+        data: {
+          labels: brk.map(b => b.fromYear + '년~'),
+          datasets: [
+            { label: '설명력 R²', data: brk.map(b => b.r2), backgroundColor: brk.map(b => b.fromYear === an.breakYear ? 'rgba(139,92,246,0.85)' : 'rgba(196,181,253,0.55)'), borderColor: brk.map(b => b.fromYear === an.breakYear ? '#7c3aed' : 'transparent'), borderWidth: brk.map(b => b.fromYear === an.breakYear ? 2 : 0), borderRadius: 4, barPercentage: 0.72, order: 2 },
+            { label: '표본 수(년)', type: 'line', yAxisID: 'y1', data: brk.map(b => b.n), borderColor: '#94a3b8', borderWidth: 1.8, borderDash: [5, 4], pointRadius: 2, fill: false, tension: 0.2, order: 1 }
+          ]
+        },
+        options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } },
+            tooltip: { callbacks: { label: (x) => x.datasetIndex === 0 ? 'R² ' + (x.parsed.y === null ? '—' : x.parsed.y.toFixed(4)) : '표본 ' + x.parsed.y + '년' } } },
+          scales: {
+            y: { position: 'left', beginAtZero: false, min: 0.5, max: 1, grid: { color: 'rgba(0,0,0,0.04)' }, title: { display: true, text: 'R² (설명력)', font: { size: 10 } } },
+            y1: { position: 'right', beginAtZero: true, grid: { display: false }, title: { display: true, text: '표본 수', font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 9 } } } } }
+      }));
+    }
+
+    // ── [확장 2] 연령 기여도 — 구성비 변화(막대) + 순증분 기여도(선)
+    const agc = an.ageContribution || [];
+    if (agc.length && document.getElementById('chart-contrib')) {
+      ciCharts.push(new Chart(document.getElementById('chart-contrib'), {
+        type: 'bar',
+        data: {
+          labels: agc.map(a => a.band + '세'),
+          datasets: [
+            { label: an.contribBase + '년 구성비', data: agc.map(a => a.baseShare), backgroundColor: 'rgba(148,163,184,0.6)', borderRadius: 4, barPercentage: 0.75, order: 3 },
+            { label: an.contribLast + '년 구성비', data: agc.map(a => a.lastShare), backgroundColor: 'rgba(249,115,22,0.75)', borderRadius: 4, barPercentage: 0.75, order: 3 },
+            { label: '성장 기여도', type: 'line', yAxisID: 'y1', data: agc.map(a => a.contribution), borderColor: '#1e293b', borderWidth: 2.2, pointRadius: 4, pointBackgroundColor: agc.map(a => (a.contribution || 0) >= 0 ? '#10b981' : '#ef4444'), fill: false, tension: 0.25, order: 1 }
+          ]
+        },
+        options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } },
+            tooltip: { callbacks: { label: (x) => x.dataset.label + ': ' + (x.parsed.y === null ? '산출 불가' : (x.datasetIndex === 2 && x.parsed.y > 0 ? '+' : '') + x.parsed.y + '%') } } },
+          scales: {
+            y: { position: 'left', beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '%' }, title: { display: true, text: '구성비', font: { size: 10 } } },
+            y1: { position: 'right', grid: { display: false }, ticks: { callback: v => v + '%' }, title: { display: true, text: '순증분 기여도', font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 10 } } } } }
+      }));
+    }
+
+    // ── [확장 3] 환자당 수술건수 (양측/재수술 대리지표)
+    const ppp = an.procPerPatient || [];
+    if (ppp.length && document.getElementById('chart-ppp')) {
+      ciCharts.push(new Chart(document.getElementById('chart-ppp'), {
+        type: 'bar',
+        data: {
+          labels: ppp.map(d => d.year + '년'),
+          datasets: [
+            { label: '환자수 초과 건수', data: ppp.map(d => d.excess), backgroundColor: 'rgba(20,184,166,0.5)', borderRadius: 4, barPercentage: 0.6, order: 2 },
+            { label: '환자당 수술건수', type: 'line', yAxisID: 'y1', data: ppp.map(d => d.ratio), borderColor: '#0d9488', backgroundColor: 'rgba(13,148,136,0.08)', borderWidth: 2.5, pointRadius: 3, fill: true, tension: 0.35, order: 1 }
+          ]
+        },
+        options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } },
+            tooltip: { callbacks: { label: (x) => x.datasetIndex === 0 ? '초과 ' + fmtNum(x.parsed.y) + '건' : x.parsed.y.toFixed(4) + '건/명' } } },
+          scales: {
+            y: { position: 'left', beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, title: { display: true, text: '초과 건수', font: { size: 10 } } },
+            y1: { position: 'right', beginAtZero: false, suggestedMin: 1, grid: { display: false }, title: { display: true, text: '건/명', font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 9 } } } } }
+      }));
+    }
+
+    // ── [확장 4] 성별 추이
+    const gnd = an.genderTrend || [];
+    if (gnd.length && document.getElementById('chart-gender-trend')) {
+      ciCharts.push(new Chart(document.getElementById('chart-gender-trend'), {
+        type: 'bar',
+        data: {
+          labels: gnd.map(d => d.year + '년'),
+          datasets: [
+            { label: '남성', data: gnd.map(d => d.male), backgroundColor: 'rgba(59,130,246,0.6)', borderRadius: 3, barPercentage: 0.65, order: 2 },
+            { label: '여성', data: gnd.map(d => d.female), backgroundColor: 'rgba(244,114,182,0.6)', borderRadius: 3, barPercentage: 0.65, order: 2 },
+            { label: '여성 비중', type: 'line', yAxisID: 'y1', data: gnd.map(d => d.femaleShare), borderColor: '#db2777', borderWidth: 2.2, pointRadius: 3, fill: false, tension: 0.35, order: 1 }
+          ]
+        },
+        options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } },
+            tooltip: { callbacks: { label: (x) => x.datasetIndex === 2 ? '여성 비중 ' + x.parsed.y + '%' : x.dataset.label + ' ' + fmtNum(x.parsed.y) + '명' } } },
+          scales: {
+            y: { position: 'left', stacked: true, beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, title: { display: true, text: '환자수(명)', font: { size: 10 } } },
+            y1: { position: 'right', beginAtZero: true, max: 100, grid: { display: false }, ticks: { callback: v => v + '%' } },
+            x: { stacked: true, grid: { display: false }, ticks: { font: { size: 9 } } } } }
+      }));
+    }
+
+    // ── [확장 5] 기관 종별 집중도 — 상급종합 환자/금액 비중 + HHI
+    const inc = an.instConcentration || [];
+    if (inc.length && document.getElementById('chart-inst-conc')) {
+      ciCharts.push(new Chart(document.getElementById('chart-inst-conc'), {
+        type: 'line',
+        data: {
+          labels: inc.map(d => d.year + '년'),
+          datasets: [
+            { label: '상급종합 환자비중', data: inc.map(d => d.tertiaryPatientShare), borderColor: '#0284c7', backgroundColor: 'rgba(2,132,199,0.06)', borderWidth: 2.5, pointRadius: 3, fill: false, tension: 0.35 },
+            { label: '상급종합 금액비중', data: inc.map(d => d.tertiaryAmountShare), borderColor: '#f59e0b', borderWidth: 2.5, pointRadius: 3, fill: false, tension: 0.35 },
+            { label: 'HHI (기관 집중도)', yAxisID: 'y1', data: inc.map(d => d.hhi), borderColor: '#94a3b8', borderWidth: 1.8, borderDash: [5, 4], pointRadius: 2, fill: false, tension: 0.35 }
+          ]
+        },
+        options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } },
+            tooltip: { callbacks: { label: (x) => x.datasetIndex === 2 ? 'HHI ' + fmtNum(x.parsed.y) : x.dataset.label + ' ' + x.parsed.y + '%' } } },
+          scales: {
+            y: { position: 'left', beginAtZero: false, min: 60, max: 100, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '%' } },
+            y1: { position: 'right', beginAtZero: true, grid: { display: false }, title: { display: true, text: 'HHI', font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 9 } } } } }
+      }));
+    }
+
+    // ══ 아래 3개는 «추정» 차트 — 실측 구간은 실선, 전망 구간은 점선 + 밴드 음영 ══
+    const fcc = s.forecast;
+    if (fcc) {
+      [
+        { key: 'patients', label: '환자수', unit: '명', color: '#f59e0b', rgb: '245,158,11', canvas: 'chart-fc-patients' },
+        { key: 'usage', label: '수술건수', unit: '건', color: '#fb923c', rgb: '251,146,60', canvas: 'chart-fc-usage' },
+        { key: 'amount', label: '진료금액', unit: '', color: '#f97316', rgb: '249,115,22', canvas: 'chart-fc-amount' }
+      ].forEach(m => {
+        const f = fcc[m.key];
+        const el = document.getElementById(m.canvas);
+        if (!f || !f.points || !f.points.length || !el) return;
+        const act = y.filter(d => d.year >= f.baseFrom);
+        if (!act.length) return;
+        const nP = f.points.length;
+        const gap = new Array(act.length - 1).fill(null);
+        const lastV = act[act.length - 1][m.key];
+        const isAmt = m.key === 'amount';
+        const fmtV = (v) => v === null ? '—' : (isAmt ? fmtAmount(v) : fmtNum(v) + m.unit);
+        ciCharts.push(new Chart(el, {
+          type: 'line',
+          data: {
+            labels: act.map(d => d.year + '년').concat(f.points.map(p => p.year + '년')),
+            datasets: [
+              { label: '추정 상단', data: gap.concat([lastV], f.points.map(p => p.high)), borderColor: 'rgba(' + m.rgb + ',0.25)', backgroundColor: 'rgba(' + m.rgb + ',0.12)', borderWidth: 1, borderDash: [2, 3], pointRadius: 0, fill: '+2', tension: 0.3, order: 4 },
+              { label: '3방법 평균(추정)', data: gap.concat([lastV], f.points.map(p => p.mid)), borderColor: m.color, borderWidth: 2.4, borderDash: [6, 4], pointRadius: 3.5, pointBackgroundColor: '#fff', pointBorderColor: m.color, pointBorderWidth: 2, fill: false, tension: 0.3, order: 2 },
+              { label: '추정 하단', data: gap.concat([lastV], f.points.map(p => p.low)), borderColor: 'rgba(' + m.rgb + ',0.25)', backgroundColor: 'rgba(' + m.rgb + ',0.12)', borderWidth: 1, borderDash: [2, 3], pointRadius: 0, fill: false, tension: 0.3, order: 4 },
+              { label: '실측', data: act.map(d => d[m.key]).concat(new Array(nP).fill(null)), borderColor: '#1e293b', backgroundColor: 'rgba(30,41,59,0.04)', borderWidth: 2.6, pointRadius: 3.5, pointBackgroundColor: '#1e293b', fill: false, tension: 0.3, order: 1 }
+            ]
+          },
+          options: { ...defs, plugins: {
+              legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 8, font: { size: 9 }, filter: (it) => it.text !== '추정 하단' } },
+              tooltip: { callbacks: { label: (x) => x.dataset.label + ': ' + fmtV(x.parsed.y) } } },
+            scales: {
+              y: { beginAtZero: false, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => isAmt ? fmtAmount(v) : fmtNum(v) } },
+              x: { grid: { display: false }, ticks: { font: { size: 9 } } } } }
+        }));
+      });
+    }
   }
 }
 
