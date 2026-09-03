@@ -356,6 +356,180 @@ cistats.get('/', async (c) => {
     })
   }
 
+  // ═════════════════════════════════════════════════════════════════
+  // [영업 전략] HIRA 시장 실측 × CRM 영업 실적 교차 분석
+  //
+  // 🔴 전제 — HIRA 공개통계에는 «요양기관(병원)별» 데이터가 존재하지 않습니다.
+  //    (지역·기관종별까지만 공개) 따라서 "어느 병원을 공략할지"는 HIRA 단독으로
+  //    도출할 수 없고, 반드시 CRM에 등록된 실제 병원 목록과 교차해야 합니다.
+  //    아래 지역 단위 지표(환자수·성장률)는 HIRA 실측이고,
+  //    병원 단위 지표(단계·미팅·키맨)는 CRM 실측입니다. 추정치는 쓰지 않습니다.
+  //
+  // ⚠️ 사용하지 않은 필드 — hospitals.patient_count / ci_referrals / hearing_aid_sales
+  //    세 컬럼은 전 행이 0(미입력)이어서 근거로 쓸 수 없습니다. 대신 실제로 기록이
+  //    남아 있는 «미팅 횟수 / 파이프라인 단계 / 키맨(영향력 high) 수»만 사용합니다.
+  // ═════════════════════════════════════════════════════════════════
+  const STAGES = ['contact', 'meeting', 'demo', 'proposal', 'contract', 'active_customer']
+  const STAGE_LABELS: Record<string, string> = {
+    contact: '첫 접촉', meeting: '미팅 진행', demo: '데모', proposal: '제안',
+    contract: '계약', active_customer: '활성 거래처'
+  }
+  const WON = ['contract', 'active_customer']   // '확보'의 정의 (dashboard.ts 와 동일)
+
+  const hospRows = (await c.env.DB.prepare(`
+    SELECT h.id, h.name, h.region, h.grade, h.type,
+           COALESCE(h.pipeline_stage,'contact') AS stage,
+           (SELECT COUNT(*) FROM doctors d WHERE d.hospital_id = h.id) AS docCnt,
+           (SELECT COUNT(*) FROM doctors d WHERE d.hospital_id = h.id AND d.influence_level='high') AS keyDoc,
+           (SELECT COUNT(*) FROM meetings m WHERE m.hospital_id = h.id) AS mtgCnt,
+           (SELECT MAX(m.meeting_date) FROM meetings m WHERE m.hospital_id = h.id) AS lastMtg
+    FROM hospitals h
+  `).all()).results as any[]
+
+  // ── 지역 시장 (HIRA 실측). 성장률 기준연도는 위에서 탐지한 구조 전환점(breakYear)과 통일합니다.
+  //    ⚠️ 2010년 기준으로 계산하면 2017년 급여 확대 이전의 등락이 섞여 성장률이 왜곡됩니다.
+  const regBase = breakYear as number
+  const regPatLast: Record<string, number> = {}
+  const regPatBase: Record<string, number> = {}
+  regionData.forEach((r: any) => {
+    if (r.year === latestYear) regPatLast[r.region] = r.patients
+    if (r.year === regBase) regPatBase[r.region] = r.patients
+  })
+  const mktTotal = Object.values(regPatLast).reduce((a, b) => a + b, 0)
+
+  // ── 지역 노력(미팅 수) · 확보(계약 이상) 집계 (CRM 실측)
+  const regMtg: Record<string, number> = {}
+  const regWon: Record<string, number> = {}
+  const regHosp: Record<string, number> = {}
+  hospRows.forEach(h => {
+    const r = h.region || '미지정'
+    regMtg[r] = (regMtg[r] || 0) + (h.mtgCnt || 0)
+    regHosp[r] = (regHosp[r] || 0) + 1
+    if (WON.includes(h.stage)) regWon[r] = (regWon[r] || 0) + 1
+  })
+  const mtgTotal = Object.values(regMtg).reduce((a, b) => a + b, 0)
+
+  // ── [핵심 1] 노력 배분 vs 시장 배분 갭
+  //    미팅 점유율 − 환자 점유율. 양수면 시장 규모보다 많이 방문한 지역(과잉),
+  //    음수면 시장이 큰데 덜 방문한 지역(과소). 배율 = 미팅% ÷ 시장%.
+  const allRegions = [...new Set([...Object.keys(regPatLast), ...Object.keys(regMtg)])]
+  const effortGap = allRegions.map(r => {
+    const pat = regPatLast[r] || 0
+    const base = regPatBase[r] || 0
+    const mtg = regMtg[r] || 0
+    const mktShare = mktTotal ? pat / mktTotal * 100 : 0
+    const mtgShare = mtgTotal ? mtg / mtgTotal * 100 : 0
+    return {
+      region: r, patients: pat, hospitals: regHosp[r] || 0, meetings: mtg, won: regWon[r] || 0,
+      mktShare: +mktShare.toFixed(1), mtgShare: +mtgShare.toFixed(1),
+      gap: +(mtgShare - mktShare).toFixed(1),
+      // ⚠️ 시장이 0인 지역은 배율이 무한대가 되므로 null 로 둡니다.
+      ratio: mktShare > 0 ? +(mtgShare / mktShare).toFixed(2) : null,
+      cagr: (base > 0 && pat > 0) ? +((Math.pow(pat / base, 1 / (latestYear - regBase)) - 1) * 100).toFixed(1) : null
+    }
+  }).sort((a, b) => b.patients - a.patients)
+
+  // ── [핵심 2] 퍼널 단계 분포 + 단계간 전환율
+  const stageCount: Record<string, number> = {}
+  hospRows.forEach(h => { stageCount[h.stage] = (stageCount[h.stage] || 0) + 1 })
+  const funnel = STAGES.map((s, i) => {
+    const n = stageCount[s] || 0
+    const prev = i > 0 ? (stageCount[STAGES[i - 1]] || 0) : 0
+    return {
+      stage: s, label: STAGE_LABELS[s], count: n,
+      convFromPrev: i > 0 && prev > 0 ? +(n / prev * 100).toFixed(0) : null
+    }
+  })
+  const earlyCount = (stageCount['contact'] || 0) + (stageCount['meeting'] || 0)
+  const midCount = (stageCount['demo'] || 0) + (stageCount['proposal'] || 0)
+  const wonCount = (stageCount['contract'] || 0) + (stageCount['active_customer'] || 0)
+
+  // ── [핵심 3] 정체(stall) 탐지
+  //    마지막 미팅 이후 STALL_DAYS 일 이상 경과 & 아직 계약 전인 곳.
+  //    ⚠️ 미팅 기록이 아예 없는 곳은 '경과일'을 계산할 수 없어 별도로 분류합니다.
+  //    ⚠️ 향후 일정이 등록된 곳은 경과일이 음수가 되므로 정체가 아닙니다.
+  const STALL_DAYS = 60
+  const todayMs = Date.now()
+  const daysSince = (d: string | null) =>
+    d ? Math.floor((todayMs - new Date(d + 'T00:00:00Z').getTime()) / 86400000) : null
+
+  const openRows = hospRows.filter(h => !WON.includes(h.stage))
+  const stalled = openRows
+    .map(h => ({ ...h, days: daysSince(h.lastMtg) }))
+    .filter(h => h.days !== null && (h.days as number) >= STALL_DAYS)
+    .sort((a, b) => (b.days as number) - (a.days as number))
+    .map(h => ({ id: h.id, name: h.name, region: h.region, stage: h.stage, label: STAGE_LABELS[h.stage], days: h.days, keyDoc: h.keyDoc, mtgCnt: h.mtgCnt }))
+  const neverMet = openRows
+    .filter(h => !h.lastMtg)
+    .map(h => ({ id: h.id, name: h.name, region: h.region, stage: h.stage, label: STAGE_LABELS[h.stage], docCnt: h.docCnt }))
+
+  // ── [핵심 4] 공략 우선순위 점수 (0~100)
+  // 5개 축을 더해 산출합니다. 각 축의 만점과 근거:
+  //   ① 시장 규모   18점 — 지역 환자 점유율. √(비중) 으로 압축합니다.
+  //        ⚠️ 비중을 그대로 쓰면 서울(56.5%)이 점수를 지배해 상위권이 전부 서울로 채워지고,
+  //           정작 성장 중인 지역이 밀려납니다. 제곱근으로 격차를 줄였습니다.
+  //   ② 성장성     12점 — 기준연도 이후 지역 CAGR (20% 이상이면 만점)
+  //   ③ 전략 공백   15점 — 그 지역에 «계약 병원이 0곳»이면 부여 (거점 없는 시장)
+  //   ④ 과소 투자   10점 — 배율 1 미만(시장 대비 덜 방문)일 때 부족한 만큼 부여
+  //   ⑤ 진행 단계   25점 — 제안 25 / 데모 22 / 미팅 15 / 접촉 8
+  //   ⑥ 관계 자산   20점 — 미팅 횟수(최대 10) + 키맨 수(1명당 5, 최대 10)
+  // ⚠️ 이미 계약·활성 거래처인 곳은 '신규 공략' 대상이 아니므로 목록에서 제외합니다.
+  const maxShare = Math.max(...effortGap.map(e => e.mktShare), 1)
+  const gapByRegion: Record<string, any> = {}
+  effortGap.forEach(e => { gapByRegion[e.region] = e })
+
+  const STAGE_SCORE: Record<string, number> = { contact: 8, meeting: 15, demo: 22, proposal: 25 }
+  const targets = openRows.map(h => {
+    const g = gapByRegion[h.region] || { mktShare: 0, cagr: null, ratio: null, won: 0 }
+    const sSize = 18 * Math.sqrt(Math.min(1, g.mktShare / maxShare))
+    const sGrow = 12 * Math.max(0, Math.min(1, (g.cagr || 0) / 20))
+    const sVoid = (g.won || 0) > 0 ? 0 : 15 * Math.min(1, g.mktShare / 10)
+    const sUnder = (g.ratio === null || g.ratio >= 1) ? 0 : 10 * (1 - g.ratio)
+    const sStage = STAGE_SCORE[h.stage] || 0
+    const sRel = Math.min(10, (h.mtgCnt || 0) * 2) + Math.min(10, (h.keyDoc || 0) * 5)
+    const days = daysSince(h.lastMtg)
+    return {
+      id: h.id, name: h.name, region: h.region, grade: h.grade, type: h.type,
+      stage: h.stage, label: STAGE_LABELS[h.stage],
+      mtgCnt: h.mtgCnt, docCnt: h.docCnt, keyDoc: h.keyDoc, lastMtg: h.lastMtg, days,
+      mktShare: g.mktShare, cagr: g.cagr, regionWon: g.won || 0,
+      score: +(sSize + sGrow + sVoid + sUnder + sStage + sRel).toFixed(1),
+      parts: {
+        size: +sSize.toFixed(1), grow: +sGrow.toFixed(1), void: +sVoid.toFixed(1),
+        under: +sUnder.toFixed(1), stage: sStage, rel: sRel
+      }
+    }
+  }).sort((a, b) => b.score - a.score)
+
+  // ── 커버리지 (참고용) — '미개척 지역 발굴'이 이미 무의미함을 보여주는 지표
+  const coveredPat = allRegions
+    .filter(r => (regHosp[r] || 0) > 0)
+    .reduce((a, r) => a + (regPatLast[r] || 0), 0)
+  const wonPat = allRegions
+    .filter(r => (regWon[r] || 0) > 0)
+    .reduce((a, r) => a + (regPatLast[r] || 0), 0)
+  const uncoveredRegions = effortGap
+    .filter(e => e.patients > 0 && e.hospitals === 0)
+    .map(e => ({ region: e.region, patients: e.patients }))
+
+  const salesStrategy = {
+    baseYear: regBase, latestYear, marketTotal: mktTotal,
+    hospitalTotal: hospRows.length, meetingTotal: mtgTotal,
+    effortGap, funnel, stalled, neverMet, targets,
+    stallDays: STALL_DAYS,
+    summary: {
+      earlyCount, midCount, wonCount,
+      earlyShare: hospRows.length ? +(earlyCount / hospRows.length * 100).toFixed(0) : 0,
+      // 미팅 → 데모 전환율: 퍼널 '허리'가 막혔는지 보는 단일 지표
+      meetingToDemo: (stageCount['meeting'] || 0) > 0
+        ? +((stageCount['demo'] || 0) / (stageCount['meeting'] || 1) * 100).toFixed(0) : null,
+      coverageShare: mktTotal ? +(coveredPat / mktTotal * 100).toFixed(1) : 0,
+      wonCoverageShare: mktTotal ? +(wonPat / mktTotal * 100).toFixed(1) : 0,
+      uncoveredRegions,
+      stalledCount: stalled.length, neverMetCount: neverMet.length
+    }
+  }
+
   const latestInst = instData.filter((i: any) => i.year === latestYear)
   const totalInstPat = latestInst.reduce((a: number, b: any) => a + b.patients, 0)
   const topInst = latestInst[0] as any
@@ -383,6 +557,8 @@ cistats.get('/', async (c) => {
         breakScan, breakYear, breakRule,
         contribBase, contribLast
       },
+      // 영업 전략 (HIRA 지역 실측 × CRM 병원 실측 교차 — 추정 없음)
+      salesStrategy,
       // 🔴 아래 두 블록은 «추정치»입니다. 실측(analytics)과 반드시 구분해 표기하세요.
       forecast,
       deviceMarket,

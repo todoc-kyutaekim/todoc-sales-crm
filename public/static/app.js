@@ -10011,6 +10011,214 @@ function renderCIContent(tab, s) {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // 영업 전략 — HIRA 지역 시장 실측 × CRM 병원 실측 교차 (추정 없음)
+    // ⚠️ 변수명은 sst/sgp/sfn/stl/stg 로 잡습니다 (기존 짧은 전역명 충돌 회피)
+    // ═══════════════════════════════════════════════════════════════
+    const sst = s.salesStrategy;
+    if (sst && sst.targets && sst.targets.length) {
+      const sgp = sst.effortGap || [], sfn = sst.funnel || [];
+      const stl = sst.stalled || [], stg = sst.targets || [], snm = sst.neverMet || [];
+      const sm = sst.summary || {};
+      const stColor = { contact: '#94a3b8', meeting: '#2563eb', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#ef4444', active_customer: '#059669' };
+      const stBadge = { contact: 'bg-slate-100 text-slate-600', meeting: 'bg-blue-50 text-blue-700', demo: 'bg-violet-50 text-violet-700', proposal: 'bg-amber-50 text-amber-700' };
+
+      // ── 섹션 헤더 + 전제 고지
+      html += '<div class="mt-2 rounded-2xl border-2 border-emerald-300 bg-emerald-50/30 p-4 lg:p-5">' +
+        '<div class="flex items-start gap-3 mb-3">' +
+        '<div class="w-9 h-9 rounded-xl bg-emerald-100 border border-emerald-300 flex items-center justify-center shrink-0"><i class="fas fa-crosshairs text-emerald-600 text-sm"></i></div>' +
+        '<div><div class="flex items-center gap-2 flex-wrap"><span class="font-bold text-[15px] text-emerald-900">영업 전략 — 어디를 공략할 것인가</span>' +
+        '<span class="text-[9px] font-bold text-emerald-700 bg-white border border-emerald-300 px-1.5 py-0.5 rounded">실측</span></div>' +
+        '<div class="text-[11px] text-emerald-800/80 mt-0.5">HIRA 지역 시장(' + sst.latestYear + '년 환자 ' + fmtNum(sst.marketTotal) + '명) × CRM 영업 실적(병원 ' + sst.hospitalTotal + '곳 · 미팅 ' + fmtNum(sst.meetingTotal) + '회) 교차</div></div></div>' +
+        '<div class="bg-white/70 border border-emerald-200 rounded-xl p-3 text-[11px] text-slate-600 leading-relaxed mb-4">' +
+        '<i class="fas fa-triangle-exclamation text-amber-500 mr-1"></i><b>데이터 한계를 먼저 밝힙니다.</b> HIRA 공개통계에는 <b>병원별(요양기관별) 환자수가 존재하지 않습니다</b>(지역·기관종별까지만 공개). ' +
+        '따라서 「어느 병원에 환자가 몇 명인지」는 알 수 없고, 아래 순위는 <b>「그 병원이 속한 지역의 시장 크기·성장률」과 「그 병원에 대한 우리 영업 진척도」를 결합</b>한 것입니다. ' +
+        '또한 CRM의 <code class="bg-slate-100 px-1 rounded">환자수·의뢰건수·보청기 매출</code> 컬럼은 <b>48곳 전부 미입력(0)</b>이어서 근거로 쓰지 않았고, 실제 기록이 남은 <b>미팅 횟수·파이프라인 단계·키맨 수</b>만 사용했습니다.</div>';
+
+      // ── [결론 0] 커버리지는 이미 끝난 문제
+      html += '<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">' +
+        '<div class="flex items-center gap-2 mb-2"><i class="fas fa-ban text-slate-400 text-xs"></i><span class="font-bold text-sm text-slate-800">먼저 폐기해야 할 결론 — "미개척 지역을 발굴하자"</span></div>' +
+        '<div class="text-[11px] text-slate-600 leading-relaxed">CRM에 병원이 등록된 지역들의 ' + sst.latestYear + '년 환자 합계는 전체의 <b class="text-emerald-700">' + sm.coverageShare + '%</b>입니다. ' +
+        (sm.uncoveredRegions && sm.uncoveredRegions.length
+          ? '남은 미커버 지역은 ' + sm.uncoveredRegions.map(u => u.region + '(' + u.patients + '명)').join(', ') + '뿐입니다. '
+          : '미커버 지역이 없습니다. ') +
+        '즉 <b>지역 커버리지는 이미 사실상 완료</b>되어 있고, 여기서 더 얻을 것이 없습니다. ' +
+        '반면 <b>계약(또는 활성 거래처)을 확보한 지역</b>의 환자 합계는 <b class="text-red-600">' + sm.wonCoverageShare + '%</b>에 그칩니다. ' +
+        '문제는 «커버»가 아니라 «전환»입니다.</div>' +
+        '<div class="mt-3 flex flex-wrap gap-2">' +
+        '<div class="flex-1 min-w-[140px] bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2"><div class="text-[10px] text-emerald-700">병원 등록 지역 시장 커버</div><div class="text-lg font-bold text-emerald-700">' + sm.coverageShare + '%</div></div>' +
+        '<div class="flex-1 min-w-[140px] bg-red-50 border border-red-200 rounded-lg px-3 py-2"><div class="text-[10px] text-red-700">계약 확보 지역 시장 커버</div><div class="text-lg font-bold text-red-600">' + sm.wonCoverageShare + '%</div></div>' +
+        '<div class="flex-1 min-w-[140px] bg-slate-50 border border-slate-200 rounded-lg px-3 py-2"><div class="text-[10px] text-slate-500">격차</div><div class="text-lg font-bold text-slate-700">' + (sm.coverageShare - sm.wonCoverageShare).toFixed(1) + '%p</div></div>' +
+        '</div></div>';
+
+      // ── [결론 1] 노력 배분 vs 시장 배분
+      const over = sgp.filter(g => g.ratio !== null && g.ratio > 1.5 && g.patients > 0).sort((a, b) => b.ratio - a.ratio);
+      // ⚠️ 병원이 한 곳도 등록되지 않은 지역은 배율이 0으로 계산되어 「가장 과소」로 잡히지만,
+      //    애초에 공략 대상이 없어 실질적인 의미가 없습니다 (예: 세종 = 환자 1명 · 병원 0곳).
+      //    따라서 병원이 실제로 있는 지역만 «과소 투자»로 판정합니다.
+      const under = sgp.filter(g => g.ratio !== null && g.ratio < 1 && g.patients > 0 && g.hospitals > 0).sort((a, b) => a.ratio - b.ratio);
+      const voidReg = sgp.filter(g => g.patients > 0 && g.won === 0).sort((a, b) => b.patients - a.patients);
+      html += '<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">' +
+        '<div class="flex items-center gap-2 mb-2"><i class="fas fa-scale-unbalanced text-indigo-500 text-xs"></i><span class="font-bold text-sm text-slate-800">진짜 문제 ① — 영업 노력이 시장과 정반대로 배분됨</span></div>' +
+        '<div class="text-[11px] text-slate-600 leading-relaxed mb-4">각 지역의 <b>미팅 점유율</b>(우리가 쓴 노력)과 <b>환자 점유율</b>(실제 시장 크기)을 비교합니다. ' +
+        '<b>배율 = 미팅% ÷ 시장%</b> 이며, 1이면 시장 크기만큼 방문한 것, 1보다 크면 과잉, 작으면 과소입니다.' +
+        (over.length ? ' 가장 과잉은 <b class="text-red-600">' + over[0].region + '(' + over[0].ratio + '배)</b>' + (over[0].cagr !== null && over[0].cagr < 0 ? '인데, 이 지역 시장은 오히려 연 ' + Math.abs(over[0].cagr) + '% 축소 중입니다.' : '입니다.') : '') +
+        (under.length ? ' 반대로 <b class="text-indigo-700">' + under[0].region + '(' + under[0].ratio + '배)</b>는 <b>병원이 등록된 지역 중</b> 시장 대비 가장 덜 방문한 곳입니다'
+          + (under[0].cagr !== null && under[0].cagr > 0 ? '. 이 지역 시장은 오히려 연 <b class="text-indigo-700">+' + under[0].cagr + '%</b> 성장 중입니다.' : '.') : '') + '</div>' +
+        '<div style="height:300px"><canvas id="chart-effort-gap"></canvas></div>' +
+        '<div class="table-wrap mt-4"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100">' +
+        '<th class="px-3 py-2.5 text-left">지역</th><th class="px-3 py-2.5 text-right">' + sst.latestYear + '년 환자</th><th class="px-3 py-2.5 text-right">시장 점유</th>' +
+        '<th class="px-3 py-2.5 text-right">미팅</th><th class="px-3 py-2.5 text-right">노력 점유</th><th class="px-3 py-2.5 text-right">배율</th>' +
+        '<th class="px-3 py-2.5 text-right">' + sst.baseYear + '년~ 성장률</th><th class="px-3 py-2.5 text-right">병원</th><th class="px-3 py-2.5 text-right">계약</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+        sgp.filter(g => g.patients > 0 || g.meetings > 0).map(g => {
+          const rt = g.ratio === null ? '<span class="text-slate-300">-</span>'
+            : '<span class="font-bold ' + (g.ratio > 1.5 ? 'text-red-600' : (g.ratio < 1 ? 'text-indigo-600' : 'text-slate-600')) + '">' + g.ratio + '배</span>';
+          const cg = g.cagr === null ? '<span class="text-slate-300">산출 불가</span>'
+            : '<span class="font-semibold ' + (g.cagr > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (g.cagr > 0 ? '+' : '') + g.cagr + '%</span>';
+          return '<tr class="tr' + (g.patients > 0 && g.won === 0 ? ' bg-amber-50/40' : '') + '">' +
+            '<td class="px-3 py-2.5 font-semibold text-sm text-slate-700">' + g.region + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm text-slate-700">' + fmtNum(g.patients) + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-[11px] text-slate-500">' + g.mktShare + '%</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm text-slate-600">' + g.meetings + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-[11px] text-slate-500">' + g.mtgShare + '%</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm">' + rt + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm">' + cg + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm text-slate-500">' + g.hospitals + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm ' + (g.won > 0 ? 'font-bold text-emerald-600' : 'text-red-400 font-bold') + '">' + g.won + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        '<div class="px-1 pt-3 text-[10px] text-slate-400">※ 연한 주황 배경 = 환자가 있는데 계약이 0건인 지역(거점 공백). 성장률은 심층분석에서 탐지한 구조 전환점 ' + sst.baseYear + '년을 기준으로 계산했습니다.</div>' +
+        (voidReg.length ? '<div class="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-[11px] text-amber-900 leading-relaxed"><i class="fas fa-flag mr-1"></i><b>거점이 없는 시장</b> — ' +
+          voidReg.slice(0, 4).map(g => g.region + '(환자 ' + g.patients + '명, 시장 ' + g.mktShare + '%' + (g.cagr !== null ? ', 성장 ' + (g.cagr > 0 ? '+' : '') + g.cagr + '%' : '') + ')').join(' · ') +
+          '. 이 지역들은 시장이 실재하는데 계약 병원이 한 곳도 없습니다.</div>' : '') +
+        '</div>';
+
+      // ── [결론 2] 퍼널 허리 붕괴
+      const fMeet = sfn.find(f => f.stage === 'meeting'), fDemo = sfn.find(f => f.stage === 'demo');
+      html += '<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">' +
+        '<div class="flex items-center gap-2 mb-2"><i class="fas fa-filter-circle-xmark text-rose-500 text-xs"></i><span class="font-bold text-sm text-slate-800">진짜 문제 ② — 퍼널 «허리»가 막혀 있음</span></div>' +
+        '<div class="text-[11px] text-slate-600 leading-relaxed mb-4">병원 ' + sst.hospitalTotal + '곳의 파이프라인 단계 분포입니다. ' +
+        '초기 단계(첫 접촉 + 미팅)에 <b class="text-rose-600">' + sm.earlyCount + '곳(' + sm.earlyShare + '%)</b>이 적재된 반면, ' +
+        '중간 단계(데모 + 제안)는 <b class="text-rose-600">단 ' + sm.midCount + '곳</b>뿐입니다. ' +
+        (fMeet && fDemo ? '미팅(' + fMeet.count + '곳) → 데모(' + fDemo.count + '곳) 전환율은 <b class="text-rose-600">' + sm.meetingToDemo + '%</b>입니다. ' : '') +
+        '미팅은 활발히 하는데 <b>그다음 단계로 넘기는 행위(데모·제안)가 사실상 일어나지 않고 있습니다.</b> 신규 접촉을 늘려도 이 지점에서 다시 고일 뿐입니다.</div>' +
+        '<div style="height:260px"><canvas id="chart-funnel"></canvas></div>' +
+        '<div class="table-wrap mt-4"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-2.5 text-left">단계</th><th class="px-4 py-2.5 text-right">병원 수</th><th class="px-4 py-2.5 text-right">비중</th><th class="px-4 py-2.5 text-right">직전 단계 대비</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+        sfn.map(f => '<tr class="tr' + (f.stage === 'demo' || f.stage === 'proposal' ? ' bg-rose-50/40' : '') + '">' +
+          '<td class="px-4 py-2.5 text-sm font-semibold text-slate-700"><span class="inline-block w-2 h-2 rounded-full mr-2" style="background:' + (stColor[f.stage] || '#94a3b8') + '"></span>' + f.label + '</td>' +
+          '<td class="px-4 py-2.5 text-right text-sm font-bold text-slate-800">' + f.count + '</td>' +
+          '<td class="px-4 py-2.5 text-right text-[11px] text-slate-500">' + (sst.hospitalTotal ? (f.count / sst.hospitalTotal * 100).toFixed(0) : 0) + '%</td>' +
+          '<td class="px-4 py-2.5 text-right text-sm ' + (f.convFromPrev !== null && f.convFromPrev < 30 ? 'font-bold text-rose-600' : 'text-slate-500') + '">' + (f.convFromPrev === null ? '-' : f.convFromPrev + '%') + '</td></tr>').join('') +
+        '</tbody></table></div>' +
+        '<div class="px-1 pt-3 text-[10px] text-slate-400">※ 「직전 단계 대비」는 각 단계에 <b>현재 머물러 있는</b> 병원 수의 비율입니다. 시간에 따른 실제 전환율이 아니라 <b>현재 재고(stock) 분포</b>이므로, 100%를 넘을 수도 있습니다.</div></div>';
+
+      // ── [결론 3] 정체 병원
+      html += '<div class="bg-white rounded-xl border border-slate-200 p-4 mb-4">' +
+        '<div class="flex items-center gap-2 mb-2"><i class="fas fa-hourglass-half text-orange-500 text-xs"></i><span class="font-bold text-sm text-slate-800">진짜 문제 ③ — 방치된 파이프라인 ' + (sm.stalledCount + sm.neverMetCount) + '곳</span></div>' +
+        '<div class="text-[11px] text-slate-600 leading-relaxed mb-4">마지막 미팅 이후 <b>' + sst.stallDays + '일 이상</b> 접촉이 끊긴 채 계약 전 단계에 남아 있는 병원이 <b class="text-orange-600">' + sm.stalledCount + '곳</b>, ' +
+        '미팅 기록이 아예 없는 병원이 <b class="text-orange-600">' + sm.neverMetCount + '곳</b>입니다. ' +
+        (stl.length ? '가장 오래 방치된 곳은 <b>' + stl[0].name + '(' + stl[0].region + ', ' + stl[0].days + '일)</b>입니다. ' : '') +
+        '신규 발굴보다 <b>이 목록을 되살리는 것이 비용이 훨씬 낮습니다.</b></div>' +
+        (stl.length ? '<div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-3 py-2.5 text-left">병원</th><th class="px-3 py-2.5 text-left">지역</th><th class="px-3 py-2.5 text-center">단계</th><th class="px-3 py-2.5 text-right">미팅</th><th class="px-3 py-2.5 text-right">키맨</th><th class="px-3 py-2.5 text-right">경과</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+          stl.map(h => '<tr class="tr">' +
+            '<td class="px-3 py-2.5 text-sm font-semibold text-slate-700">' + h.name + '</td>' +
+            '<td class="px-3 py-2.5 text-[11px] text-slate-500">' + h.region + '</td>' +
+            '<td class="px-3 py-2.5 text-center"><span class="text-[9px] font-bold px-1.5 py-0.5 rounded ' + (stBadge[h.stage] || 'bg-slate-100 text-slate-600') + '">' + h.label + '</span></td>' +
+            '<td class="px-3 py-2.5 text-right text-sm text-slate-600">' + h.mtgCnt + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm ' + (h.keyDoc > 0 ? 'font-bold text-violet-600' : 'text-slate-300') + '">' + (h.keyDoc || 0) + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm font-bold ' + (h.days >= 120 ? 'text-red-600' : (h.days >= 90 ? 'text-orange-600' : 'text-amber-600')) + '">' + h.days + '일</td></tr>').join('') +
+          '</tbody></table></div>' : '') +
+        (snm.length ? '<div class="mt-3 bg-slate-50 border border-slate-200 rounded-xl p-3 text-[11px] text-slate-600 leading-relaxed"><i class="fas fa-user-slash mr-1"></i><b>미팅 기록이 전무한 ' + snm.length + '곳</b> — ' +
+          snm.map(h => h.name + '(' + h.region + (h.docCnt ? ', 의사 ' + h.docCnt + '명 등록' : ', 의사 미등록') + ')').join(' · ') +
+          '. 등록만 되어 있고 실제 접촉이 시작되지 않았습니다. 의사 정보가 등록된 곳은 즉시 첫 미팅을 잡을 수 있습니다.</div>' : '') +
+        '</div>';
+
+      // ── [핵심] 공략 우선순위
+      const top3 = stg.slice(0, 3);
+      html += '<div class="bg-white rounded-xl border-2 border-emerald-300 p-4 mb-4">' +
+        '<div class="flex items-center gap-2 mb-2"><i class="fas fa-ranking-star text-emerald-600 text-xs"></i><span class="font-bold text-sm text-slate-800">공략 우선순위 — ' + stg.length + '곳 채점 결과</span></div>' +
+        '<div class="text-[11px] text-slate-600 leading-relaxed mb-3">계약·활성 거래처를 제외한 <b>' + stg.length + '곳</b>을 6개 축으로 채점했습니다. ' +
+        '「시장 규모(18) + 성장성(12) + 거점 공백(15) + 과소 투자(10) + 진행 단계(25) + 관계 자산(20)」 = 100점 만점.' +
+        (top3.length ? ' 1위는 <b class="text-emerald-700">' + top3[0].name + '(' + top3[0].score + '점)</b>입니다.' : '') + '</div>' +
+        '<div class="bg-slate-50 border border-slate-200 rounded-xl p-3 mb-4 text-[10px] text-slate-600 leading-relaxed">' +
+        '<b>왜 시장 규모를 18점으로 낮췄나</b> — 지역 환자 점유율을 그대로 반영하면 서울(' + (sgp[0] ? sgp[0].mktShare : 0) + '%)이 점수를 지배해 상위권이 전부 서울로 채워지고, 정작 성장 중이면서 거점이 없는 지역이 밀려납니다. ' +
+        '제곱근으로 압축하고 <b>「거점 공백」·「과소 투자」 축을 추가</b>해, 시장이 크더라도 이미 계약이 있는 지역은 가점을 받지 못하도록 했습니다.</div>' +
+        '<div style="height:340px"><canvas id="chart-priority"></canvas></div>' +
+        '<div class="table-wrap mt-4"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100">' +
+        '<th class="px-3 py-2.5 text-left">#</th><th class="px-3 py-2.5 text-left">병원</th><th class="px-3 py-2.5 text-left">지역</th><th class="px-3 py-2.5 text-center">단계</th>' +
+        '<th class="px-3 py-2.5 text-right">미팅</th><th class="px-3 py-2.5 text-right">키맨</th><th class="px-3 py-2.5 text-right">경과</th>' +
+        '<th class="px-3 py-2.5 text-right">지역 성장</th><th class="px-3 py-2.5 text-right">점수</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+        stg.map((t, i) => {
+          const dd = t.days === null ? '<span class="text-slate-300">미팅 없음</span>'
+            : (t.days < 0 ? '<span class="text-emerald-600 font-semibold">예정 ' + Math.abs(t.days) + '일후</span>'
+              : '<span class="' + (t.days >= 120 ? 'text-red-600 font-bold' : (t.days >= 60 ? 'text-orange-600 font-semibold' : 'text-slate-500')) + '">' + t.days + '일</span>');
+          const cg = t.cagr === null ? '<span class="text-slate-300">-</span>'
+            : '<span class="' + (t.cagr > 0 ? 'text-emerald-600' : 'text-red-500') + ' font-semibold">' + (t.cagr > 0 ? '+' : '') + t.cagr + '%</span>';
+          return '<tr class="tr' + (i < 7 ? ' bg-emerald-50/30' : '') + '">' +
+            '<td class="px-3 py-2.5 text-sm font-bold ' + (i < 3 ? 'text-emerald-700' : 'text-slate-400') + '">' + (i + 1) + '</td>' +
+            '<td class="px-3 py-2.5 text-sm font-semibold text-slate-800">' + t.name + (t.regionWon === 0 ? ' <span class="text-[9px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1 py-0.5 rounded ml-1">거점 없음</span>' : '') + '</td>' +
+            '<td class="px-3 py-2.5 text-[11px] text-slate-500">' + t.region + '</td>' +
+            '<td class="px-3 py-2.5 text-center"><span class="text-[9px] font-bold px-1.5 py-0.5 rounded ' + (stBadge[t.stage] || 'bg-slate-100 text-slate-600') + '">' + t.label + '</span></td>' +
+            '<td class="px-3 py-2.5 text-right text-sm text-slate-600">' + t.mtgCnt + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm ' + (t.keyDoc > 0 ? 'font-bold text-violet-600' : 'text-slate-300') + '">' + (t.keyDoc || 0) + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-[11px]">' + dd + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-[11px]">' + cg + '</td>' +
+            '<td class="px-3 py-2.5 text-right text-sm font-bold text-emerald-700">' + t.score + '</td></tr>';
+        }).join('') + '</tbody></table></div>' +
+        '<div class="px-1 pt-3 text-[10px] text-slate-400">※ 점수는 «상대 비교용 우선순위»입니다. 병원별 환자수가 공개되지 않으므로 절대적 매출 기대값이 아닙니다. 「경과」가 음수인 곳은 향후 미팅이 이미 예약된 상태입니다.</div></div>';
+
+      // ── 액션 플랜
+      const actNow = stg.filter(t => t.stage === 'proposal' || t.stage === 'demo');
+      const actVoid = stg.filter(t => t.regionWon === 0 && t.cagr !== null && t.cagr > 0).slice(0, 6);
+      const actRevive = stl.filter(h => h.days >= 120);
+      html += '<div class="bg-white rounded-xl border border-slate-200 p-4">' +
+        '<div class="flex items-center gap-2 mb-3"><i class="fas fa-list-check text-emerald-600 text-xs"></i><span class="font-bold text-sm text-slate-800">앞으로 어떻게 할 것인가 — 4단계 실행안</span></div>' +
+        '<div class="space-y-3">' +
+        // 1순위
+        '<div class="border-l-4 border-rose-400 bg-rose-50/50 rounded-r-xl p-3">' +
+        '<div class="flex items-center gap-2 mb-1"><span class="text-[9px] font-bold text-white bg-rose-500 px-1.5 py-0.5 rounded">즉시</span><span class="font-bold text-[13px] text-rose-900">퍼널 허리를 뚫는다 — 신규 접촉을 «멈추고» 데모로 밀어올린다</span></div>' +
+        '<div class="text-[11px] text-slate-700 leading-relaxed">현재 미팅 단계 ' + (fMeet ? fMeet.count : 0) + '곳 중 데모로 넘어간 곳은 ' + (fDemo ? fDemo.count : 0) + '곳(' + sm.meetingToDemo + '%)뿐입니다. ' +
+        '초기 단계가 ' + sm.earlyShare + '%인 상태에서 접촉을 더 늘리면 <b>같은 지점에 더 고입니다.</b> ' +
+        '<b>미팅 단계 병원에는 「다음 미팅 = 데모 일정 확정」을 목표로 재접촉</b>하고, 데모 없이 3회 이상 미팅한 곳은 원인을 기록으로 남겨 판단 근거를 만드세요.' +
+        (actNow.length ? '<div class="mt-2 pt-2 border-t border-rose-200 text-[11px]"><b class="text-rose-800">중간 단계 ' + actNow.length + '곳(가장 먼저 닫아야 할 딜)</b> — ' +
+          actNow.map(t => t.name + '(' + t.label + (t.days !== null && t.days >= 60 ? ', <b class="text-red-600">' + t.days + '일 방치</b>' : '') + (t.keyDoc > 0 ? ', 키맨 ' + t.keyDoc + '명' : '') + ')').join(' · ') + '</div>' : '') +
+        '</div></div>' +
+        // 2순위
+        '<div class="border-l-4 border-amber-400 bg-amber-50/50 rounded-r-xl p-3">' +
+        '<div class="flex items-center gap-2 mb-1"><span class="text-[9px] font-bold text-white bg-amber-500 px-1.5 py-0.5 rounded">1순위</span><span class="font-bold text-[13px] text-amber-900">거점 없는 성장 시장에 «첫 계약»을 만든다</span></div>' +
+        '<div class="text-[11px] text-slate-700 leading-relaxed">' +
+        (voidReg.length ? voidReg.slice(0, 3).map(g => '<b>' + g.region + '</b>(시장 ' + g.mktShare + '%' + (g.cagr !== null ? ' · 성장 ' + (g.cagr > 0 ? '+' : '') + g.cagr + '%' : '') + ' · 계약 0건)').join(', ') + '는 시장이 실재하고 성장하는데 계약 병원이 없습니다. ' : '') +
+        '한 지역의 첫 계약은 같은 지역 후속 병원 설득의 «레퍼런스»가 되므로, 여기서의 1건은 서울에서의 1건보다 파급력이 큽니다.' +
+        (actVoid.length ? '<div class="mt-2 pt-2 border-t border-amber-200 text-[11px]"><b class="text-amber-800">우선 타깃</b> — ' +
+          actVoid.map(t => t.name + '(' + t.region + ', ' + t.label + ')').join(' · ') + '</div>' : '') +
+        '</div></div>' +
+        // 3순위
+        '<div class="border-l-4 border-orange-400 bg-orange-50/50 rounded-r-xl p-3">' +
+        '<div class="flex items-center gap-2 mb-1"><span class="text-[9px] font-bold text-white bg-orange-500 px-1.5 py-0.5 rounded">2순위</span><span class="font-bold text-[13px] text-orange-900">방치된 파이프라인을 되살린다 (신규보다 값이 싸다)</span></div>' +
+        '<div class="text-[11px] text-slate-700 leading-relaxed">' + sst.stallDays + '일 이상 정체 ' + sm.stalledCount + '곳 + 미팅 기록 전무 ' + sm.neverMetCount + '곳 = <b>' + (sm.stalledCount + sm.neverMetCount) + '곳</b>이 대기 중입니다. ' +
+        '이미 관계가 형성된 곳을 되살리는 편이 새 병원을 처음부터 여는 것보다 비용이 낮습니다. ' +
+        (actRevive.length ? '특히 <b class="text-red-700">120일 이상 방치된 ' + actRevive.length + '곳</b>(' + actRevive.map(h => h.name).join(', ') + ')은 이대로 두면 관계가 소멸합니다.' : '') +
+        '<div class="mt-2 pt-2 border-t border-orange-200 text-[11px]"><b class="text-orange-800">운영 규칙 제안</b> — 「계약 전 단계 & 최종 접촉 ' + sst.stallDays + '일 경과」를 자동 경고로 띄우고, 담당자가 <b>재접촉 또는 보류 사유 기록</b> 중 하나를 반드시 선택하게 하세요. 그래야 이 목록이 다시 쌓이지 않습니다.</div>' +
+        '</div></div>' +
+        // 4순위
+        '<div class="border-l-4 border-indigo-400 bg-indigo-50/50 rounded-r-xl p-3">' +
+        '<div class="flex items-center gap-2 mb-1"><span class="text-[9px] font-bold text-white bg-indigo-500 px-1.5 py-0.5 rounded">3순위</span><span class="font-bold text-[13px] text-indigo-900">과잉 투입 지역의 방문 예산을 재배치한다</span></div>' +
+        '<div class="text-[11px] text-slate-700 leading-relaxed">' +
+        (over.length ? over.slice(0, 3).map(g => '<b>' + g.region + '</b>(배율 ' + g.ratio + '배' + (g.cagr !== null ? ', 시장 ' + (g.cagr > 0 ? '+' : '') + g.cagr + '%' : '') + ')').join(', ') + '는 시장 규모에 비해 방문이 과하게 집중돼 있습니다. ' : '') +
+        '<b>단, 이미 계약을 확보해 사후 관리(활성 거래처 응대)로 방문하는 경우는 정상</b>이므로, 무조건 줄일 대상이 아닙니다. ' +
+        '확인해야 할 것은 <b>「계약도 없는데 방문만 반복되는 지역」</b>이며, 이 경우 방문 횟수를 줄여 위 1·2순위 대상으로 이동시키는 편이 낫습니다. ' +
+        '지역별 이동 시간·유류비가 정산에 반영되므로, 재배치는 곧 비용 절감으로도 이어집니다.</div></div>' +
+        '</div>' +
+        '<div class="mt-4 bg-slate-50 border border-slate-200 rounded-xl p-3 text-[10px] text-slate-500 leading-relaxed">' +
+        '<i class="fas fa-database mr-1"></i><b>이 분석의 정확도를 올리는 방법</b> — 현재 CRM의 <code class="bg-white px-1 rounded border">환자수 / 인공와우 의뢰건수 / 보청기 매출</code> 컬럼이 ' + sst.hospitalTotal + '곳 전부 비어 있어, ' +
+        '병원별 «실제 규모»를 점수에 반영하지 못하고 지역 평균으로 대체했습니다. 이 값을 채우면 「같은 서울 안에서 어느 병원이 더 큰가」를 구분할 수 있어 순위 정확도가 크게 올라갑니다. ' +
+        '또한 의사의 <b>영향력 등급(키맨 여부)</b>이 <b>공략 대상 ' + stg.length + '곳 가운데 ' + stg.filter(t => t.keyDoc > 0).length + '곳</b>에만 입력돼 있어, ' +
+        '관계 자산 점수(20점)가 대부분의 병원에서 미팅 횟수만으로 계산됐습니다. ' +
+        '<span class="text-slate-400">(계약·활성 거래처는 공략 대상에서 제외되므로 이 집계에 포함되지 않습니다.)</span></div>' +
+        '</div>';
+
+      html += '</div>';
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // 🔴 여기서부터는 «추정치» 입니다 — 실측 구역과 시각적으로 완전히 분리합니다.
     // ═══════════════════════════════════════════════════════════════
     const fc = s.forecast, dvm = s.deviceMarket;
@@ -10300,6 +10508,83 @@ function renderCIChartsForTab(tab, s) {
             y: { position: 'left', beginAtZero: false, min: 60, max: 100, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '%' } },
             y1: { position: 'right', beginAtZero: true, grid: { display: false }, title: { display: true, text: 'HHI', font: { size: 10 } } },
             x: { grid: { display: false }, ticks: { font: { size: 9 } } } } }
+      }));
+    }
+
+    // ── [영업 전략 1] 노력 배분 vs 시장 배분
+    const sgpC = (s.salesStrategy && s.salesStrategy.effortGap) ? s.salesStrategy.effortGap.filter(g => g.patients > 0 || g.meetings > 0) : [];
+    if (sgpC.length && document.getElementById('chart-effort-gap')) {
+      ciCharts.push(new Chart(document.getElementById('chart-effort-gap'), {
+        type: 'bar',
+        data: {
+          labels: sgpC.map(g => g.region),
+          datasets: [
+            { label: '시장 점유율(환자)', data: sgpC.map(g => g.mktShare), backgroundColor: 'rgba(37,99,235,0.75)', borderRadius: 3, barPercentage: 0.82, categoryPercentage: 0.72, order: 3 },
+            { label: '노력 점유율(미팅)', data: sgpC.map(g => g.mtgShare), backgroundColor: 'rgba(239,68,68,0.7)', borderRadius: 3, barPercentage: 0.82, categoryPercentage: 0.72, order: 3 },
+            // 배율은 스케일이 크게 달라 별도 축(y1)에 점선으로 얹습니다.
+            { label: '배율(미팅%÷시장%)', type: 'line', yAxisID: 'y1', data: sgpC.map(g => g.ratio), borderColor: '#7c3aed', borderWidth: 1.8, borderDash: [5, 4], pointRadius: 3, pointBackgroundColor: '#fff', pointBorderColor: '#7c3aed', pointBorderWidth: 1.6, fill: false, tension: 0.2, spanGaps: true, order: 1 }
+          ]
+        },
+        options: { ...defs, plugins: {
+            legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 8, font: { size: 9 } } },
+            tooltip: { callbacks: { label: (x) => x.datasetIndex === 2
+                ? '배율 ' + (x.parsed.y === null ? '산출 불가' : x.parsed.y + '배')
+                : x.dataset.label + ' ' + x.parsed.y + '%' } } },
+          scales: {
+            y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '%' }, title: { display: true, text: '점유율', font: { size: 10 } } },
+            y1: { position: 'right', beginAtZero: true, grid: { display: false }, title: { display: true, text: '배율(배)', font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { font: { size: 9 } } } } }
+      }));
+    }
+
+    // ── [영업 전략 2] 퍼널 단계 분포
+    const sfnC = (s.salesStrategy && s.salesStrategy.funnel) || [];
+    if (sfnC.length && document.getElementById('chart-funnel')) {
+      const fCol = { contact: '#94a3b8', meeting: '#2563eb', demo: '#8b5cf6', proposal: '#f59e0b', contract: '#ef4444', active_customer: '#059669' };
+      ciCharts.push(new Chart(document.getElementById('chart-funnel'), {
+        type: 'bar',
+        data: {
+          labels: sfnC.map(f => f.label),
+          datasets: [{ label: '병원 수', data: sfnC.map(f => f.count), backgroundColor: sfnC.map(f => fCol[f.stage] || '#94a3b8'), borderRadius: 5, barPercentage: 0.68 }]
+        },
+        options: { ...defs, indexAxis: 'y', plugins: {
+            legend: { display: false },
+            tooltip: { callbacks: { label: (x) => {
+              const f = sfnC[x.dataIndex];
+              return f.count + '곳' + (f.convFromPrev !== null ? ' (직전 단계 대비 ' + f.convFromPrev + '%)' : '');
+            } } } },
+          scales: {
+            x: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { precision: 0, callback: v => v + '곳' } },
+            y: { grid: { display: false }, ticks: { font: { size: 10 } } } } }
+      }));
+    }
+
+    // ── [영업 전략 3] 우선순위 점수 (상위 15곳, 축별 누적)
+    const stgC = (s.salesStrategy && s.salesStrategy.targets) ? s.salesStrategy.targets.slice(0, 15) : [];
+    if (stgC.length && document.getElementById('chart-priority')) {
+      const AX = [
+        { k: 'size', label: '시장 규모', c: 'rgba(37,99,235,0.8)' },
+        { k: 'grow', label: '성장성', c: 'rgba(5,150,105,0.8)' },
+        { k: 'void', label: '거점 공백', c: 'rgba(245,158,11,0.85)' },
+        { k: 'under', label: '과소 투자', c: 'rgba(99,102,241,0.8)' },
+        { k: 'stage', label: '진행 단계', c: 'rgba(139,92,246,0.8)' },
+        { k: 'rel', label: '관계 자산', c: 'rgba(100,116,139,0.75)' }
+      ];
+      ciCharts.push(new Chart(document.getElementById('chart-priority'), {
+        type: 'bar',
+        data: {
+          labels: stgC.map(t => t.name.length > 13 ? t.name.slice(0, 12) + '…' : t.name),
+          datasets: AX.map(a => ({ label: a.label, data: stgC.map(t => t.parts[a.k]), backgroundColor: a.c, borderRadius: 2, barPercentage: 0.8 }))
+        },
+        options: { ...defs, indexAxis: 'y', plugins: {
+            legend: { display: true, position: 'top', labels: { boxWidth: 9, padding: 6, font: { size: 9 } } },
+            tooltip: { callbacks: {
+              title: (x) => stgC[x[0].dataIndex].name + ' (' + stgC[x[0].dataIndex].region + ' · ' + stgC[x[0].dataIndex].label + ')',
+              label: (x) => x.dataset.label + ' ' + x.parsed.x + '점',
+              footer: (x) => '총점 ' + stgC[x[0].dataIndex].score + '점' } } },
+          scales: {
+            x: { stacked: true, beginAtZero: true, max: 100, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '점' } },
+            y: { stacked: true, grid: { display: false }, ticks: { font: { size: 9 } } } } }
       }));
     }
 
