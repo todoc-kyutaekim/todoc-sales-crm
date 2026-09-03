@@ -57,6 +57,103 @@ cistats.get('/', async (c) => {
   const seoulGyeonggi = latestRegion.filter((r: any) => r.region === '서울' || r.region === '경기').reduce((a: number, b: any) => a + b.patients, 0)
   if (totalRegPat > 0) insights.push({ icon: 'fa-city', title: '수도권 집중도', value: (seoulGyeonggi / totalRegPat * 100).toFixed(1) + '%', desc: latestYear + '년 서울+경기 환자 비율' })
 
+  // ─────────────────────────────────────────────────────────────────
+  // 심층 분석 (analytics) — 16개년 데이터에서 계산합니다.
+  // ⚠️ 모든 값은 HIRA 실측치에서만 산출하며, 추정·예측치를 섞지 않습니다.
+  // ─────────────────────────────────────────────────────────────────
+  const a10rows = (age10All.results as any[])   // 이미 gender!='계', age_group not in ('계','소계') 로 필터됨
+  const ageSum = (y: number, groups: string[]) =>
+    a10rows.filter(r => r.year === y && groups.includes(r.age_group))
+           .reduce((a, b) => a + b.patients, 0)
+  const ageTotal = (y: number) =>
+    a10rows.filter(r => r.year === y).reduce((a, b) => a + b.patients, 0)
+
+  const PED = ['0_9세', '10_19세']
+  const SENIOR = ['60_69세', '70_79세', '80세이상']
+
+  // 연령 코호트 추이 (소아 vs 성인 vs 60세+)
+  const cohortTrend = years.map((y: any) => {
+    const t = ageTotal(y), ped = ageSum(y, PED), sen = ageSum(y, SENIOR)
+    return {
+      year: y, total: t, pediatric: ped, adult: t - ped, senior: sen,
+      pediatricShare: t ? +(ped / t * 100).toFixed(1) : 0,
+      adultShare: t ? +((t - ped) / t * 100).toFixed(1) : 0,
+      seniorShare: t ? +(sen / t * 100).toFixed(1) : 0
+    }
+  })
+
+  // 지역 집중도 (HHI · 수도권 비중) 추이
+  const concentration = years.map((y: any) => {
+    const rs = regionData.filter((r: any) => r.year === y)
+    const t = rs.reduce((a: number, b: any) => a + b.patients, 0)
+    if (!t) return { year: y, seoulShare: 0, capitalShare: 0, top3Share: 0, hhi: 0 }
+    const get = (n: string) => (rs.find((r: any) => r.region === n)?.patients || 0)
+    const sorted = rs.map((r: any) => r.patients).sort((a: number, b: number) => b - a)
+    return {
+      year: y,
+      seoulShare: +(get('서울') / t * 100).toFixed(1),
+      capitalShare: +((get('서울') + get('경기') + get('인천')) / t * 100).toFixed(1),
+      top3Share: +(sorted.slice(0, 3).reduce((a: number, b: number) => a + b, 0) / t * 100).toFixed(1),
+      hhi: Math.round(rs.reduce((a: number, b: any) => a + Math.pow(b.patients / t * 100, 2), 0))
+    }
+  })
+
+  // 금액 증가를 물량(건수) 기여 / 단가(건당) 기여로 분해
+  const amountDecomp = yearlyData.slice(1).map((cur, i) => {
+    const prv = yearlyData[i]
+    const unitPrev = prv.amount / prv.usage, unitCur = cur.amount / cur.usage
+    return {
+      year: cur.year,
+      amountGrowth: +((cur.amount / prv.amount - 1) * 100).toFixed(1),
+      volumeContrib: +((cur.usage / prv.usage - 1) * 100).toFixed(1),
+      priceContrib: +((unitCur / unitPrev - 1) * 100).toFixed(1),
+      unitCost: Math.round(cur.amount * 1000 / cur.usage)   // 원
+    }
+  })
+
+  // 지역별 16개년 성장 (CAGR)
+  const fy = years[0] as number, ly2 = years[years.length - 1] as number
+  const regionGrowth = [...new Set(regionData.map((r: any) => r.region))].map((reg: any) => {
+    const a = regionData.find((r: any) => r.year === fy && r.region === reg)?.patients || 0
+    const b = regionData.find((r: any) => r.year === ly2 && r.region === reg)?.patients || 0
+    const cum = regionData.filter((r: any) => r.region === reg).reduce((s: number, r: any) => s + r.patients, 0)
+    return {
+      region: reg, first: a, last: b, cumulative: cum,
+      // ⚠️ 시작 또는 종료 연도가 0명이면 CAGR 이 정의되지 않으므로 null 로 둡니다 (Infinity 방지)
+      cagr: (a > 0 && b > 0) ? +((Math.pow(b / a, 1 / (ly2 - fy)) - 1) * 100).toFixed(2) : null
+    }
+  }).sort((x: any, y3: any) => (y3.cagr ?? -999) - (x.cagr ?? -999))
+
+  // 코호트 요약 인사이트 — 이 시장의 가장 큰 구조 변화
+  if (cohortTrend.length >= 2) {
+    const c0 = cohortTrend[0], c1 = cohortTrend[cohortTrend.length - 1]
+    insights.push({
+      icon: 'fa-person-cane', title: '60세 이상 비중', value: c1.seniorShare + '%',
+      desc: c0.year + '년 ' + c0.seniorShare + '% → ' + c1.year + '년 ' + c1.seniorShare + '% (' +
+            (c1.seniorShare - c0.seniorShare > 0 ? '+' : '') + (c1.seniorShare - c0.seniorShare).toFixed(1) + '%p)'
+    })
+    insights.push({
+      icon: 'fa-child-reaching', title: '소아(0-19세) 비중', value: c1.pediatricShare + '%',
+      desc: c0.year + '년 ' + c0.pediatricShare + '% → ' + c1.year + '년 ' + c1.pediatricShare + '% (' +
+            (c1.pediatricShare - c0.pediatricShare).toFixed(1) + '%p)'
+    })
+    if (c0.senior > 0) {
+      insights.push({
+        icon: 'fa-arrow-up-right-dots', title: '60세 이상 환자 증가',
+        value: (c1.senior / c0.senior).toFixed(1) + '배',
+        desc: c0.year + '년 ' + c0.senior + '명 → ' + c1.year + '년 ' + c1.senior + '명'
+      })
+    }
+  }
+  if (yearlyData.length >= 2) {
+    const f2 = yearlyData[0], l2 = yearlyData[yearlyData.length - 1]
+    const u0 = f2.amount * 1000 / f2.usage, u1 = l2.amount * 1000 / l2.usage
+    insights.push({
+      icon: 'fa-tags', title: '건당 진료금액', value: (u1 / 10000).toFixed(0) + '만원',
+      desc: f2.year + '년 ' + (u0 / 10000).toFixed(0) + '만원 → ' + ((u1 / u0 - 1) * 100).toFixed(0) + '% 상승'
+    })
+  }
+
   const latestInst = instData.filter((i: any) => i.year === latestYear)
   const totalInstPat = latestInst.reduce((a: number, b: any) => a + b.patients, 0)
   const topInst = latestInst[0] as any
@@ -75,6 +172,8 @@ cistats.get('/', async (c) => {
       code: 'S5800 (인공와우이식술)',
       period: yearlyData.length ? yearlyData[0].year + '-' + yearlyData[yearlyData.length - 1].year : '-',
       years, yearly: yearlyData, age10: age10All.results, age5: age5All.results, region: regionData, institution: instData, insights,
+      // 심층 분석 결과 (전부 HIRA 실측 기반 계산값)
+      analytics: { cohortTrend, concentration, amountDecomp, regionGrowth },
       policyChanges: [
         { year: 2005, event: '인공와우 이식술 요양급여 대상 최초 지정' },
         { year: 2009, event: '2세 미만 소아 양측 인공와우 건강보험 급여 인정' },

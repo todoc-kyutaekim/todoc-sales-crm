@@ -9829,9 +9829,9 @@ async function loadCIStats() {
 function renderCITab(tab) {
   destroyCICharts();
   const s = window._ciData;
-  const tabs = ['overview', 'age', 'region', 'institution', 'amount'];
-  const tabLabels = { overview: '종합', age: '연령별', region: '지역별', institution: '기관 종별', amount: '진료금액' };
-  const tabIcons = { overview: 'fa-chart-pie', age: 'fa-cake-candles', region: 'fa-map-location-dot', institution: 'fa-hospital', amount: 'fa-won-sign' };
+  const tabs = ['overview', 'age', 'region', 'institution', 'amount', 'insight'];
+  const tabLabels = { overview: '종합', age: '연령별', region: '지역별', institution: '기관 종별', amount: '진료금액', insight: '심층 분석' };
+  const tabIcons = { overview: 'fa-chart-pie', age: 'fa-cake-candles', region: 'fa-map-location-dot', institution: 'fa-hospital', amount: 'fa-won-sign', insight: 'fa-lightbulb' };
   // ⚠️ 원본 데이터 출처 링크 — 서버(/api/ci-stats)가 sourceUrl 을 내려주지만,
   //    구버전 응답(캐시)에도 대비해 같은 주소를 기본값으로 둡니다.
   const srcUrl = (s && s.sourceUrl) || 'https://opendata.hira.or.kr/op/opc/olapMfrnIntrsIlnsInfoTab1.do';
@@ -9891,12 +9891,60 @@ function renderCIContent(tab, s) {
   if (tab === 'amount') {
     const totalAmount = y.reduce((a, b) => a + b.amount, 0);
     return '<div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-2">' +
-      '<div class="sc !p-4"><div class="text-[11px] text-slate-400 mb-1">6년간 총 진료금액</div><div class="text-[22px] font-extrabold text-slate-800">' + fmtAmount(totalAmount) + '</div></div>' +
+      // ⚠️ '6년간' 하드코딩을 제거했습니다 — 실제 데이터 기간에서 계산합니다 (16개년이면 '16년간').
+      '<div class="sc !p-4"><div class="text-[11px] text-slate-400 mb-1">' + (y[y.length - 1].year - y[0].year + 1) + '년간 총 진료금액</div><div class="text-[22px] font-extrabold text-slate-800">' + fmtAmount(totalAmount) + '</div><div class="text-[10px] text-slate-400 mt-0.5">' + y[0].year + '-' + y[y.length - 1].year + ' 누적</div></div>' +
       '<div class="sc !p-4"><div class="text-[11px] text-slate-400 mb-1">' + y[y.length - 1].year + '년</div><div class="text-[22px] font-extrabold text-brand-600">' + fmtAmount(y[y.length - 1].amount) + '</div></div>' +
       '<div class="sc !p-4"><div class="text-[11px] text-slate-400 mb-1">1인당 평균</div><div class="text-[22px] font-extrabold text-emerald-600">' + fmtAmount(y[y.length - 1].amount / y[y.length - 1].patients) + '</div></div></div>' +
       '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">' +
       '<div class="card-flat p-4 lg:p-6"><div class="font-bold text-sm text-slate-800 mb-5">진료금액 추이</div><div style="height:300px"><canvas id="chart-amount-trend"></canvas></div></div>' +
       '<div class="card-flat p-4 lg:p-6"><div class="font-bold text-sm text-slate-800 mb-5">성별 금액 비교</div><div style="height:300px"><canvas id="chart-amount-gender"></canvas></div></div></div>';
+  }
+  if (tab === 'insight') {
+    // ⚠️ 아래 모든 수치는 서버가 HIRA 실측치로 계산한 analytics 값입니다 (추정·예측 없음).
+    const an = s.analytics;
+    if (!an) return '<div class="card-flat p-8 text-center text-slate-400"><i class="fas fa-rotate text-2xl mb-2 block"></i>심층 분석 데이터를 불러오지 못했습니다.<div class="text-[11px] mt-2">브라우저 강력 새로고침(Ctrl+Shift+R) 후 다시 시도해 주세요.</div></div>';
+    const ct = an.cohortTrend, cc = an.concentration, ad = an.amountDecomp, rg = an.regionGrowth;
+    const c0 = ct[0], c1 = ct[ct.length - 1];
+    const k0 = cc[0], k1 = cc[cc.length - 1];
+    const pp = (v) => (v > 0 ? '+' : '') + v.toFixed(1) + '%p';
+    const arrow = (v) => v > 0 ? '<i class="fas fa-arrow-up text-emerald-500"></i>' : (v < 0 ? '<i class="fas fa-arrow-down text-red-500"></i>' : '');
+
+    // ── 핵심 발견 카드
+    var html = '<div class="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-4 lg:p-5">' +
+      '<div class="flex items-center gap-2 mb-3"><i class="fas fa-lightbulb text-amber-500"></i><span class="font-bold text-sm text-amber-900">핵심 발견 — ' + c0.year + '~' + c1.year + ' ' + (c1.year - c0.year + 1) + '개년 분석</span></div>' +
+      '<div class="grid grid-cols-1 md:grid-cols-3 gap-3">' +
+      '<div class="bg-white rounded-xl p-3.5 border border-amber-100"><div class="text-[11px] font-bold text-amber-700 mb-1">① 환자층이 소아에서 고령으로 역전</div><div class="text-[11px] text-slate-600 leading-relaxed">소아(0-19세) 비중 <b>' + c0.pediatricShare + '% → ' + c1.pediatricShare + '%</b>, 60세 이상 <b>' + c0.seniorShare + '% → ' + c1.seniorShare + '%</b>. 60세 이상 환자수는 ' + c0.senior + '명 → ' + c1.senior + '명으로 <b>' + (c1.senior / c0.senior).toFixed(1) + '배</b> 증가했습니다.</div></div>' +
+      '<div class="bg-white rounded-xl p-3.5 border border-amber-100"><div class="text-[11px] font-bold text-amber-700 mb-1">② 금액 성장은 단가 상승이 주도</div><div class="text-[11px] text-slate-600 leading-relaxed">건당 진료금액 <b>' + (ad.length ? (ad[ad.length - 1].unitCost / 10000).toFixed(0) : '-') + '만원</b>. 수술건수보다 단가가 더 빠르게 올라 진료금액 증가폭이 물량 증가폭을 웃돕니다.</div></div>' +
+      '<div class="bg-white rounded-xl p-3.5 border border-amber-100"><div class="text-[11px] font-bold text-amber-700 mb-1">③ 수도권 쏠림은 오히려 심화</div><div class="text-[11px] text-slate-600 leading-relaxed">서울 단독 비중은 ' + k0.seoulShare + '% → ' + k1.seoulShare + '%로 낮아졌지만, 수도권(서울·경기·인천) 합계는 <b>' + k0.capitalShare + '% → ' + k1.capitalShare + '%</b>로 올라 경기로 이동했을 뿐입니다.</div></div>' +
+      '</div></div>';
+
+    // ── 연령 코호트
+    html += '<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">' +
+      '<div class="card-flat p-4 lg:p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-rose-50 flex items-center justify-center"><i class="fas fa-people-arrows text-rose-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">연령 구성 역전 (소아 vs 60세+)</span></div><div style="height:280px"><canvas id="chart-cohort"></canvas></div></div>' +
+      '<div class="card-flat p-4 lg:p-6"><div class="flex items-center gap-2 mb-5"><div class="w-7 h-7 rounded-lg bg-indigo-50 flex items-center justify-center"><i class="fas fa-compress text-indigo-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">지역 집중도 추이 (서울 · 수도권 · HHI)</span></div><div style="height:280px"><canvas id="chart-concentration"></canvas></div></div></div>';
+
+    // ── 금액 분해
+    html += '<div class="card-flat p-4 lg:p-6"><div class="flex items-center gap-2 mb-2"><div class="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center"><i class="fas fa-scale-balanced text-emerald-500 text-xs"></i></div><span class="font-bold text-sm text-slate-800">진료금액 증가 요인 분해 — 물량 vs 단가</span></div>' +
+      '<div class="text-[11px] text-slate-400 mb-4">전년 대비 진료금액 증가율을 수술건수(물량) 증가분과 건당금액(단가) 상승분으로 나눠 봅니다.</div>' +
+      '<div style="height:280px"><canvas id="chart-decomp"></canvas></div></div>';
+
+    // ── 코호트 표
+    html += '<div class="card-flat overflow-hidden"><div class="px-4 lg:px-6 py-4 flex items-center gap-2"><i class="fas fa-table-list text-slate-400 text-xs"></i><span class="font-bold text-sm text-slate-800">연령 코호트 상세</span></div>' +
+      '<div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-3 text-left">연도</th><th class="px-4 py-3 text-right">전체</th><th class="px-4 py-3 text-right">소아(0-19)</th><th class="px-4 py-3 text-right">소아비중</th><th class="px-4 py-3 text-right">성인(20+)</th><th class="px-4 py-3 text-right">60세+</th><th class="px-4 py-3 text-right">60세+비중</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+      ct.map(r => '<tr class="tr"><td class="px-4 py-3 font-bold text-sm text-slate-800">' + r.year + '</td><td class="px-4 py-3 text-right text-sm text-slate-600">' + fmtNum(r.total) + '</td><td class="px-4 py-3 text-right text-sm text-blue-600">' + fmtNum(r.pediatric) + '</td><td class="px-4 py-3 text-right text-sm font-semibold text-blue-500">' + r.pediatricShare + '%</td><td class="px-4 py-3 text-right text-sm text-slate-600">' + fmtNum(r.adult) + '</td><td class="px-4 py-3 text-right text-sm text-orange-600">' + fmtNum(r.senior) + '</td><td class="px-4 py-3 text-right text-sm font-semibold text-orange-500">' + r.seniorShare + '%</td></tr>').join('') +
+      '</tbody></table></div></div>';
+
+    // ── 지역 성장률 표
+    html += '<div class="card-flat overflow-hidden"><div class="px-4 lg:px-6 py-4 flex items-center gap-2"><i class="fas fa-ranking-star text-slate-400 text-xs"></i><span class="font-bold text-sm text-slate-800">지역별 ' + (c1.year - c0.year + 1) + '개년 성장률 (환자수 CAGR)</span></div>' +
+      '<div class="table-wrap"><table class="w-full"><thead><tr class="bg-gray-50/80 text-[11px] text-slate-400 font-semibold border-y border-gray-100"><th class="px-4 py-3 text-left">지역</th><th class="px-4 py-3 text-right">' + c0.year + '년</th><th class="px-4 py-3 text-right">' + c1.year + '년</th><th class="px-4 py-3 text-right">누적 환자수</th><th class="px-4 py-3 text-right">연평균 성장률</th></tr></thead><tbody class="divide-y divide-gray-50">' +
+      rg.map(r => {
+        // ⚠️ cagr 이 null 인 지역은 시작/종료 연도 환자수가 0이어서 성장률을 정의할 수 없습니다.
+        const cg = r.cagr === null ? '<span class="text-slate-300">산출 불가</span>'
+          : '<span class="font-semibold ' + (r.cagr > 0 ? 'text-emerald-600' : 'text-red-500') + '">' + (r.cagr > 0 ? '+' : '') + r.cagr + '%</span>';
+        return '<tr class="tr"><td class="px-4 py-3 font-semibold text-sm text-slate-700">' + r.region + '</td><td class="px-4 py-3 text-right text-sm text-slate-500">' + fmtNum(r.first) + '</td><td class="px-4 py-3 text-right text-sm text-slate-700 font-semibold">' + fmtNum(r.last) + '</td><td class="px-4 py-3 text-right text-sm text-slate-500">' + fmtNum(r.cumulative) + '</td><td class="px-4 py-3 text-right text-sm">' + cg + '</td></tr>';
+      }).join('') + '</tbody></table></div>' +
+      '<div class="px-4 lg:px-6 py-3 text-[10px] text-slate-400 border-t border-gray-50">※ 시작 연도 또는 최신 연도의 환자수가 0명인 지역은 연평균 성장률을 수학적으로 정의할 수 없어 「산출 불가」로 표시합니다.</div></div>';
+    return html;
   }
   return '';
 }
@@ -9943,6 +9991,65 @@ function renderCIChartsForTab(tab, s) {
   if (tab === 'amount') {
     ciCharts.push(new Chart(document.getElementById('chart-amount-trend'), { type: 'line', data: { labels: y.map(d => d.year + '년'), datasets: [{ label: '총 진료금액', data: y.map(d => d.amount), borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.08)', borderWidth: 2.5, pointRadius: 4, pointBackgroundColor: '#2563eb', fill: true, tension: 0.4 }] }, options: { ...defs, scales: { y: { beginAtZero: false, grid: { color: '#eef0f5' }, ticks: { callback: v => fmtAmount(v) } }, x: { grid: { display: false } } } } }));
     ciCharts.push(new Chart(document.getElementById('chart-amount-gender'), { type: 'bar', data: { labels: y.map(d => d.year + '년'), datasets: [{ label: '남성', data: y.map(d => d.male_amount), backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 6, barPercentage: 0.6 }, { label: '여성', data: y.map(d => d.female_amount), backgroundColor: 'rgba(244,114,182,0.7)', borderRadius: 6, barPercentage: 0.6 }] }, options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 15 } } }, scales: { y: { stacked: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => fmtAmount(v) } }, x: { stacked: true, grid: { display: false } } } } }));
+  }
+  if (tab === 'insight') {
+    const an = s.analytics;
+    if (!an) return;
+    const ct = an.cohortTrend, cc = an.concentration, ad = an.amountDecomp;
+    const lbl = ct.map(d => d.year + '년');
+
+    // 연령 구성 역전 — 소아/60세+ 비중을 선으로, 실제 환자수를 막대로
+    ciCharts.push(new Chart(document.getElementById('chart-cohort'), {
+      type: 'bar',
+      data: {
+        labels: lbl,
+        datasets: [
+          { label: '소아(0-19세) 비중', type: 'line', yAxisID: 'y1', data: ct.map(d => d.pediatricShare), borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)', borderWidth: 2.5, pointRadius: 3, fill: false, tension: 0.35, order: 1 },
+          { label: '60세+ 비중', type: 'line', yAxisID: 'y1', data: ct.map(d => d.seniorShare), borderColor: '#f97316', backgroundColor: 'rgba(249,115,22,0.08)', borderWidth: 2.5, pointRadius: 3, fill: false, tension: 0.35, order: 1 },
+          { label: '소아 환자수', data: ct.map(d => d.pediatric), backgroundColor: 'rgba(59,130,246,0.35)', borderRadius: 4, barPercentage: 0.5, order: 2 },
+          { label: '60세+ 환자수', data: ct.map(d => d.senior), backgroundColor: 'rgba(249,115,22,0.35)', borderRadius: 4, barPercentage: 0.5, order: 2 }
+        ]
+      },
+      options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } } },
+        scales: {
+          y: { position: 'left', beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, title: { display: true, text: '환자수(명)', font: { size: 10 } } },
+          y1: { position: 'right', beginAtZero: true, max: 100, grid: { display: false }, ticks: { callback: v => v + '%' }, title: { display: true, text: '비중', font: { size: 10 } } },
+          x: { grid: { display: false } } } }
+    }));
+
+    // 지역 집중도 — 서울/수도권 비중(좌) + HHI(우)
+    ciCharts.push(new Chart(document.getElementById('chart-concentration'), {
+      type: 'line',
+      data: {
+        labels: cc.map(d => d.year + '년'),
+        datasets: [
+          { label: '서울 비중', data: cc.map(d => d.seoulShare), borderColor: '#6366f1', borderWidth: 2.5, pointRadius: 3, fill: false, tension: 0.35 },
+          { label: '수도권 비중', data: cc.map(d => d.capitalShare), borderColor: '#10b981', borderWidth: 2.5, pointRadius: 3, fill: false, tension: 0.35 },
+          { label: 'HHI (집중도지수)', yAxisID: 'y1', data: cc.map(d => d.hhi), borderColor: '#94a3b8', borderWidth: 1.8, borderDash: [5, 4], pointRadius: 2, fill: false, tension: 0.35 }
+        ]
+      },
+      options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } } },
+        scales: {
+          y: { position: 'left', beginAtZero: true, max: 100, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '%' } },
+          y1: { position: 'right', beginAtZero: true, grid: { display: false }, title: { display: true, text: 'HHI', font: { size: 10 } } },
+          x: { grid: { display: false } } } }
+    }));
+
+    // 금액 증가 요인 분해 — 물량/단가 기여를 누적막대, 총 증가율을 선으로
+    ciCharts.push(new Chart(document.getElementById('chart-decomp'), {
+      type: 'bar',
+      data: {
+        labels: ad.map(d => d.year + '년'),
+        datasets: [
+          { label: '물량(건수) 기여', data: ad.map(d => d.volumeContrib), backgroundColor: 'rgba(16,185,129,0.65)', borderRadius: 4, barPercentage: 0.7, order: 2 },
+          { label: '단가(건당) 기여', data: ad.map(d => d.priceContrib), backgroundColor: 'rgba(251,146,60,0.7)', borderRadius: 4, barPercentage: 0.7, order: 2 },
+          { label: '진료금액 증가율', type: 'line', data: ad.map(d => d.amountGrowth), borderColor: '#1e293b', borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#1e293b', fill: false, tension: 0.3, order: 1 }
+        ]
+      },
+      options: { ...defs, plugins: { legend: { display: true, position: 'top', labels: { boxWidth: 10, padding: 10, font: { size: 10 } } },
+          tooltip: { callbacks: { label: (x) => x.dataset.label + ': ' + (x.parsed.y > 0 ? '+' : '') + x.parsed.y + '%' } } },
+        scales: { y: { stacked: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { callback: v => v + '%' } }, x: { stacked: true, grid: { display: false } } } }
+    }));
   }
 }
 
