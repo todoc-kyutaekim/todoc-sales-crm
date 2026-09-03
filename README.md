@@ -153,6 +153,13 @@
 - S5800 인공와우이식술 5개년+ 통계 시각화
 - 건강보험심사평가원 보건의료빅데이터 기반
 - 연도별/성별/연령대별/지역별/기관종별 분석
+- **원본 데이터 출처 링크 내장** — 화면 상단 「원본 데이터 보기」 버튼과 하단 출처 표기에서
+  HIRA 원본 통계 페이지를 새 탭으로 엽니다 (공공누리 제1유형 출처표시 의무 이행)
+  - 직접 진입: https://opendata.hira.or.kr/op/opc/olapMfrnIntrsIlnsInfoTab1.do
+  - 탐색 경로: `opendata.hira.or.kr` → 의료통계정보 → 질병·행위별 의료통계
+    → 국민관심질병/행위통계 → 행위 검색 `인공와우` (S5800)
+  - 갱신 주기: **매년 7월** 최신 심사년도 데이터 반영 (현재 원본은 2021~2025년 공개)
+  - API 필드: `GET /api/ci-stats` 응답의 `sourceUrl` · `sourceHome` · `sourceLicense` · `sourceUpdateCycle`
 
 #### 제품 관리 (데모기 입출고)
 - **카테고리별 관리**: 내부기 / 외부기 (Sullivan, Sound1) / 휴대보관함 (Sullivan/Sound1 충전 케이스)
@@ -544,7 +551,7 @@ if (!f.currentPassword) { toast('...', 'warn'); release(); return }
 - **Platform**: Cloudflare Pages + D1 Database
 - **Status**: ✅ Production Active
 - **Deployment URL**: https://todoc-crm.pages.dev
-- **Last Updated**: 2026-09-01 (외부기 방향(좌/우) 입력 제거, 보정 경유지가 있을 때 업체명·지역 어긋남 수정, 그 날만 쓰는 출발지·복귀지(숙소) 직접 입력)
+- **Last Updated**: 2026-09-03 (인공와우 통계에 HIRA 원본 데이터 출처 링크 추가, 외부기 방향(좌/우) 입력 제거, 보정 경유지가 있을 때 업체명·지역 어긋남 수정)
 
 ## 프론트엔드 빌드 (⚠️ 필수 확인)
 

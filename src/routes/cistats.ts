@@ -62,6 +62,13 @@ cistats.get('/', async (c) => {
   return c.json({
     data: {
       source: '건강보험심사평가원 보건의료빅데이터개방시스템',
+      // ⚠️ 원본 데이터를 직접 확인·갱신할 수 있는 공식 페이지입니다.
+      //    (국민관심질병/행위통계 > 인공와우이식술 S5800, 매년 7월 갱신)
+      //    화면 상단·하단 출처 표기에서 이 링크를 새 탭으로 엽니다.
+      sourceUrl: 'https://opendata.hira.or.kr/op/opc/olapMfrnIntrsIlnsInfoTab1.do',
+      sourceHome: 'https://opendata.hira.or.kr/',
+      sourceLicense: '공공누리 제1유형 (출처표시)',
+      sourceUpdateCycle: '매년 7월 최신 데이터 갱신',
       code: 'S5800 (인공와우이식술)',
       period: yearlyData.length ? yearlyData[0].year + '-' + yearlyData[yearlyData.length - 1].year : '-',
       years, yearly: yearlyData, age10: age10All.results, age5: age5All.results, region: regionData, institution: instData, insights,

@@ -9832,14 +9832,20 @@ function renderCITab(tab) {
   const tabs = ['overview', 'age', 'region', 'institution', 'amount'];
   const tabLabels = { overview: '종합', age: '연령별', region: '지역별', institution: '기관 종별', amount: '진료금액' };
   const tabIcons = { overview: 'fa-chart-pie', age: 'fa-cake-candles', region: 'fa-map-location-dot', institution: 'fa-hospital', amount: 'fa-won-sign' };
+  // ⚠️ 원본 데이터 출처 링크 — 서버(/api/ci-stats)가 sourceUrl 을 내려주지만,
+  //    구버전 응답(캐시)에도 대비해 같은 주소를 기본값으로 둡니다.
+  const srcUrl = (s && s.sourceUrl) || 'https://opendata.hira.or.kr/op/opc/olapMfrnIntrsIlnsInfoTab1.do';
+  const srcLicense = (s && s.sourceLicense) || '공공누리 제1유형 (출처표시)';
   document.getElementById('content').innerHTML = '<div class="p-4 lg:p-7 fade-in space-y-6">' +
     '<div class="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-2xl p-4 lg:p-5 flex flex-wrap items-center gap-4 border border-indigo-100">' +
     '<div class="w-12 h-12 rounded-xl bg-white shadow-sm flex items-center justify-center flex-shrink-0"><i class="fas fa-database text-indigo-500 text-lg"></i></div>' +
     '<div class="flex-1 min-w-0"><div class="font-bold text-indigo-900 text-sm mb-0.5">HIRA 보건의료빅데이터</div><div class="text-xs text-indigo-400">' + s.code + ' | ' + s.period + '</div></div>' +
-    '<span class="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-3 py-1.5 rounded-full"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block mr-1"></span>실제 데이터</span></div>' +
+    '<span class="text-[11px] text-emerald-600 font-semibold bg-emerald-50 px-3 py-1.5 rounded-full"><span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse inline-block mr-1"></span>실제 데이터</span>' +
+    '<a href="' + srcUrl + '" target="_blank" rel="noopener noreferrer" title="심사평가원 보건의료빅데이터개방시스템에서 원본 통계를 확인합니다" class="text-[11px] font-semibold text-indigo-600 bg-white border border-indigo-200 hover:bg-indigo-50 px-3 py-1.5 rounded-full inline-flex items-center gap-1.5 transition"><i class="fas fa-up-right-from-square text-[10px]"></i>원본 데이터 보기</a></div>' +
     '<div class="flex border-b border-gray-100 px-1 overflow-x-auto">' + tabs.map(t => '<div class="tab ' + (tab === t ? 'active' : '') + '" onclick="renderCITab(\'' + t + '\')"><i class="fas ' + tabIcons[t] + ' text-xs"></i>' + tabLabels[t] + '</div>').join('') + '</div>' +
     renderCIContent(tab, s) +
-    '<div class="text-[10px] text-slate-300 text-center pb-4">본 통계는 건강보험심사평가원에서 공공누리 제1유형으로 개방한 데이터를 이용하였습니다.</div></div>';
+    '<div class="text-[10px] text-slate-400 text-center pb-4 leading-relaxed">본 통계는 <a href="' + srcUrl + '" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-600 underline decoration-dotted">건강보험심사평가원 보건의료빅데이터개방시스템</a>에서 ' + srcLicense + '으로 개방한 데이터를 이용하였습니다.<br>' +
+    '<span class="text-slate-300">opendata.hira.or.kr &gt; 의료통계정보 &gt; 질병·행위별 의료통계 &gt; 국민관심질병/행위통계 &gt; 인공와우이식술(S5800) · 매년 7월 갱신</span></div></div>';
   setTimeout(() => renderCIChartsForTab(tab, s), 100);
 }
 
